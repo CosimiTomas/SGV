@@ -431,43 +431,29 @@ app.post('/api/descartes', requireAuth, requireRole('enfermeria'), async (req, r
 });
 
 /**
- * Descarte masivo de todos los lotes vencidos.
- * Toma todos los lotes con vencimiento < hoy y disponible > 0,
- * y registra un descarte por cada uno con motivo "Vencimiento"
- * por el total de su stock. Todo en una sola transacción.
+ * RESET completo — solo para fase de prueba.
+ * Borra todos los lotes y movimientos para empezar de cero.
+ * NO toca usuarios ni catálogo de vacunas (sino habría que reseedear).
+ * Reinicia los AUTO_INCREMENT para que los IDs vuelvan a 1.
  */
-app.post('/api/descartes/vencidas', requireAuth, requireRole('enfermeria'), async (req, res) => {
+app.post('/api/admin/reset', requireAuth, requireRole('enfermeria'), async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [vencidos] = await conn.query(
-      `SELECT id, vacuna_id, disponible FROM lotes
-        WHERE DATEDIFF(vencimiento, CURDATE()) < 0 AND disponible > 0
-        FOR UPDATE`
-    );
-    if (vencidos.length === 0) {
-      await conn.rollback();
-      return res.json({ ok: true, lotes: 0, dosis: 0, mensaje: 'No hay lotes vencidos con stock para descartar.' });
-    }
-    let totalDosis = 0;
-    for (const lote of vencidos) {
-      await conn.query('UPDATE lotes SET disponible = 0 WHERE id = ?', [lote.id]);
-      await conn.query(
-        `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, motivo, usuario_id)
-         VALUES ('descarte',?,?,?,?,?)`,
-        [lote.vacuna_id, lote.id, lote.disponible, 'Vencimiento', req.user.id]
-      );
-      totalDosis += lote.disponible;
-    }
+    // Orden importante: primero movimientos (tiene FK a lotes)
+    const [mov] = await conn.query('DELETE FROM movimientos');
+    const [lot] = await conn.query('DELETE FROM lotes');
+    await conn.query('ALTER TABLE movimientos AUTO_INCREMENT = 1');
+    await conn.query('ALTER TABLE lotes AUTO_INCREMENT = 1');
     await conn.commit();
     res.json({
       ok: true,
-      lotes: vencidos.length,
-      dosis: totalDosis,
-      mensaje: `Se descartaron ${vencidos.length} lote(s) vencido(s) — ${totalDosis} dosis en total.`,
+      lotes: lot.affectedRows,
+      movimientos: mov.affectedRows,
+      mensaje: `Se borraron ${lot.affectedRows} lote(s) y ${mov.affectedRows} movimiento(s).`,
     });
   } catch (err) {
-    await conn.rollback(); console.error('descartes/vencidas:', err.message);
+    await conn.rollback(); console.error('admin/reset:', err.message);
     res.status(500).json({ error: 'Error del servidor.' });
   } finally { conn.release(); }
 });

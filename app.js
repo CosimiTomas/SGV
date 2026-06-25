@@ -399,23 +399,19 @@ function clearDescarte(){
   toggleDescarteMulti();
 }
 
-/* Descarte masivo de todas las vacunas vencidas con stock pendiente. */
-async function descartarTodasVencidas(){
+/* Reset completo de lotes y movimientos — solo fase de prueba. */
+async function limpiarTodo(){
   const ok = confirm(
-    'Esta acción va a descartar TODO el stock disponible de TODOS los lotes vencidos.\n\n' +
-    'Se registra un movimiento de descarte por cada lote con motivo "Vencimiento".\n\n' +
-    'Esta operación no se puede deshacer. ¿Continuar?'
+    '⚠ Esto va a BORRAR todos los lotes y movimientos de la base de datos.\n\n' +
+    'No se puede deshacer. Los usuarios y el catálogo de vacunas no se tocan.\n\n' +
+    '¿Continuar?'
   );
   if (!ok) return;
   try {
-    const r = await api('/descartes/vencidas', { method: 'POST' });
-    if (r.lotes === 0) {
-      toast('info', r.mensaje);
-      return;
-    }
+    const r = await api('/admin/reset', { method: 'POST' });
     toast('ok', r.mensaje);
     await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
-    go('mov');
+    go('inicio');
   } catch (err) {
     toast('err', err.message);
   }

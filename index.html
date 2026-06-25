@@ -204,11 +204,6 @@
 
     <!-- DESCARTE (centrado) -->
     <section class="page form-page enfermeria-only" id="page-descarte">
-      <div style="text-align:right;max-width:700px;margin:0 auto 10px">
-        <button class="btn sm" style="background:#C8362A;border-color:#7E1C12" onclick="descartarTodasVencidas()" title="Acción de prueba: descartar todos los lotes vencidos">
-          Descartar todas las vencidas
-        </button>
-      </div>
       <div class="form-card">
         <div class="panel-head"><h4>Registrar descarte</h4></div>
         <div class="form-body">
@@ -231,6 +226,11 @@
             <button class="btn ghost" onclick="clearDescarte();go('inicio')">Cancelar</button>
           </div>
         </div>
+      </div>
+      <div style="text-align:center;margin-top:14px">
+        <button onclick="limpiarTodo()" style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;text-decoration:underline" title="Borrar todos los lotes y movimientos (fase de prueba)">
+          limpiar todo
+        </button>
       </div>
     </section>
 
