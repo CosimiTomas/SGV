@@ -430,6 +430,48 @@ app.post('/api/descartes', requireAuth, requireRole('enfermeria'), async (req, r
   } finally { conn.release(); }
 });
 
+/**
+ * Descarte masivo de todos los lotes vencidos.
+ * Toma todos los lotes con vencimiento < hoy y disponible > 0,
+ * y registra un descarte por cada uno con motivo "Vencimiento"
+ * por el total de su stock. Todo en una sola transacción.
+ */
+app.post('/api/descartes/vencidas', requireAuth, requireRole('enfermeria'), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [vencidos] = await conn.query(
+      `SELECT id, vacuna_id, disponible FROM lotes
+        WHERE DATEDIFF(vencimiento, CURDATE()) < 0 AND disponible > 0
+        FOR UPDATE`
+    );
+    if (vencidos.length === 0) {
+      await conn.rollback();
+      return res.json({ ok: true, lotes: 0, dosis: 0, mensaje: 'No hay lotes vencidos con stock para descartar.' });
+    }
+    let totalDosis = 0;
+    for (const lote of vencidos) {
+      await conn.query('UPDATE lotes SET disponible = 0 WHERE id = ?', [lote.id]);
+      await conn.query(
+        `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, motivo, usuario_id)
+         VALUES ('descarte',?,?,?,?,?)`,
+        [lote.vacuna_id, lote.id, lote.disponible, 'Vencimiento', req.user.id]
+      );
+      totalDosis += lote.disponible;
+    }
+    await conn.commit();
+    res.json({
+      ok: true,
+      lotes: vencidos.length,
+      dosis: totalDosis,
+      mensaje: `Se descartaron ${vencidos.length} lote(s) vencido(s) — ${totalDosis} dosis en total.`,
+    });
+  } catch (err) {
+    await conn.rollback(); console.error('descartes/vencidas:', err.message);
+    res.status(500).json({ error: 'Error del servidor.' });
+  } finally { conn.release(); }
+});
+
 /* ===========================================================
  * HISTORIAL — RF08
  * ========================================================= */

@@ -365,6 +365,28 @@ function clearDescarte(){
   toggleDescarteMulti();
 }
 
+/* Descarte masivo de todas las vacunas vencidas con stock pendiente. */
+async function descartarTodasVencidas(){
+  const ok = confirm(
+    'Esta acción va a descartar TODO el stock disponible de TODOS los lotes vencidos.\n\n' +
+    'Se registra un movimiento de descarte por cada lote con motivo "Vencimiento".\n\n' +
+    'Esta operación no se puede deshacer. ¿Continuar?'
+  );
+  if (!ok) return;
+  try {
+    const r = await api('/descartes/vencidas', { method: 'POST' });
+    if (r.lotes === 0) {
+      toast('info', r.mensaje);
+      return;
+    }
+    toast('ok', r.mensaje);
+    await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
+    go('mov');
+  } catch (err) {
+    toast('err', err.message);
+  }
+}
+
 async function saveLote(){
   if(!checkFields(['lo-vac','lo-num','lo-venc','lo-cant'])) return msg('lo-msg','err','Completá todos los campos obligatorios.');
   if($('lo-venc').value < today()){ $('lo-venc').classList.add('bad'); return msg('lo-msg','err','La fecha de vencimiento no puede ser anterior a hoy.'); }

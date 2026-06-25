@@ -77,15 +77,6 @@
       </div>
 
       <div class="alerts">
-        <div class="alert vencida">
-          <div class="ic">⚠</div>
-          <div>
-            <h4>Vencidas</h4>
-            <ul>
-              <li class="alert-empty">Sin vacunas vencidas con stock pendiente de descartar.</li>
-            </ul>
-          </div>
-        </div>
         <div class="alert low">
           <div class="ic">!</div>
           <div>
@@ -104,13 +95,22 @@
             </ul>
           </div>
         </div>
+        <div class="alert vencida">
+          <div class="ic">⚠</div>
+          <div>
+            <h4>Vencidas</h4>
+            <ul>
+              <li class="alert-empty">Sin vacunas vencidas con stock pendiente de descartar.</li>
+            </ul>
+          </div>
+        </div>
       </div>
 
       <div class="kpis">
         <div class="kpi"><div class="lab">Tipos de vacuna</div><div class="num">0</div><div class="delta">registradas en stock</div></div>
         <div class="kpi"><div class="lab">Unidades totales</div><div class="num">0</div><div class="delta">dosis disponibles</div></div>
         <div class="kpi warn"><div class="lab">Stock bajo</div><div class="num">0</div><div class="delta">requieren reposición</div></div>
-        <div class="kpi red"><div class="lab">Por vencer</div><div class="num">0</div><div class="delta">próximos 15 días</div></div>
+        <div class="kpi orange"><div class="lab">Por vencer</div><div class="num">0</div><div class="delta">próximos 15 días</div></div>
         <div class="kpi red"><div class="lab">Vencidas</div><div class="num">0</div><div class="delta">descartar urgente</div></div>
       </div>
 
@@ -190,6 +190,19 @@
 
     <!-- DESCARTE (centrado) -->
     <section class="page form-page enfermeria-only" id="page-descarte">
+      <div class="form-card" style="margin-bottom:16px;border:1px solid #E89A8E;background:#FFF7F5">
+        <div class="panel-head" style="background:#FDE8E4">
+          <h4 style="color:#7E1C12">Acción masiva — Lotes vencidos</h4>
+        </div>
+        <div class="form-body">
+          <p style="margin-bottom:14px;color:var(--text)">
+            Descartar de una sola vez todo el stock de los lotes que ya están vencidos. Se registra un movimiento de descarte por cada lote con motivo <b>Vencimiento</b>.
+          </p>
+          <button class="btn" style="background:#C8362A;border-color:#7E1C12" onclick="descartarTodasVencidas()">
+            Descartar todas las vencidas
+          </button>
+        </div>
+      </div>
       <div class="form-card">
         <div class="panel-head"><h4>Registrar descarte</h4></div>
         <div class="form-body">
