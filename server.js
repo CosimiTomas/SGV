@@ -33,6 +33,8 @@ const DIAS_VENCIMIENTO = 15;     // por vencer: dentro de 15 días
  * Conexión a MySQL
  * Acepta variables de Railway (MYSQL*) y locales (DB_*).
  * ---------------------------------------------------------- */
+const TZ_AR = process.env.DB_TIMEZONE || '-03:00';
+
 const dbConfig = {
   host:     process.env.MYSQLHOST     || process.env.DB_HOST     || 'localhost',
   port:     process.env.MYSQLPORT     || process.env.DB_PORT     || 3306,
@@ -43,21 +45,18 @@ const dbConfig = {
   connectionLimit: 10,
   queueLimit: 0,
   charset: 'utf8mb4_unicode_ci',
-  // Argentina (Buenos Aires). MySQL en Railway corre en UTC por default y los
-  // CURRENT_TIMESTAMP quedan 3h adelantados respecto de la hora local.
-  // Esta opción le dice a mysql2 cómo interpretar las fechas al leer/escribir.
-  timezone: process.env.DB_TIMEZONE || '-03:00',
+  // Le decimos a mysql2 que interprete TIMESTAMP <-> Date en TZ AR.
+  timezone: TZ_AR,
 };
 
 const pool = mysql.createPool(dbConfig);
 
-// Forzar la zona horaria de cada conexión del pool. Esto afecta a
-// CURRENT_TIMESTAMP, NOW(), CURDATE() y a cómo MySQL convierte los
-// TIMESTAMP almacenados (que internamente son UTC) al leer. Combinado
-// con la opción `timezone` de arriba, todo el flujo queda en hora AR.
-pool.on('connection', (conn) => {
-  conn.query(`SET time_zone='${dbConfig.timezone}'`);
-});
+// Setear TZ en cada conexión nueva del pool. Se escucha en los DOS
+// niveles (promise pool y callback pool subyacente) porque según la
+// versión de mysql2 el evento se emite en uno u otro.
+function setTZ(conn) { conn.query(`SET time_zone='${TZ_AR}'`); }
+pool.on('connection', setTZ);
+if (pool.pool && pool.pool.on) pool.pool.on('connection', setTZ);
 
 /* ------------------------------------------------------------
  * Bootstrap del esquema y catálogo de vacunas
@@ -68,6 +67,19 @@ async function bootstrapDatabase() {
   const conn = await pool.getConnection();
   try {
     console.log('› Verificando esquema de base de datos…');
+
+    // Intentar setear la TZ a nivel GLOBAL (afecta también al panel de
+    // Railway y a cualquier otro cliente). Requiere privilegio SUPER,
+    // que Railway puede o no dar. Si falla, seguimos con el SET de
+    // sesión del pool.on que igual cubre las queries de la app.
+    try {
+      await conn.query(`SET GLOBAL time_zone = '${TZ_AR}'`);
+      console.log(`✓ TZ del servidor MySQL fijada a ${TZ_AR} (GLOBAL)`);
+    } catch (e) {
+      console.log(`› SET GLOBAL time_zone falló (${e.code || e.message}). Se usa solo TZ de sesión.`);
+    }
+    // SET de sesión en la conexión actual del bootstrap
+    await conn.query(`SET time_zone = '${TZ_AR}'`);
 
     await conn.query(`
       CREATE TABLE IF NOT EXISTS usuarios (
@@ -326,8 +338,9 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
       `SELECT v.nombre AS vacuna, v.dosis_por_frasco, l.disponible
          FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
         WHERE l.disponible <= ? AND l.disponible > 0
-          AND DATEDIFF(l.vencimiento, CURDATE()) > ? ORDER BY l.disponible`,
-      [UMBRAL_STOCK_BAJO, DIAS_VENCIMIENTO]
+          AND DATEDIFF(l.vencimiento, CURDATE()) >= 0
+        ORDER BY l.disponible`,
+      [UMBRAL_STOCK_BAJO]
     );
     // Por vencer = entre 0 y 15 días (incluye hoy)
     const [vencer] = await pool.query(
