@@ -247,11 +247,7 @@ app.use(express.static(__dirname, {
   }
 }));
 
-app.get('/api/health', (req, res) => res.json({
-  ok: true,
-  servicio: 'SGV API',
-  version: 'v2-vencidas-y-multidosis-2026-06-25'
-}));
+app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'SGV API' }));
 
 /* ===========================================================
  * AUTENTICACIÓN — CU01 / RF05
