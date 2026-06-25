@@ -233,9 +233,25 @@ function requireRole(...roles) {
  * ---------------------------------------------------------- */
 const app = express();
 app.use(express.json());
-app.use(express.static(__dirname));
+// Servir HTML/JS/CSS con cache-control no-cache para que el browser
+// revalide siempre antes de usar la copia en caché. Sin esto, después
+// de un deploy nuevo el usuario sigue viendo los assets viejos por
+// horas (o hasta que vacíe caché a mano).
+app.use(express.static(__dirname, {
+  setHeaders: (res, filePath) => {
+    if (/\.(html|js|css)$/.test(filePath)) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
 
-app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'SGV API' }));
+app.get('/api/health', (req, res) => res.json({
+  ok: true,
+  servicio: 'SGV API',
+  version: 'v2-vencidas-y-multidosis-2026-06-25'
+}));
 
 /* ===========================================================
  * AUTENTICACIÓN — CU01 / RF05
