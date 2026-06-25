@@ -43,9 +43,21 @@ const dbConfig = {
   connectionLimit: 10,
   queueLimit: 0,
   charset: 'utf8mb4_unicode_ci',
+  // Argentina (Buenos Aires). MySQL en Railway corre en UTC por default y los
+  // CURRENT_TIMESTAMP quedan 3h adelantados respecto de la hora local.
+  // Esta opción le dice a mysql2 cómo interpretar las fechas al leer/escribir.
+  timezone: process.env.DB_TIMEZONE || '-03:00',
 };
 
 const pool = mysql.createPool(dbConfig);
+
+// Forzar la zona horaria de cada conexión del pool. Esto afecta a
+// CURRENT_TIMESTAMP, NOW(), CURDATE() y a cómo MySQL convierte los
+// TIMESTAMP almacenados (que internamente son UTC) al leer. Combinado
+// con la opción `timezone` de arriba, todo el flujo queda en hora AR.
+pool.on('connection', (conn) => {
+  conn.query(`SET time_zone='${dbConfig.timezone}'`);
+});
 
 /* ------------------------------------------------------------
  * Bootstrap del esquema y catálogo de vacunas
@@ -285,7 +297,8 @@ app.get('/api/stock', requireAuth, async (req, res) => {
     );
     const stock = rows.map(r => {
       let estado = 'ok';
-      if (r.dias_para_vencer <= DIAS_VENCIMIENTO) estado = 'exp';
+      if (r.dias_para_vencer < 0) estado = 'vencida';
+      else if (r.dias_para_vencer <= DIAS_VENCIMIENTO) estado = 'exp';
       else if (r.disponible <= UMBRAL_STOCK_BAJO) estado = 'low';
       return { ...r, estado };
     });
@@ -304,15 +317,24 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
           AND DATEDIFF(l.vencimiento, CURDATE()) > ? ORDER BY l.disponible`,
       [UMBRAL_STOCK_BAJO, DIAS_VENCIMIENTO]
     );
+    // Por vencer = entre 0 y 15 días (incluye hoy)
     const [vencer] = await pool.query(
       `SELECT v.nombre AS vacuna, v.dosis_por_frasco, l.vencimiento, DATEDIFF(l.vencimiento, CURDATE()) AS dias
          FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
-        WHERE DATEDIFF(l.vencimiento, CURDATE()) <= ? AND l.disponible > 0 ORDER BY l.vencimiento`,
+        WHERE DATEDIFF(l.vencimiento, CURDATE()) BETWEEN 0 AND ? AND l.disponible > 0
+        ORDER BY l.vencimiento`,
       [DIAS_VENCIMIENTO]
     );
+    // Vencidas = ya pasó la fecha y todavía hay stock disponible (no se descartó)
+    const [vencidas] = await pool.query(
+      `SELECT v.nombre AS vacuna, v.dosis_por_frasco, l.vencimiento, DATEDIFF(l.vencimiento, CURDATE()) AS dias, l.disponible
+         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
+        WHERE DATEDIFF(l.vencimiento, CURDATE()) < 0 AND l.disponible > 0
+        ORDER BY l.vencimiento`
+    );
     res.json({
-      kpis: { tipos, unidades, stockBajo: bajo.length, porVencer: vencer.length },
-      alertas: { stockBajo: bajo, porVencer: vencer },
+      kpis: { tipos, unidades, stockBajo: bajo.length, porVencer: vencer.length, vencidas: vencidas.length },
+      alertas: { stockBajo: bajo, porVencer: vencer, vencidas },
       umbrales: { stockBajo: UMBRAL_STOCK_BAJO, diasVencimiento: DIAS_VENCIMIENTO },
     });
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }

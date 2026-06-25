@@ -53,8 +53,10 @@ El SGV no reemplaza a esos registros — son obligatorios y externos al CAPS. Lo
 Definidas con Mariana Touzon (Lic. en Enfermería) durante el relevamiento:
 
 - **Stock bajo:** un lote queda marcado como "stock bajo" cuando le quedan **10 dosis o menos** disponibles. Este umbral fue elegido para que la alerta funcione igual de bien en vacunas monodosis (10 unidades para reponer) y en multidosis (1 frasco de 10 dosis, o 2 frascos de Salk de 5 dosis).
-- **Por vencer:** un lote queda marcado como "por vencer" cuando el vencimiento es a **15 días o menos** desde hoy.
-- **Prioridad de alertas:** si un lote cumple las dos condiciones, prevalece "por vencer".
+- **Por vencer:** un lote queda marcado como "por vencer" cuando el vencimiento es a **15 días o menos** desde hoy y todavía no pasó la fecha.
+- **Vencida:** un lote queda marcado como "vencida" cuando ya pasó la fecha de vencimiento y todavía tiene stock disponible (no se hizo el descarte). Es una alerta más grave que "por vencer" porque la vacuna no se puede aplicar y requiere descarte inmediato.
+- **Días para vencer:** tanto en la lista de stock como en las alertas del dashboard, junto a la fecha se muestra el plazo restante en texto ("vence en 5 días", "vence hoy", "venció hace 3 días").
+- **Prioridad de alertas:** si un lote cumple varias condiciones, prevalece "vencida" sobre "por vencer" sobre "stock bajo".
 - **Sin stock negativo:** una aplicación o descarte nunca puede dejar el disponible debajo de cero. Se valida en el servidor con `FOR UPDATE` dentro de transacción.
 
 ---

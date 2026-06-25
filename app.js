@@ -63,6 +63,17 @@ function chipMulti(dosisPorFrasco){
   const d = Number(dosisPorFrasco) || 1;
   return d > 1 ? ` <span class="chip-multi">Frasco × ${d}</span>` : '';
 }
+// Formatea los días para vencer en texto humano.
+//   dias > 0  → "en 5 días" / "en 1 día"
+//   dias = 0  → "hoy"
+//   dias < 0  → "hace 3 días" / "hace 1 día"
+function fmtDias(dias){
+  dias = Number(dias);
+  if (dias === 0) return 'hoy';
+  if (dias > 0)   return `en ${dias} ${dias === 1 ? 'día' : 'días'}`;
+  const d = -dias;
+  return `hace ${d} ${d === 1 ? 'día' : 'días'}`;
+}
 
 function toast(type,text){
   if(!text) return;
@@ -155,7 +166,7 @@ async function loadVacunas(){
 
 async function loadDashboard(){
   const d = await api('/dashboard');
-  // KPIs
+  // KPIs (5: tipos, unidades, stockBajo, porVencer, vencidas)
   const k = d.kpis;
   const nums = document.querySelectorAll('#page-inicio .kpi .num');
   if (nums.length >= 4){
@@ -163,22 +174,27 @@ async function loadDashboard(){
     nums[1].textContent = k.unidades;
     nums[2].textContent = k.stockBajo;
     nums[3].textContent = k.porVencer;
+    if (nums[4]) nums[4].textContent = k.vencidas;
   }
   // Alertas
-  const low = d.alertas.stockBajo, exp = d.alertas.porVencer;
+  const low = d.alertas.stockBajo, exp = d.alertas.porVencer, vencidas = d.alertas.vencidas || [];
   const lowUl = document.querySelector('#page-inicio .alert.low ul');
   const expUl = document.querySelector('#page-inicio .alert.exp ul');
+  const vencUl = document.querySelector('#page-inicio .alert.vencida ul');
   if (lowUl) lowUl.innerHTML = low.length
     ? low.map(a=>`<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — quedan ${fmtDisp(a.disponible, a.dosis_por_frasco)}</li>`).join('')
     : '<li class="alert-empty">Sin vacunas con stock bajo.</li>';
   if (expUl) expUl.innerHTML = exp.length
-    ? exp.map(a=>`<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — vence <b>${fmtFecha(a.vencimiento)}</b></li>`).join('')
+    ? exp.map(a=>`<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — vence <b>${fmtFecha(a.vencimiento)}</b> (${fmtDias(a.dias)})</li>`).join('')
     : '<li class="alert-empty">Sin vacunas próximas a vencer.</li>';
+  if (vencUl) vencUl.innerHTML = vencidas.length
+    ? vencidas.map(a=>`<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — venció <b>${fmtFecha(a.vencimiento)}</b> (${fmtDias(a.dias)}) · quedan ${fmtDisp(a.disponible, a.dosis_por_frasco)} sin descartar</li>`).join('')
+    : '<li class="alert-empty">Sin vacunas vencidas con stock pendiente de descartar.</li>';
 }
 
 async function loadStock(){
   const stock = await api('/stock');
-  const ETIQ = { ok:'OK', low:'Stock bajo', exp:'Por vencer' };
+  const ETIQ = { ok:'OK', low:'Stock bajo', exp:'Por vencer', vencida:'Vencida' };
   $('stockBody').innerHTML = stock.length ? stock.map(r=>{
     const multi = Number(r.dosis_por_frasco) > 1;
     const dispCell = multi
@@ -187,10 +203,13 @@ async function loadStock(){
     const iniCell = multi
       ? `${Math.floor(r.cantidad_inicial / r.dosis_por_frasco)} frascos <small style="color:var(--muted);display:block">(${r.cantidad_inicial} dosis)</small>`
       : `${r.cantidad_inicial}`;
+    // Texto "vence en X días" o "venció hace X días" debajo de la fecha
+    const dias = Number(r.dias_para_vencer);
+    const venceCell = `${fmtFecha(r.vencimiento)} <small style="color:var(--muted);display:block">${dias < 0 ? 'venció' : 'vence'} ${fmtDias(dias)}</small>`;
     return `<tr>
        <td data-label="Vacuna"><b>${r.vacuna}</b>${chipMulti(r.dosis_por_frasco)}</td>
        <td data-label="Lote">${r.numero_lote}</td>
-       <td data-label="Vencimiento">${fmtFecha(r.vencimiento)}</td>
+       <td data-label="Vencimiento">${venceCell}</td>
        <td data-label="Cant. inicial">${iniCell}</td>
        <td data-label="Disp.">${dispCell}</td>
        <td data-label="Estado"><span class="pill ${r.estado}">${ETIQ[r.estado]}</span></td>

@@ -612,3 +612,22 @@
   vertical-align:middle;
   white-space:nowrap;
 }
+
+/* ============================================================
+   Estado "Vencida": rojo más intenso que "Por vencer" para
+   distinguir visualmente. Por vencer = todavía sirve, hay que
+   actuar. Vencida = no se puede aplicar, hay que descartar.
+   ============================================================ */
+.pill.vencida{
+  background:#7E1C12;
+  color:#fff;
+  border-color:#5C140C;
+  font-weight:700;
+}
+.alert.vencida{
+  background:#FDE8E4;
+  border-color:#E89A8E;
+}
+.alert.vencida::before{background:radial-gradient(circle,#F0B5AC,transparent 70%)}
+.alert.vencida .ic{background:#C8362A;color:#fff}
+.alert.vencida h4{color:#7E1C12}
