@@ -21,7 +21,12 @@ const PORT = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || 'dev_secret';
 
 // Reglas de negocio definidas con enfermería
-const UMBRAL_STOCK_BAJO = 6;     // stock bajo: disponible <= 6
+// Umbral en DOSIS. Coincide en los tres casos definidos con la clienta:
+//   monodosis        → 10 dosis
+//   Salk (5/frasco)  → 2 frascos = 10 dosis
+//   x 10/frasco      → 1 frasco  = 10 dosis
+// La lectura visual (dosis vs. frascos) la maneja el frontend.
+const UMBRAL_STOCK_BAJO = 10;
 const DIAS_VENCIMIENTO = 15;     // por vencer: dentro de 15 días
 
 /* ------------------------------------------------------------
@@ -65,9 +70,10 @@ async function bootstrapDatabase() {
 
     await conn.query(`
       CREATE TABLE IF NOT EXISTS vacunas (
-        id     INT AUTO_INCREMENT PRIMARY KEY,
-        nombre VARCHAR(120) NOT NULL UNIQUE,
-        activa TINYINT(1) NOT NULL DEFAULT 1
+        id               INT AUTO_INCREMENT PRIMARY KEY,
+        nombre           VARCHAR(120) NOT NULL UNIQUE,
+        dosis_por_frasco INT NOT NULL DEFAULT 1,
+        activa           TINYINT(1) NOT NULL DEFAULT 1
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
@@ -139,6 +145,26 @@ async function bootstrapDatabase() {
     ];
     for (const nombre of catalogo) {
       await conn.query('INSERT IGNORE INTO vacunas (nombre) VALUES (?)', [nombre]);
+    }
+
+    // Migración: agregar columna dosis_por_frasco a bases que ya existían
+    // sin ella (deploy previo a esta versión). Idempotente.
+    try {
+      await conn.query('ALTER TABLE vacunas ADD COLUMN dosis_por_frasco INT NOT NULL DEFAULT 1');
+    } catch (e) {
+      if (e.code !== 'ER_DUP_FIELDNAME') throw e;
+    }
+
+    // Vacunas multidosis (confirmadas con la clienta).
+    // El UPDATE es idempotente: si ya tienen el valor correcto no hace nada.
+    const multidosis = [
+      ['Hepatitis B',                        10],
+      ['Doble bacteriana (dT)',              10],
+      ['Triple bacteriana acelular (dTpa)',  10],
+      ['Salk',                                5],
+    ];
+    for (const [nombre, dpf] of multidosis) {
+      await conn.query('UPDATE vacunas SET dosis_por_frasco = ? WHERE nombre = ?', [dpf, nombre]);
     }
 
     // Auto-seed de usuarios si la tabla está vacía y SEED_ON_BOOT=true
@@ -232,7 +258,7 @@ app.get('/api/me', requireAuth, (req, res) => res.json({ usuario: req.user }));
  * ========================================================= */
 app.get('/api/vacunas', requireAuth, async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT id, nombre FROM vacunas WHERE activa = 1 ORDER BY nombre');
+    const [rows] = await pool.query('SELECT id, nombre, dosis_por_frasco FROM vacunas WHERE activa = 1 ORDER BY nombre');
     res.json(rows);
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
 });
@@ -251,7 +277,7 @@ app.get('/api/vacunas/:id/lotes', requireAuth, async (req, res) => {
 app.get('/api/stock', requireAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT l.id, v.nombre AS vacuna, l.numero_lote, l.vencimiento,
+      `SELECT l.id, v.nombre AS vacuna, v.dosis_por_frasco, l.numero_lote, l.vencimiento,
               l.cantidad_inicial, l.disponible,
               DATEDIFF(l.vencimiento, CURDATE()) AS dias_para_vencer
          FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
@@ -272,14 +298,14 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
     const [[{ tipos }]]     = await pool.query('SELECT COUNT(DISTINCT vacuna_id) AS tipos FROM lotes WHERE disponible > 0');
     const [[{ unidades }]]  = await pool.query('SELECT COALESCE(SUM(disponible),0) AS unidades FROM lotes');
     const [bajo] = await pool.query(
-      `SELECT v.nombre AS vacuna, l.disponible
+      `SELECT v.nombre AS vacuna, v.dosis_por_frasco, l.disponible
          FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
         WHERE l.disponible <= ? AND l.disponible > 0
           AND DATEDIFF(l.vencimiento, CURDATE()) > ? ORDER BY l.disponible`,
       [UMBRAL_STOCK_BAJO, DIAS_VENCIMIENTO]
     );
     const [vencer] = await pool.query(
-      `SELECT v.nombre AS vacuna, l.vencimiento, DATEDIFF(l.vencimiento, CURDATE()) AS dias
+      `SELECT v.nombre AS vacuna, v.dosis_por_frasco, l.vencimiento, DATEDIFF(l.vencimiento, CURDATE()) AS dias
          FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
         WHERE DATEDIFF(l.vencimiento, CURDATE()) <= ? AND l.disponible > 0 ORDER BY l.vencimiento`,
       [DIAS_VENCIMIENTO]

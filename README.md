@@ -52,11 +52,39 @@ El SGV no reemplaza a esos registros — son obligatorios y externos al CAPS. Lo
 
 Definidas con Mariana Touzon (Lic. en Enfermería) durante el relevamiento:
 
-- **Stock bajo:** un lote queda marcado como "stock bajo" cuando le quedan **6 dosis o menos** disponibles.
+- **Stock bajo:** un lote queda marcado como "stock bajo" cuando le quedan **10 dosis o menos** disponibles. Este umbral fue elegido para que la alerta funcione igual de bien en vacunas monodosis (10 unidades para reponer) y en multidosis (1 frasco de 10 dosis, o 2 frascos de Salk de 5 dosis).
 - **Por vencer:** un lote queda marcado como "por vencer" cuando el vencimiento es a **15 días o menos** desde hoy.
 - **Prioridad de alertas:** si un lote cumple las dos condiciones, prevalece "por vencer".
-- **Umbral global:** las 6 dosis aplican a todas las vacunas por igual (decisión explícita de la clienta para no complicar la operación con umbrales por vacuna).
 - **Sin stock negativo:** una aplicación o descarte nunca puede dejar el disponible debajo de cero. Se valida en el servidor con `FOR UPDATE` dentro de transacción.
+
+---
+
+## Vacunas multidosis
+
+Cuatro vacunas del catálogo vienen en frascos con más de una dosis cada uno:
+
+| Vacuna | Dosis por frasco |
+|---|:-:|
+| Hepatitis B | 10 |
+| Doble bacteriana (dT) | 10 |
+| Triple bacteriana acelular (dTpa) | 10 |
+| Salk | 5 |
+
+**El sistema cuenta siempre en dosis por dentro.** La presentación en frascos es una vista derivada que se calcula al mostrar:
+
+```
+frascos enteros disponibles = floor(disponible / dosis_por_frasco)
+dosis sueltas               = disponible mod dosis_por_frasco
+```
+
+Esto se refleja en cada pantalla:
+
+- **Ingreso de lote:** cuando enfermería elige una vacuna multidosis, el campo cambia automáticamente de "Cantidad de dosis" a "Cantidad de frascos", y debajo se muestra el total calculado en dosis.
+- **Aplicación:** sin cambios, siempre se ingresa en dosis (que es la unidad clínica).
+- **Descarte:** cuando es multidosis aparece un segundo campo "Dosis sueltas", para poder descartar frascos cerrados y dosis sobrantes de frascos abiertos en una sola operación. El total se calcula como `frascos × dosis_por_frasco + sueltas`.
+- **Stock y dashboard:** las multidosis se identifican con un chip "Frasco × N" al lado del nombre, y la cantidad disponible se muestra en frascos (con dosis sueltas si corresponde) más el total en dosis entre paréntesis.
+
+Las 14 vacunas monodosis se comportan exactamente igual que antes — el sistema usa por debajo `dosis_por_frasco = 1` y no muestra nada extra en pantalla.
 
 ---
 
@@ -105,7 +133,7 @@ Cuatro tablas en MySQL con relaciones por clave foránea:
 
 ```
 usuarios       (id, correo, password_hash, rol, activo, creado_en)
-vacunas        (id, nombre, activa)
+vacunas        (id, nombre, dosis_por_frasco, activa)
 lotes          (id, vacuna_id→vacunas, numero_lote, vencimiento,
                 cantidad_inicial, disponible, creado_en)
 movimientos    (id, tipo, vacuna_id→vacunas, lote_id→lotes,
@@ -115,6 +143,8 @@ movimientos    (id, tipo, vacuna_id→vacunas, lote_id→lotes,
 
 **Decisiones de diseño:**
 
+- **`dosis_por_frasco` vive en `vacunas`** (no en `lotes`), porque la presentación está atada a la vacuna y no varía lote a lote en las que maneja el CAPS. Default 1 para monodosis.
+- **`cantidad_inicial` y `disponible` siempre se miden en dosis**, nunca en frascos. La lectura en frascos es derivada. Esto mantiene la lógica de transacciones, validaciones y movimientos exactamente igual para monodosis y multidosis.
 - **`tipo` en `movimientos`** es un ENUM con tres valores (`ingreso`, `aplicacion`, `descarte`). Una sola tabla unifica el historial.
 - **`disponible` en `lotes`** se mantiene materializado (no se recalcula desde movimientos cada vez). Cada aplicación o descarte lo decrementa dentro de una transacción con `FOR UPDATE`, garantizando que dos operaciones simultáneas no dejen el stock inconsistente.
 - **Constraints CHECK** previenen cantidades inválidas a nivel de base: `cantidad_inicial > 0`, `disponible >= 0`, `cantidad > 0`.

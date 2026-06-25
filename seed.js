@@ -19,15 +19,19 @@ const USUARIOS = [
 ];
 
 // [nombreVacuna, numeroLote, vencimiento, cantInicial, disponible]
+// Las cantidades son SIEMPRE en dosis. Para multidosis se usan múltiplos
+// del dosis_por_frasco para reflejar frascos enteros (más realista).
+//   Hep B / dT / dTpa : frascos de 10 dosis
+//   Salk              : frascos de 5 dosis
 const LOTES = [
-  ['Quíntuple',                      'L-2026-Q1', '2026-12-31', 50, 38],
-  ['Hepatitis B',                    'L-2025-HB', '2026-11-30', 40,  6],
-  ['Triple viral (SRP)',             'L-2026-TV', '2027-01-31', 50, 42],
-  ['Antigripal trivalente adultos',  'L-2026-AG', '2026-07-31', 60,  4],
-  ['Hepatitis A',                    'L-2026-HA', '2027-09-30', 30, 28],
-  ['Varicela',                       'L-2026-VR', '2026-07-15', 25,  5],
-  ['VPH nonavalente',                'L-2026-VP', '2027-12-31', 40, 36],
-  ['Salk',                           'L-2026-SK', '2027-03-31', 45, 40],
+  ['Quíntuple',                      'L-2026-Q1', '2026-12-31',  50, 38],
+  ['Hepatitis B',                    'L-2025-HB', '2026-11-30',  60, 10],   // 6 frascos → queda 1 frasco
+  ['Triple viral (SRP)',             'L-2026-TV', '2027-01-31',  50, 42],
+  ['Antigripal trivalente adultos',  'L-2026-AG', '2026-07-31',  60,  4],
+  ['Hepatitis A',                    'L-2026-HA', '2027-09-30',  30, 28],
+  ['Varicela',                       'L-2026-VR', '2026-07-15',  25,  5],
+  ['VPH nonavalente',                'L-2026-VP', '2027-12-31',  40, 36],
+  ['Salk',                           'L-2026-SK', '2027-03-31',  50, 13],   // 10 frascos → quedan 2 frascos + 3 dosis sueltas
 ];
 
 async function run() {

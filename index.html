@@ -189,8 +189,15 @@
           <div class="grid2">
             <div><label>Vacuna <span class="req">*</span></label><select id="de-vac" onchange="loadLotes('de')"><option value="">Seleccionar…</option></select></div>
             <div><label>Lote <span class="req">*</span></label><select id="de-lote"><option value="">Seleccionar vacuna primero…</option></select></div>
-            <div><label>Cantidad <span class="req">*</span></label><input id="de-cant" type="number" placeholder="0" min="1"></div>
-            <div><label>Motivo <span class="req">*</span></label><select id="de-motivo"><option value="">Seleccionar…</option><option>Vencimiento</option><option>Cadena de frío</option><option>Rotura / derrame</option><option>Otro</option></select></div>
+            <div>
+              <label id="de-cant-lbl">Cantidad de dosis <span class="req">*</span></label>
+              <input id="de-cant" type="number" placeholder="0" min="0" oninput="toggleDescarteMulti()">
+              <div id="de-multi-extra" style="display:none;margin-top:8px">
+                <input id="de-sueltas" type="number" placeholder="Dosis sueltas" min="0" oninput="toggleDescarteMulti()" style="width:100%">
+                <small id="de-total" style="display:block;color:var(--muted);margin-top:6px">Total: 0 dosis</small>
+              </div>
+            </div>
+            <div><label>Motivo <span class="req">*</span></label><select id="de-motivo"><option value="">Seleccionar…</option><option>Vencimiento</option><option>Cadena de frío</option><option>Rotura / derrame</option><option>Frasco abierto vencido</option><option>Otro</option></select></div>
           </div>
           <div id="de-msg"></div>
           <div style="display:flex;gap:10px;margin-top:22px">
@@ -207,10 +214,14 @@
         <div class="panel-head"><h4>Ingresar lote nuevo</h4></div>
         <div class="form-body">
           <div class="grid2">
-            <div><label>Vacuna <span class="req">*</span></label><select id="lo-vac"><option value="">Seleccionar…</option></select></div>
+            <div><label>Vacuna <span class="req">*</span></label><select id="lo-vac" onchange="toggleLoteMulti()"><option value="">Seleccionar…</option></select></div>
             <div><label>Número de lote <span class="req">*</span></label><input id="lo-num" placeholder="Ej: L-2026-A"></div>
             <div><label>Fecha de vencimiento <span class="req">*</span></label><input id="lo-venc" type="date"></div>
-            <div><label>Cantidad ingresada <span class="req">*</span></label><input id="lo-cant" type="number" placeholder="0" min="1"></div>
+            <div>
+              <label id="lo-cant-lbl">Cantidad de dosis <span class="req">*</span></label>
+              <input id="lo-cant" type="number" placeholder="0" min="1" oninput="toggleLoteMulti()">
+              <small id="lo-cant-hint" style="display:none;color:var(--muted);margin-top:6px">Total: 0 dosis</small>
+            </div>
           </div>
           <div id="lo-msg"></div>
           <div style="display:flex;gap:10px;margin-top:22px">

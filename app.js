@@ -33,6 +33,37 @@ async function api(path, opts = {}){
   if (!res.ok) throw new Error(data.error || 'Error del servidor.');
   return data;
 }
+
+/* ---------- Helpers multidosis ---------- */
+// Devuelve dosis_por_frasco de una vacuna por id. Si no la encuentra, asume 1.
+function dpf(vacId){
+  const v = VACUNAS.find(x => String(x.id) === String(vacId));
+  return v && v.dosis_por_frasco ? Number(v.dosis_por_frasco) : 1;
+}
+// ¿La vacuna es multidosis?
+function esMulti(vacId){ return dpf(vacId) > 1; }
+// Formatea una cantidad en dosis según el dosis_por_frasco de la vacuna.
+//   monodosis           → "10 dosis"
+//   multi, exacto       → "2 frascos"   (con frascos=2, sueltas=0)
+//   multi, con sueltas  → "1 frasco · 3 dosis sueltas"
+//   multi, solo sueltas → "3 dosis sueltas"
+function fmtDisp(dosis, dosisPorFrasco){
+  dosis = Number(dosis) || 0;
+  const d = Number(dosisPorFrasco) || 1;
+  if (d === 1) return `${dosis} ${dosis === 1 ? 'dosis' : 'dosis'}`;
+  const fr = Math.floor(dosis / d), su = dosis % d;
+  const parts = [];
+  if (fr > 0) parts.push(`<b>${fr}</b> ${fr === 1 ? 'frasco' : 'frascos'}`);
+  if (su > 0) parts.push(`<b>${su}</b> ${su === 1 ? 'dosis suelta' : 'dosis sueltas'}`);
+  if (parts.length === 0) return '<b>0</b> frascos';
+  return parts.join(' · ');
+}
+// Chip "Frasco x N" para marcar visualmente las multidosis al lado del nombre.
+function chipMulti(dosisPorFrasco){
+  const d = Number(dosisPorFrasco) || 1;
+  return d > 1 ? ` <span class="chip-multi">Frasco × ${d}</span>` : '';
+}
+
 function toast(type,text){
   if(!text) return;
   const ic = type==='ok' ? '✓' : type==='info' ? 'i' : '✕';
@@ -138,25 +169,33 @@ async function loadDashboard(){
   const lowUl = document.querySelector('#page-inicio .alert.low ul');
   const expUl = document.querySelector('#page-inicio .alert.exp ul');
   if (lowUl) lowUl.innerHTML = low.length
-    ? low.map(a=>`<li>${a.vacuna} — <b>${a.disponible}</b> dosis disponibles</li>`).join('')
+    ? low.map(a=>`<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — quedan ${fmtDisp(a.disponible, a.dosis_por_frasco)}</li>`).join('')
     : '<li class="alert-empty">Sin vacunas con stock bajo.</li>';
   if (expUl) expUl.innerHTML = exp.length
-    ? exp.map(a=>`<li>${a.vacuna} — vence <b>${fmtFecha(a.vencimiento)}</b></li>`).join('')
+    ? exp.map(a=>`<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — vence <b>${fmtFecha(a.vencimiento)}</b></li>`).join('')
     : '<li class="alert-empty">Sin vacunas próximas a vencer.</li>';
 }
 
 async function loadStock(){
   const stock = await api('/stock');
   const ETIQ = { ok:'OK', low:'Stock bajo', exp:'Por vencer' };
-  $('stockBody').innerHTML = stock.length ? stock.map(r=>
-    `<tr>
-       <td data-label="Vacuna"><b>${r.vacuna}</b></td>
+  $('stockBody').innerHTML = stock.length ? stock.map(r=>{
+    const multi = Number(r.dosis_por_frasco) > 1;
+    const dispCell = multi
+      ? `${fmtDisp(r.disponible, r.dosis_por_frasco)} <small style="color:var(--muted);display:block">(${r.disponible} dosis)</small>`
+      : `${r.disponible} dosis`;
+    const iniCell = multi
+      ? `${Math.floor(r.cantidad_inicial / r.dosis_por_frasco)} frascos <small style="color:var(--muted);display:block">(${r.cantidad_inicial} dosis)</small>`
+      : `${r.cantidad_inicial}`;
+    return `<tr>
+       <td data-label="Vacuna"><b>${r.vacuna}</b>${chipMulti(r.dosis_por_frasco)}</td>
        <td data-label="Lote">${r.numero_lote}</td>
        <td data-label="Vencimiento">${fmtFecha(r.vencimiento)}</td>
-       <td data-label="Cant. inicial">${r.cantidad_inicial}</td>
-       <td data-label="Disp.">${r.disponible}</td>
+       <td data-label="Cant. inicial">${iniCell}</td>
+       <td data-label="Disp.">${dispCell}</td>
        <td data-label="Estado"><span class="pill ${r.estado}">${ETIQ[r.estado]}</span></td>
-     </tr>`).join('')
+     </tr>`;
+  }).join('')
     : '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Sin stock cargado todavía.</td></tr>';
 }
 
@@ -182,13 +221,61 @@ async function loadMovimientos(){
 async function loadLotes(pref){
   const vacId = $(pref+'-vac').value;
   const sel = $(pref+'-lote');
-  if(!vacId){ sel.innerHTML = '<option value="">Seleccionar vacuna primero…</option>'; return; }
-  try{
-    const lotes = await api(`/vacunas/${vacId}/lotes`);
-    sel.innerHTML = lotes.length
-      ? '<option value="">Seleccionar…</option>' + lotes.map(l=>`<option value="${l.id}" data-disp="${l.disponible}">${l.numero_lote} · vence ${fmtFecha(l.vencimiento)} · disp. ${l.disponible}</option>`).join('')
-      : '<option value="">Sin lotes disponibles</option>';
-  }catch(err){ toast('err', err.message); }
+  if(!vacId){ sel.innerHTML = '<option value="">Seleccionar vacuna primero…</option>'; }
+  else {
+    try{
+      const lotes = await api(`/vacunas/${vacId}/lotes`);
+      const d = dpf(vacId);
+      sel.innerHTML = lotes.length
+        ? '<option value="">Seleccionar…</option>' + lotes.map(l=>{
+            const disp = d > 1
+              ? `${Math.floor(l.disponible/d)} fr · ${l.disponible%d} ds (${l.disponible} dosis)`
+              : `disp. ${l.disponible}`;
+            return `<option value="${l.id}" data-disp="${l.disponible}">${l.numero_lote} · vence ${fmtFecha(l.vencimiento)} · ${disp}</option>`;
+          }).join('')
+        : '<option value="">Sin lotes disponibles</option>';
+    }catch(err){ toast('err', err.message); }
+  }
+  // Si es el descarte, también togglear el campo de dosis sueltas
+  if (pref === 'de') toggleDescarteMulti();
+}
+
+/* ---------- Toggle de campos según vacuna seleccionada ---------- */
+// Lote: cambia el label entre "Cantidad de dosis" y "Cantidad de frascos"
+// y muestra abajo el total calculado en dosis.
+function toggleLoteMulti(){
+  const multi = esMulti($('lo-vac').value);
+  const d = dpf($('lo-vac').value);
+  $('lo-cant-lbl').innerHTML = multi
+    ? 'Cantidad de frascos <span class="req">*</span>'
+    : 'Cantidad de dosis <span class="req">*</span>';
+  $('lo-cant').placeholder = multi ? 'Cantidad de frascos' : 'Cantidad de dosis';
+  const hint = $('lo-cant-hint');
+  if (multi) {
+    const frascos = Number($('lo-cant').value) || 0;
+    hint.style.display = 'block';
+    hint.textContent = `Total: ${frascos * d} dosis (${d} dosis por frasco)`;
+  } else {
+    hint.style.display = 'none';
+  }
+}
+// Descarte: cuando es multidosis muestra el segundo campo (dosis sueltas)
+// y reinterpreta el primero como frascos.
+function toggleDescarteMulti(){
+  const multi = esMulti($('de-vac').value);
+  const d = dpf($('de-vac').value);
+  $('de-cant-lbl').innerHTML = multi
+    ? 'Frascos a descartar <span class="req">*</span>'
+    : 'Cantidad de dosis <span class="req">*</span>';
+  $('de-cant').placeholder = multi ? 'Frascos' : 'Dosis';
+  $('de-multi-extra').style.display = multi ? 'block' : 'none';
+  const hint = $('de-total');
+  if (multi) {
+    const fr = Number($('de-cant').value) || 0;
+    const su = Number($('de-sueltas').value) || 0;
+    hint.textContent = `Total: ${fr * d + su} dosis`;
+  }
+  if (!multi) $('de-sueltas').value = '';
 }
 
 /* ---------- Acciones de escritura ---------- */
@@ -221,11 +308,29 @@ function clearAplicacion(pref){
 }
 
 async function saveDescarte(){
-  if(!checkFields(['de-vac','de-lote','de-cant','de-motivo'])) return msg('de-msg','err','Completá todos los campos obligatorios.');
+  // Validación condicional: en multidosis al menos uno de los dos campos numéricos debe tener valor;
+  // en monodosis sólo `de-cant`.
+  const multi = esMulti($('de-vac').value);
+  const d = dpf($('de-vac').value);
+  // Limpiar marcas viejas
+  ['de-vac','de-lote','de-cant','de-sueltas','de-motivo'].forEach(id=>{ const e=$(id); if(e) e.classList.remove('bad'); });
+  // Campos siempre requeridos
+  const reqBasicos = ['de-vac','de-lote','de-motivo'];
+  let bad = false;
+  reqBasicos.forEach(id=>{ if(!$(id).value || !String($(id).value).trim()){ $(id).classList.add('bad'); bad = true; } });
+  const frascos = Number($('de-cant').value) || 0;
+  const sueltas = multi ? (Number($('de-sueltas').value) || 0) : 0;
+  const cantidad = multi ? (frascos * d + sueltas) : frascos;
+  if (!cantidad || cantidad <= 0) {
+    $('de-cant').classList.add('bad');
+    if (multi) $('de-sueltas').classList.add('bad');
+    bad = true;
+  }
+  if (bad) return msg('de-msg','err','Completá todos los campos obligatorios.');
   try{
     await api('/descartes', { method:'POST', body: JSON.stringify({
       lote_id: $('de-lote').value,
-      cantidad: Number($('de-cant').value),
+      cantidad,
       motivo: $('de-motivo').value,
     })});
     msg('de-msg',''); toast('ok','Descarte registrado');
@@ -235,20 +340,25 @@ async function saveDescarte(){
   }catch(err){ msg('de-msg','err', err.message); }
 }
 function clearDescarte(){
-  ['de-vac','de-lote','de-cant','de-motivo'].forEach(id=>{ $(id).value=''; $(id).classList.remove('bad'); });
+  ['de-vac','de-lote','de-cant','de-sueltas','de-motivo'].forEach(id=>{ const e=$(id); if(e){ e.value=''; e.classList.remove('bad'); } });
   $('de-lote').innerHTML='<option value="">Seleccionar vacuna primero…</option>';
   $('de-msg').innerHTML='';
+  toggleDescarteMulti();
 }
 
 async function saveLote(){
   if(!checkFields(['lo-vac','lo-num','lo-venc','lo-cant'])) return msg('lo-msg','err','Completá todos los campos obligatorios.');
   if($('lo-venc').value < today()){ $('lo-venc').classList.add('bad'); return msg('lo-msg','err','La fecha de vencimiento no puede ser anterior a hoy.'); }
+  // Si es multidosis, lo-cant representa FRASCOS; el backend recibe siempre dosis.
+  const multi = esMulti($('lo-vac').value);
+  const d = dpf($('lo-vac').value);
+  const cantidad = multi ? Number($('lo-cant').value) * d : Number($('lo-cant').value);
   try{
     await api('/lotes', { method:'POST', body: JSON.stringify({
       vacuna_id: $('lo-vac').value,
       numero_lote: $('lo-num').value,
       vencimiento: $('lo-venc').value,
-      cantidad: Number($('lo-cant').value),
+      cantidad,
     })});
     msg('lo-msg',''); toast('ok','Lote ingresado con éxito');
     clearLote();
@@ -259,6 +369,7 @@ async function saveLote(){
 function clearLote(){
   ['lo-vac','lo-num','lo-venc','lo-cant'].forEach(id=>{ $(id).value=''; $(id).classList.remove('bad'); });
   $('lo-msg').innerHTML='';
+  toggleLoteMulti();
 }
 
 /* ---------- Usuarios (coordinadora) ---------- */

@@ -32,9 +32,10 @@ CREATE TABLE usuarios (
 -- VACUNAS (catálogo — lista real provista por el CAPS)
 -- ------------------------------------------------------------
 CREATE TABLE vacunas (
-  id        INT AUTO_INCREMENT PRIMARY KEY,
-  nombre    VARCHAR(120) NOT NULL UNIQUE,
-  activa    TINYINT(1) NOT NULL DEFAULT 1
+  id               INT AUTO_INCREMENT PRIMARY KEY,
+  nombre           VARCHAR(120) NOT NULL UNIQUE,
+  dosis_por_frasco INT NOT NULL DEFAULT 1,
+  activa           TINYINT(1) NOT NULL DEFAULT 1
 );
 
 -- ------------------------------------------------------------
@@ -87,23 +88,24 @@ CREATE INDEX idx_mov_fecha    ON movimientos(fecha_mov);
 -- Usuarios: las contraseñas reales se insertan desde seed.js (con hash bcrypt).
 -- Acá quedan documentadas las cuentas; seed.js las crea con su hash.
 
--- Catálogo de vacunas (lista real del CAPS)
-INSERT INTO vacunas (nombre) VALUES
-  ('Antigripal adyuvantada'),
-  ('Antigripal trivalente adultos'),
-  ('Antigripal trivalente pediátrica'),
-  ('Antimeningocócica tetravalente conjugada'),
-  ('Doble bacteriana (dT)'),
-  ('Doble viral (SR)'),
-  ('Hepatitis A'),
-  ('Hepatitis B'),
-  ('Neumococo conjugada VCN 20'),
-  ('Quíntuple'),
-  ('Rotavirus monovalente'),
-  ('Salk'),
-  ('Tetravalente contra el Dengue'),
-  ('Triple bacteriana acelular (dTpa)'),
-  ('Triple viral (SRP)'),
-  ('VPH nonavalente'),
-  ('Varicela'),
-  ('Virus Sincicial Respiratorio');
+-- Catálogo de vacunas (lista real del CAPS).
+-- Las que vienen en frascos multidosis llevan dosis_por_frasco > 1.
+INSERT INTO vacunas (nombre, dosis_por_frasco) VALUES
+  ('Antigripal adyuvantada',                    1),
+  ('Antigripal trivalente adultos',             1),
+  ('Antigripal trivalente pediátrica',          1),
+  ('Antimeningocócica tetravalente conjugada',  1),
+  ('Doble bacteriana (dT)',                    10),
+  ('Doble viral (SR)',                          1),
+  ('Hepatitis A',                               1),
+  ('Hepatitis B',                              10),
+  ('Neumococo conjugada VCN 20',                1),
+  ('Quíntuple',                                 1),
+  ('Rotavirus monovalente',                     1),
+  ('Salk',                                      5),
+  ('Tetravalente contra el Dengue',             1),
+  ('Triple bacteriana acelular (dTpa)',        10),
+  ('Triple viral (SRP)',                        1),
+  ('VPH nonavalente',                           1),
+  ('Varicela',                                  1),
+  ('Virus Sincicial Respiratorio',              1);
