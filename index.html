@@ -110,7 +110,7 @@
         <div class="kpi"><div class="lab">Tipos de vacuna</div><div class="num">0</div><div class="delta">registradas en stock</div></div>
         <div class="kpi"><div class="lab">Unidades totales</div><div class="num">0</div><div class="delta">dosis disponibles</div></div>
         <div class="kpi warn"><div class="lab">Stock bajo</div><div class="num">0</div><div class="delta">requieren reposición</div></div>
-        <div class="kpi orange"><div class="lab">Por vencer</div><div class="num">0</div><div class="delta">próximos 15 días</div></div>
+        <div class="kpi red"><div class="lab">Por vencer</div><div class="num">0</div><div class="delta">próximos 15 días</div></div>
         <div class="kpi red"><div class="lab">Vencidas</div><div class="num">0</div><div class="delta">descartar urgente</div></div>
       </div>
 
@@ -132,9 +132,23 @@
         <div class="toolbar">
           <div class="search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-            <input type="text" placeholder="Buscar vacuna…">
+            <input type="text" id="stock-search" placeholder="Buscar vacuna…" oninput="renderStock()">
           </div>
-          <select><option>Todos los estados</option><option>Stock bajo</option><option>Por vencer</option><option>OK</option></select>
+          <select id="stock-estado" onchange="renderStock()">
+            <option value="">Todos los estados</option>
+            <option value="vencida">Vencidas</option>
+            <option value="exp">Por vencer</option>
+            <option value="low">Stock bajo</option>
+            <option value="ok">OK</option>
+          </select>
+          <select id="stock-orden" onchange="renderStock()">
+            <option value="urgencia">Ordenar por urgencia</option>
+            <option value="venc-asc">Vencimiento más próximo</option>
+            <option value="venc-desc">Vencimiento más lejano</option>
+            <option value="vacuna">Vacuna (A–Z)</option>
+            <option value="disp-asc">Menor stock disponible</option>
+            <option value="disp-desc">Mayor stock disponible</option>
+          </select>
         </div>
         <table>
           <thead><tr><th>Vacuna</th><th>Lote</th><th>Vencimiento</th><th>Cant. inicial</th><th>Disp.</th><th>Estado</th><th></th></tr></thead>

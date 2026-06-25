@@ -192,10 +192,45 @@ async function loadDashboard(){
     : '<li class="alert-empty">Sin vacunas vencidas con stock pendiente de descartar.</li>';
 }
 
+// Cache de la última respuesta del stock para poder re-renderizar con
+// distintos filtros/órdenes sin volver a llamar a la API.
+let STOCK_CACHE = [];
+
 async function loadStock(){
-  const stock = await api('/stock');
+  STOCK_CACHE = await api('/stock');
+  renderStock();
+}
+
+// Orden por urgencia: vencida → exp → low → ok, y dentro de cada grupo
+// por fecha de vencimiento (más próxima primero).
+const ESTADO_PRIO = { vencida: 0, exp: 1, low: 2, ok: 3 };
+
+function renderStock(){
   const ETIQ = { ok:'OK', low:'Stock bajo', exp:'Por vencer', vencida:'Vencida' };
-  $('stockBody').innerHTML = stock.length ? stock.map(r=>{
+  let rows = [...STOCK_CACHE];
+
+  // Filtros
+  const q = ($('stock-search')?.value || '').trim().toLowerCase();
+  const est = $('stock-estado')?.value || '';
+  if (q)   rows = rows.filter(r => r.vacuna.toLowerCase().includes(q));
+  if (est) rows = rows.filter(r => r.estado === est);
+
+  // Orden
+  const ord = $('stock-orden')?.value || 'urgencia';
+  const cmp = {
+    urgencia:   (a,b) => ESTADO_PRIO[a.estado] - ESTADO_PRIO[b.estado]
+                       || a.dias_para_vencer - b.dias_para_vencer
+                       || a.vacuna.localeCompare(b.vacuna),
+    'venc-asc': (a,b) => a.dias_para_vencer - b.dias_para_vencer,
+    'venc-desc':(a,b) => b.dias_para_vencer - a.dias_para_vencer,
+    vacuna:     (a,b) => a.vacuna.localeCompare(b.vacuna)
+                       || a.numero_lote.localeCompare(b.numero_lote),
+    'disp-asc': (a,b) => a.disponible - b.disponible,
+    'disp-desc':(a,b) => b.disponible - a.disponible,
+  }[ord];
+  if (cmp) rows.sort(cmp);
+
+  $('stockBody').innerHTML = rows.length ? rows.map(r=>{
     const multi = Number(r.dosis_por_frasco) > 1;
     const dispCell = multi
       ? `${fmtDisp(r.disponible, r.dosis_por_frasco)} <small style="color:var(--muted);display:block">(${r.disponible} dosis)</small>`
@@ -203,7 +238,6 @@ async function loadStock(){
     const iniCell = multi
       ? `${Math.floor(r.cantidad_inicial / r.dosis_por_frasco)} frascos <small style="color:var(--muted);display:block">(${r.cantidad_inicial} dosis)</small>`
       : `${r.cantidad_inicial}`;
-    // Texto "vence en X días" o "venció hace X días" debajo de la fecha
     const dias = Number(r.dias_para_vencer);
     const venceCell = `${fmtFecha(r.vencimiento)} <small style="color:var(--muted);display:block">${dias < 0 ? 'venció' : 'vence'} ${fmtDias(dias)}</small>`;
     return `<tr>
@@ -215,7 +249,7 @@ async function loadStock(){
        <td data-label="Estado"><span class="pill ${r.estado}">${ETIQ[r.estado]}</span></td>
      </tr>`;
   }).join('')
-    : '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Sin stock cargado todavía.</td></tr>';
+    : '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Sin resultados para los filtros aplicados.</td></tr>';
 }
 
 async function loadMovimientos(){
