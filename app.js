@@ -135,8 +135,10 @@ function applyRole(){
   $('cuentaPerm').textContent = info.perm;
   $('cuentaTipo').textContent = info.tipo;
   const pill = $('rolePill');
-  pill.textContent = info.write ? 'Escritura' : 'Solo lectura';
-  pill.className = 'role-pill ' + (info.write ? 'w' : 'r');
+  if (pill) {
+    pill.textContent = info.write ? 'Escritura' : 'Solo lectura';
+    pill.className = 'role-pill ' + (info.write ? 'w' : 'r');
+  }
   document.querySelectorAll('.enfermeria-only:not(.page)').forEach(e => e.style.display = info.write ? '' : 'none');
   document.querySelectorAll('.coordinadora-only:not(.page)').forEach(e => e.style.display = info.manageUsers ? '' : 'none');
   document.querySelectorAll('.readonly-only').forEach(e => e.style.display = info.write ? 'none' : 'flex');
