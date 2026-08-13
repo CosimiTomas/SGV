@@ -242,6 +242,10 @@ function renderStock(){
       : `${r.cantidad_inicial}`;
     const dias = Number(r.dias_para_vencer);
     const venceCell = `${fmtFecha(r.vencimiento)} <small style="color:var(--muted);display:block">${dias < 0 ? 'venció' : 'vence'} ${fmtDias(dias)}</small>`;
+    // Payload en un data-attribute para no reformatear la fecha después
+    const payload = encodeURIComponent(JSON.stringify({
+      id: r.id, vacuna: r.vacuna, numero_lote: r.numero_lote, vencimiento: r.vencimiento
+    }));
     return `<tr>
        <td data-label="Vacuna"><b>${r.vacuna}</b>${chipMulti(r.dosis_por_frasco)}</td>
        <td data-label="Lote">${r.numero_lote}</td>
@@ -249,9 +253,12 @@ function renderStock(){
        <td data-label="Cant. inicial">${iniCell}</td>
        <td data-label="Disp.">${dispCell}</td>
        <td data-label="Estado"><span class="pill ${r.estado}">${ETIQ[r.estado]}</span></td>
+       <td data-label="" class="enfermeria-only" style="text-align:right">
+         <button class="btn subtle sm" onclick="openEditLote('${payload}')" title="Corregir número de lote o fecha de vencimiento">Editar</button>
+       </td>
      </tr>`;
   }).join('')
-    : '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Sin resultados para los filtros aplicados.</td></tr>';
+    : '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Sin resultados para los filtros aplicados.</td></tr>';
 }
 
 async function loadMovimientos(){
@@ -475,11 +482,113 @@ async function resetPass(id){
   catch(err){ toast('err', err.message); }
 }
 
-/* ---------- Excel (representado: la generación real se implementa en la etapa final) ---------- */
-function openExcelEsp(){ $('ex-msg').innerHTML=''; $('ex-vac').value=''; $('ovExcel').classList.add('on'); }
-function doExcelEsp(){ const v=$('ex-vac'); if(!v.value){ v.classList.add('bad'); return msg('ex-msg','err','Elegí una vacuna.'); } v.classList.remove('bad'); closeOv('ovExcel'); toast('info','Generando Excel — Stock de '+v.options[v.selectedIndex].text+'… (en desarrollo)'); }
-function openExcelMov(){ $('exm-msg').innerHTML=''; $('exm-tipo').value=''; $('ovExcelMov').classList.add('on'); }
-function doExcelMov(){ const t=$('exm-tipo'); if(!t.value){ t.classList.add('bad'); return msg('exm-msg','err','Elegí un tipo de movimiento.'); } t.classList.remove('bad'); closeOv('ovExcelMov'); toast('info','Generando Excel — '+t.value+'… (en desarrollo)'); }
+/* ---------- Excel (descarga real desde el backend) ---------- */
+
+// Descarga un archivo desde un endpoint autenticado (necesita el token).
+// Como <a href> y window.location no llevan el header Authorization,
+// hacemos fetch y creamos un blob para forzar la descarga.
+async function descargarArchivo(path, nombreSugerido) {
+  try {
+    const res = await fetch(API + path, {
+      headers: { 'Authorization': 'Bearer ' + TOKEN },
+    });
+    if (!res.ok) {
+      let msg = 'No se pudo generar el archivo.';
+      try { const j = await res.json(); if (j.error) msg = j.error; } catch {}
+      throw new Error(msg);
+    }
+    // Filename desde el header, si viene; si no usamos el sugerido
+    let filename = nombreSugerido;
+    const cd = res.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename="?([^"]+)"?/i);
+    if (m) filename = m[1];
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    toast('ok', 'Descarga generada');
+  } catch (err) {
+    toast('err', err.message);
+  }
+}
+
+function excelStockGeneral() {
+  descargarArchivo('/reportes/stock', 'SGV_stock.xlsx');
+}
+
+function excelMovimientosCompleto() {
+  descargarArchivo('/reportes/movimientos', 'SGV_movimientos_completo.xlsx');
+}
+
+function openExcelEsp() {
+  $('ex-msg').innerHTML = '';
+  $('ex-vac').value = '';
+  $('ovExcel').classList.add('on');
+}
+function doExcelEsp() {
+  const v = $('ex-vac');
+  if (!v.value) { v.classList.add('bad'); return msg('ex-msg', 'err', 'Elegí una vacuna.'); }
+  v.classList.remove('bad');
+  closeOv('ovExcel');
+  descargarArchivo(`/reportes/stock/${v.value}`, 'SGV_stock_vacuna.xlsx');
+}
+
+function openExcelMov() {
+  $('exm-msg').innerHTML = '';
+  $('exm-tipo').value = '';
+  $('ovExcelMov').classList.add('on');
+}
+function doExcelMov() {
+  const t = $('exm-tipo');
+  if (!t.value) { t.classList.add('bad'); return msg('exm-msg', 'err', 'Elegí un tipo de movimiento.'); }
+  t.classList.remove('bad');
+  closeOv('ovExcelMov');
+  descargarArchivo(`/reportes/movimientos?tipo=${t.value}`, `SGV_movimientos_${t.value}.xlsx`);
+}
+
+/* ---------- Editar lote (corrección de errores de tipeo) ---------- */
+let _editandoLoteId = null;
+
+function openEditLote(payloadEncoded) {
+  try {
+    const data = JSON.parse(decodeURIComponent(payloadEncoded));
+    _editandoLoteId = data.id;
+    $('el-vacuna').value = data.vacuna;
+    $('el-num').value = data.numero_lote;
+    // vencimiento viene como "YYYY-MM-DD" desde el backend (ISO)
+    $('el-venc').value = typeof data.vencimiento === 'string'
+      ? data.vencimiento.slice(0, 10)
+      : new Date(data.vencimiento).toISOString().slice(0, 10);
+    $('el-num').classList.remove('bad');
+    $('el-venc').classList.remove('bad');
+    $('el-msg').innerHTML = '';
+    $('ovEditLote').classList.add('on');
+  } catch (err) {
+    toast('err', 'No se pudo abrir la edición del lote.');
+  }
+}
+
+async function saveEditLote() {
+  const numero = $('el-num').value.trim();
+  const venc = $('el-venc').value;
+  let bad = false;
+  if (!numero) { $('el-num').classList.add('bad'); bad = true; } else $('el-num').classList.remove('bad');
+  if (!venc)   { $('el-venc').classList.add('bad'); bad = true; } else $('el-venc').classList.remove('bad');
+  if (bad) return msg('el-msg', 'err', 'Completá todos los campos.');
+  try {
+    const r = await api(`/lotes/${_editandoLoteId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ numero_lote: numero, vencimiento: venc }),
+    });
+    closeOv('ovEditLote');
+    toast('ok', r.mensaje || 'Lote actualizado.');
+    await Promise.all([loadStock(), loadDashboard()]);
+  } catch (err) {
+    msg('el-msg', 'err', err.message);
+  }
+}
 function closeOv(id){ $(id).classList.remove('on'); }
 
 /* ---------- Init ---------- */

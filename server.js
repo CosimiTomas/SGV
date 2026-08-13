@@ -16,6 +16,7 @@ const path = require('path');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const XLSX = require('xlsx');
 
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || 'dev_secret';
@@ -395,6 +396,31 @@ app.post('/api/lotes', requireAuth, requireRole('enfermeria'), async (req, res) 
   } finally { conn.release(); }
 });
 
+/**
+ * Edición de lote (corrección de errores de tipeo).
+ * Solo se pueden editar el número de lote y la fecha de vencimiento.
+ * No se puede editar la vacuna ni las cantidades para no romper la
+ * trazabilidad de los movimientos ya registrados.
+ */
+app.patch('/api/lotes/:id', requireAuth, requireRole('enfermeria'), async (req, res) => {
+  const { numero_lote, vencimiento } = req.body;
+  if (!numero_lote || !vencimiento)
+    return res.status(400).json({ error: 'Completá el número de lote y la fecha de vencimiento.' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(vencimiento))
+    return res.status(400).json({ error: 'Fecha de vencimiento inválida.' });
+  try {
+    const [r] = await pool.query(
+      'UPDATE lotes SET numero_lote = ?, vencimiento = ? WHERE id = ?',
+      [numero_lote.trim(), vencimiento, req.params.id]
+    );
+    if (!r.affectedRows) return res.status(404).json({ error: 'El lote no existe.' });
+    res.json({ ok: true, mensaje: 'Lote actualizado.' });
+  } catch (err) {
+    console.error('editar lote:', err.message);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
 app.post('/api/aplicaciones', requireAuth, requireRole('enfermeria'), async (req, res) => {
   const { lote_id, cantidad, fecha_aplicacion } = req.body;
   if (!lote_id || !cantidad || !fecha_aplicacion)
@@ -489,6 +515,124 @@ app.get('/api/movimientos', requireAuth, async (req, res) => {
     sql += ' ORDER BY m.fecha_mov DESC LIMIT 200';
     const [rows] = await pool.query(sql, params);
     res.json(rows);
+  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
+});
+
+/* ===========================================================
+ * REPORTES — descarga de Excel (.xlsx)
+ * Todos requieren autenticación. Cualquier rol puede descargar.
+ * ========================================================= */
+// Helper: convierte un array de objetos en un buffer .xlsx y lo devuelve
+// como respuesta HTTP con headers de descarga.
+function sendXlsx(res, filename, sheetName, rows) {
+  const ws = XLSX.utils.json_to_sheet(rows);
+  // Autoancho aproximado por columna
+  if (rows.length > 0) {
+    const cols = Object.keys(rows[0]).map(k => {
+      const maxLen = Math.max(k.length, ...rows.map(r => String(r[k] ?? '').length));
+      return { wch: Math.min(Math.max(maxLen + 2, 10), 40) };
+    });
+    ws['!cols'] = cols;
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(buf);
+}
+
+// Etiqueta de estado a partir de días y disponible (misma lógica que /api/stock)
+function estadoLote(dias, disponible) {
+  if (dias < 0) return 'Vencida';
+  if (dias <= DIAS_VENCIMIENTO) return 'Por vencer';
+  if (disponible <= UMBRAL_STOCK_BAJO) return 'Stock bajo';
+  return 'OK';
+}
+
+// Reporte 1: Stock general (todos los lotes)
+app.get('/api/reportes/stock', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT v.nombre AS vacuna, v.dosis_por_frasco, l.numero_lote, l.vencimiento,
+              l.cantidad_inicial, l.disponible,
+              DATEDIFF(l.vencimiento, CURDATE()) AS dias
+         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
+        ORDER BY v.nombre, l.vencimiento`
+    );
+    const data = rows.map(r => ({
+      'Vacuna': r.vacuna,
+      'Presentación': r.dosis_por_frasco > 1 ? `Frasco x ${r.dosis_por_frasco}` : 'Monodosis',
+      'N° de lote': r.numero_lote,
+      'Vencimiento': r.vencimiento,
+      'Días para vencer': r.dias,
+      'Cantidad inicial (dosis)': r.cantidad_inicial,
+      'Disponible (dosis)': r.disponible,
+      'Frascos disponibles': r.dosis_por_frasco > 1 ? Math.floor(r.disponible / r.dosis_por_frasco) : '',
+      'Estado': estadoLote(r.dias, r.disponible),
+    }));
+    const fecha = new Date().toISOString().slice(0, 10);
+    sendXlsx(res, `SGV_stock_${fecha}.xlsx`, 'Stock', data);
+  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
+});
+
+// Reporte 2: Stock de una vacuna específica
+app.get('/api/reportes/stock/:vacunaId', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT v.nombre AS vacuna, v.dosis_por_frasco, l.numero_lote, l.vencimiento,
+              l.cantidad_inicial, l.disponible,
+              DATEDIFF(l.vencimiento, CURDATE()) AS dias
+         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
+        WHERE v.id = ? ORDER BY l.vencimiento`,
+      [req.params.vacunaId]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'No hay lotes cargados para esa vacuna.' });
+    const vacuna = rows[0].vacuna;
+    const data = rows.map(r => ({
+      'N° de lote': r.numero_lote,
+      'Vencimiento': r.vencimiento,
+      'Días para vencer': r.dias,
+      'Cantidad inicial (dosis)': r.cantidad_inicial,
+      'Disponible (dosis)': r.disponible,
+      'Frascos disponibles': r.dosis_por_frasco > 1 ? Math.floor(r.disponible / r.dosis_por_frasco) : '',
+      'Estado': estadoLote(r.dias, r.disponible),
+    }));
+    const fecha = new Date().toISOString().slice(0, 10);
+    const nombreArchivo = vacuna.replace(/[^\w-]+/g, '_');
+    sendXlsx(res, `SGV_stock_${nombreArchivo}_${fecha}.xlsx`, vacuna.slice(0, 31), data);
+  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
+});
+
+// Reporte 3: Movimientos completo o filtrado por tipo (query ?tipo=ingreso|aplicacion|descarte)
+app.get('/api/reportes/movimientos', requireAuth, async (req, res) => {
+  try {
+    const { tipo } = req.query;
+    let sql =
+      `SELECT m.tipo, v.nombre AS vacuna, l.numero_lote, m.cantidad, m.motivo,
+              m.fecha_aplicacion, m.fecha_mov, u.rol AS responsable
+         FROM movimientos m
+         JOIN vacunas v  ON v.id = m.vacuna_id
+         JOIN lotes l    ON l.id = m.lote_id
+         JOIN usuarios u ON u.id = m.usuario_id`;
+    const params = [];
+    if (tipo && ['aplicacion', 'descarte', 'ingreso'].includes(tipo)) { sql += ' WHERE m.tipo = ?'; params.push(tipo); }
+    sql += ' ORDER BY m.fecha_mov DESC';
+    const [rows] = await pool.query(sql, params);
+    const TIPO_LBL = { ingreso: 'Ingreso', aplicacion: 'Aplicación', descarte: 'Descarte' };
+    const data = rows.map(r => ({
+      'Tipo': TIPO_LBL[r.tipo] || r.tipo,
+      'Vacuna': r.vacuna,
+      'N° de lote': r.numero_lote,
+      'Cantidad (dosis)': r.cantidad,
+      'Motivo': r.motivo || '',
+      'Fecha aplicación': r.fecha_aplicacion || '',
+      'Fecha del movimiento': r.fecha_mov,
+      'Responsable': r.responsable,
+    }));
+    const fecha = new Date().toISOString().slice(0, 10);
+    const suf = tipo ? `_${tipo}` : '_completo';
+    sendXlsx(res, `SGV_movimientos${suf}_${fecha}.xlsx`, 'Movimientos', data);
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
 });
 

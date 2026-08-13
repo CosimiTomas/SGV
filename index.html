@@ -124,7 +124,7 @@
         <div class="panel-head">
           <h4>Inventario</h4>
           <div class="spacer"></div>
-          <button class="btn subtle sm" onclick="toast('info','Generando Excel — Stock general… (representado)')">⬇ Excel · general</button>
+          <button class="btn subtle sm" onclick="excelStockGeneral()">⬇ Excel · general</button>
           <button class="btn subtle sm" onclick="openExcelEsp()">⬇ Excel · específico</button>
         </div>
         <div class="toolbar">
@@ -165,7 +165,7 @@
         <div class="panel-head">
           <h4>Historial</h4>
           <div class="spacer"></div>
-          <button class="btn subtle sm" onclick="toast('info','Generando Excel — Movimientos completo… (representado)')">⬇ Excel · completo</button>
+          <button class="btn subtle sm" onclick="excelMovimientosCompleto()">⬇ Excel · completo</button>
           <button class="btn subtle sm" onclick="openExcelMov()">⬇ Excel · por tipo</button>
         </div>
         <div class="toolbar">
@@ -324,12 +324,41 @@
     <div class="modal-head"><h4>Excel · Movimientos por tipo</h4><button class="x" onclick="closeOv('ovExcelMov')">×</button></div>
     <div class="modal-body">
       <label>Elegí el tipo de movimiento para descargar</label>
-      <select id="exm-tipo"><option value="">Seleccionar…</option><option>Aplicaciones</option><option>Descartes</option><option>Ingresos de lote</option></select>
+      <select id="exm-tipo"><option value="">Seleccionar…</option><option value="aplicacion">Aplicaciones</option><option value="descarte">Descartes</option><option value="ingreso">Ingresos de lote</option></select>
       <div id="exm-msg"></div>
     </div>
     <div class="modal-foot">
       <button class="btn ghost" onclick="closeOv('ovExcelMov')">Cancelar</button>
       <button class="btn" onclick="doExcelMov()">Descargar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL Editar lote -->
+<div class="overlay" id="ovEditLote">
+  <div class="modal">
+    <div class="modal-head"><h4>Editar lote</h4><button class="x" onclick="closeOv('ovEditLote')">×</button></div>
+    <div class="modal-body">
+      <p style="color:var(--muted);font-size:13px;margin-bottom:12px">
+        Corregí errores del número de lote o la fecha de vencimiento. La vacuna y las cantidades no se pueden modificar para preservar la trazabilidad.
+      </p>
+      <div style="margin-bottom:12px">
+        <label>Vacuna</label>
+        <input id="el-vacuna" type="text" disabled style="opacity:.7;cursor:not-allowed">
+      </div>
+      <div style="margin-bottom:12px">
+        <label>Número de lote <span class="req">*</span></label>
+        <input id="el-num" type="text" placeholder="Ej: L-2026-A">
+      </div>
+      <div>
+        <label>Fecha de vencimiento <span class="req">*</span></label>
+        <input id="el-venc" type="date">
+      </div>
+      <div id="el-msg" style="margin-top:10px"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeOv('ovEditLote')">Cancelar</button>
+      <button class="btn" onclick="saveEditLote()">Guardar cambios</button>
     </div>
   </div>
 </div>
