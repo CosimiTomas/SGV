@@ -261,10 +261,49 @@ function renderStock(){
     : '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Sin resultados para los filtros aplicados.</td></tr>';
 }
 
+/* ---------- Movimientos: cache + filtros ---------- */
+let MOV_CACHE = [];
+
 async function loadMovimientos(){
-  const mov = await api('/movimientos');
+  MOV_CACHE = await api('/movimientos');
+  // Poblar el selector de vacunas del filtro con las que efectivamente aparecen
+  // en los movimientos (más útil que listar las 18 del catálogo, muchas sin datos).
+  const sel = $('mv-vac');
+  if (sel) {
+    const nombres = [...new Set(MOV_CACHE.map(m => m.vacuna))].sort();
+    const anterior = sel.value;
+    sel.innerHTML = '<option value="">Todas</option>' +
+      nombres.map(n => `<option value="${n}">${n}</option>`).join('');
+    // Restaurar selección si sigue existiendo
+    if (nombres.includes(anterior)) sel.value = anterior;
+  }
+  renderMovimientos();
+}
+
+// Comparadora: convierte "YYYY-MM-DD" o Date a comparable YYYY-MM-DD
+function toISODate(v){
+  if (!v) return '';
+  if (typeof v === 'string') return v.slice(0, 10);
+  try { return new Date(v).toISOString().slice(0, 10); } catch { return ''; }
+}
+
+function renderMovimientos(){
   const TIPO = { aplicacion:['apl','Aplicación'], descarte:['des','Descarte'], ingreso:['ing','Ingreso lote'] };
-  $('movBody').innerHTML = mov.length ? mov.map(m=>{
+  let rows = [...MOV_CACHE];
+
+  // Aplicar filtros
+  const fTipo  = $('mv-tipo')?.value || '';
+  const fVac   = $('mv-vac')?.value || '';
+  const fDesde = $('mv-desde')?.value || '';
+  const fHasta = $('mv-hasta')?.value || '';
+
+  if (fTipo)  rows = rows.filter(m => m.tipo === fTipo);
+  if (fVac)   rows = rows.filter(m => m.vacuna === fVac);
+  if (fDesde) rows = rows.filter(m => toISODate(m.fecha_mov) >= fDesde);
+  if (fHasta) rows = rows.filter(m => toISODate(m.fecha_mov) <= fHasta);
+
+  // Renderizar cuerpo
+  $('movBody').innerHTML = rows.length ? rows.map(m=>{
     const [cls,lbl] = TIPO[m.tipo];
     return `<tr>
        <td data-label="Fecha mov.">${fmtFecha(m.fecha_mov)}</td>
@@ -276,7 +315,58 @@ async function loadMovimientos(){
        <td data-label="Cant.">${m.cantidad}</td>
        <td data-label="Resp.">${m.responsable}</td>
      </tr>`; }).join('')
-    : '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Sin movimientos registrados.</td></tr>';
+    : '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Sin movimientos que coincidan con los filtros.</td></tr>';
+
+  // Contador y botón de limpiar
+  const total = MOV_CACHE.length;
+  const contador = $('mv-contador');
+  if (contador) {
+    contador.innerHTML = rows.length === total
+      ? `Mostrando <b>${total}</b> ${total === 1 ? 'movimiento' : 'movimientos'}`
+      : `Mostrando <b>${rows.length}</b> de <b>${total}</b> movimientos`;
+  }
+  const hayFiltros = !!(fTipo || fVac || fDesde || fHasta);
+  const btnLimpiar = $('mv-limpiar');
+  if (btnLimpiar) btnLimpiar.style.display = hayFiltros ? '' : 'none';
+}
+
+// Rangos rápidos: setean fechas y actualizan
+function mvSetRango(rango){
+  const hoy = new Date();
+  const iso = d => d.toISOString().slice(0, 10);
+  let desde = '', hasta = '';
+  if (rango === 'hoy') {
+    desde = hasta = iso(hoy);
+  } else if (rango === '7d') {
+    const ini = new Date(hoy); ini.setDate(ini.getDate() - 6);
+    desde = iso(ini); hasta = iso(hoy);
+  } else if (rango === 'mes') {
+    desde = iso(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
+    hasta = iso(hoy);
+  }
+  // 'todo' deja desde y hasta vacíos
+  $('mv-desde').value = desde;
+  $('mv-hasta').value = hasta;
+  // Marcar el chip activo
+  document.querySelectorAll('.chip-rango').forEach(c => c.classList.remove('active'));
+  document.querySelector(`.chip-rango[data-rango="${rango}"]`)?.classList.add('active');
+  renderMovimientos();
+}
+
+// Si el usuario toca las fechas a mano, desactivar el chip de rango rápido
+function mvOnFechaManual(){
+  document.querySelectorAll('.chip-rango').forEach(c => c.classList.remove('active'));
+  renderMovimientos();
+}
+
+function mvClearFiltros(){
+  $('mv-tipo').value = '';
+  $('mv-vac').value = '';
+  $('mv-desde').value = '';
+  $('mv-hasta').value = '';
+  document.querySelectorAll('.chip-rango').forEach(c => c.classList.remove('active'));
+  document.querySelector('.chip-rango[data-rango="todo"]')?.classList.add('active');
+  renderMovimientos();
 }
 
 /* ---------- Selectores de lote ---------- */

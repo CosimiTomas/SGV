@@ -168,10 +168,42 @@
           <button class="btn subtle sm" onclick="excelMovimientosCompleto()">⬇ Excel · completo</button>
           <button class="btn subtle sm" onclick="openExcelMov()">⬇ Excel · por tipo</button>
         </div>
-        <div class="toolbar">
-          <select><option>Todos los tipos</option><option>Aplicaciones</option><option>Descartes</option><option>Ingresos de lote</option></select>
-          <input type="date">
-          <span style="font-size:13px;color:var(--muted)">→ filtro por fecha</span>
+        <div class="toolbar mov-filtros">
+          <div class="mov-rango-rapido">
+            <button type="button" class="chip-rango" data-rango="hoy" onclick="mvSetRango('hoy')">Hoy</button>
+            <button type="button" class="chip-rango" data-rango="7d" onclick="mvSetRango('7d')">Últimos 7 días</button>
+            <button type="button" class="chip-rango" data-rango="mes" onclick="mvSetRango('mes')">Este mes</button>
+            <button type="button" class="chip-rango active" data-rango="todo" onclick="mvSetRango('todo')">Todo</button>
+          </div>
+          <div class="mov-filtros-detalle">
+            <div class="mov-campo">
+              <label>Tipo</label>
+              <select id="mv-tipo" onchange="renderMovimientos()">
+                <option value="">Todos</option>
+                <option value="ingreso">Ingreso</option>
+                <option value="aplicacion">Aplicación</option>
+                <option value="descarte">Descarte</option>
+              </select>
+            </div>
+            <div class="mov-campo">
+              <label>Vacuna</label>
+              <select id="mv-vac" onchange="renderMovimientos()">
+                <option value="">Todas</option>
+              </select>
+            </div>
+            <div class="mov-campo">
+              <label>Desde</label>
+              <input type="date" id="mv-desde" onchange="mvOnFechaManual()">
+            </div>
+            <div class="mov-campo">
+              <label>Hasta</label>
+              <input type="date" id="mv-hasta" onchange="mvOnFechaManual()">
+            </div>
+          </div>
+          <div class="mov-info">
+            <span id="mv-contador" class="mov-contador">Mostrando 0 movimientos</span>
+            <button type="button" id="mv-limpiar" class="btn ghost sm" onclick="mvClearFiltros()" style="display:none">Limpiar filtros</button>
+          </div>
         </div>
         <table>
           <thead><tr><th>Fecha mov.</th><th>Fecha aplic.</th><th>Vacuna</th><th>Lote</th><th>Tipo</th><th>Motivo</th><th>Cant.</th><th>Resp.</th></tr></thead>

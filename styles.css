@@ -640,3 +640,75 @@
 /* KPI naranja para "Por vencer" — diferencia del rojo (Vencidas) */
 .kpi.orange::after{background:#C25E1A}
 .kpi.orange .num{color:#C25E1A}
+
+/* ============================================================
+   Filtros de movimientos (pensados para uso rápido de enfermería)
+   ============================================================ */
+.mov-filtros{
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+  padding:14px 16px;
+  background:#F7FAF9;
+  border-radius:var(--r-md);
+  margin-bottom:14px;
+}
+.mov-rango-rapido{ display:flex; gap:8px; flex-wrap:wrap; }
+.chip-rango{
+  padding:6px 14px;
+  border-radius:999px;
+  border:1px solid var(--line);
+  background:#fff;
+  color:var(--text);
+  font-size:13px;
+  font-weight:500;
+  cursor:pointer;
+  transition:all .15s ease;
+}
+.chip-rango:hover{ border-color:var(--teal); color:var(--teal-deep); }
+.chip-rango.active{
+  background:var(--teal);
+  color:#fff;
+  border-color:var(--teal-deep);
+  font-weight:600;
+}
+.mov-filtros-detalle{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+  gap:10px;
+}
+.mov-campo{ display:flex; flex-direction:column; gap:4px; }
+.mov-campo label{
+  font-size:11px;
+  font-weight:600;
+  color:var(--muted);
+  text-transform:uppercase;
+  letter-spacing:.03em;
+  margin:0;
+}
+.mov-campo select, .mov-campo input{
+  padding:8px 10px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  font-size:13.5px;
+  font-family:inherit;
+  color:var(--text);
+  background:#fff;
+}
+.mov-campo select:focus, .mov-campo input:focus{
+  outline:none;
+  border-color:var(--teal);
+  box-shadow:0 0 0 3px var(--teal-tint);
+}
+.mov-info{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  font-size:13px;
+}
+.mov-contador{
+  color:var(--muted);
+  font-weight:500;
+}
+.mov-contador b{ color:var(--text); }
