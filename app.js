@@ -182,16 +182,28 @@ async function loadDashboard(){
   const low = d.alertas.stockBajo, exp = d.alertas.porVencer, vencidas = d.alertas.vencidas || [];
   const lowUl = document.querySelector('#page-inicio .alert.low ul');
   const expUl = document.querySelector('#page-inicio .alert.exp ul');
-  const vencUl = document.querySelector('#page-inicio .alert.vencida ul');
   if (lowUl) lowUl.innerHTML = low.length
     ? low.map(a=>`<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — quedan ${fmtDisp(a.disponible, a.dosis_por_frasco)}</li>`).join('')
     : '<li class="alert-empty">Sin vacunas con stock bajo.</li>';
   if (expUl) expUl.innerHTML = exp.length
     ? exp.map(a=>`<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — vence <b>${fmtFecha(a.vencimiento)}</b> (${fmtDias(a.dias)})</li>`).join('')
     : '<li class="alert-empty">Sin vacunas próximas a vencer.</li>';
-  if (vencUl) vencUl.innerHTML = vencidas.length
-    ? vencidas.map(a=>`<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — venció <b>${fmtFecha(a.vencimiento)}</b> (${fmtDias(a.dias)}) · quedan ${fmtDisp(a.disponible, a.dosis_por_frasco)} sin descartar</li>`).join('')
-    : '<li class="alert-empty">Sin vacunas vencidas con stock pendiente de descartar.</li>';
+
+  // Banner de vencidas: solo se muestra si hay lotes vencidos
+  const banner = $('bannerVencidas');
+  if (banner) {
+    if (vencidas.length > 0) {
+      const n = vencidas.length;
+      $('bannerVencidasTitulo').textContent =
+        `${n} ${n === 1 ? 'lote vencido' : 'lotes vencidos'} sin descartar`;
+      // Nombres únicos de vacunas afectadas, separados por punto medio
+      const nombres = [...new Set(vencidas.map(v => v.vacuna))];
+      $('bannerVencidasLista').textContent = nombres.join(' · ');
+      banner.style.display = 'flex';
+    } else {
+      banner.style.display = 'none';
+    }
+  }
 }
 
 // Cache de la última respuesta del stock para poder re-renderizar con
@@ -508,6 +520,24 @@ async function limpiarTodo(){
   if (!ok) return;
   try {
     const r = await api('/admin/reset', { method: 'POST' });
+    toast('ok', r.mensaje);
+    await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
+    go('inicio');
+  } catch (err) {
+    toast('err', err.message);
+  }
+}
+
+/* Cargar lotes de prueba variados — solo fase de desarrollo.
+   No borra datos existentes: los agrega. */
+async function cargarPrueba(){
+  const ok = confirm(
+    'Se van a agregar ~11 lotes de prueba y varios movimientos para poder probar todos los estados (OK, stock bajo, por vencer, vencidas, multidosis) y los filtros de fecha.\n\n' +
+    'No borra nada de lo que ya está cargado. ¿Continuar?'
+  );
+  if (!ok) return;
+  try {
+    const r = await api('/admin/cargar-prueba', { method: 'POST' });
     toast('ok', r.mensaje);
     await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
     go('inicio');

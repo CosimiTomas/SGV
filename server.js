@@ -497,6 +497,122 @@ app.post('/api/admin/reset', requireAuth, requireRole('enfermeria'), async (req,
   } finally { conn.release(); }
 });
 
+/**
+ * Carga datos de prueba variados (fase de desarrollo).
+ * Agrega lotes que cubren todos los estados posibles: OK, stock bajo,
+ * por vencer, vencidos, monodosis y multidosis. También agrega algunas
+ * aplicaciones y descartes distribuidos en el tiempo para poder probar
+ * los filtros del historial. NO borra los datos existentes.
+ */
+app.post('/api/admin/cargar-prueba', requireAuth, requireRole('enfermeria'), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // Traer catálogo para conseguir vacuna_id por nombre
+    const [vacs] = await conn.query('SELECT id, nombre, dosis_por_frasco FROM vacunas');
+    const vacPorNombre = Object.fromEntries(vacs.map(v => [v.nombre, v]));
+
+    // Lotes de prueba, distribuidos para cubrir todos los estados posibles.
+    // "diasVenc" es relativo a hoy: negativo = vencido, positivo = a futuro.
+    const lotesPrueba = [
+      // OK: buen stock, vence lejos
+      { vacuna: 'Triple viral (SRP)',            lote: 'TP-2027-A', diasVenc:  180, cantidad: 60 },
+      { vacuna: 'Rotavirus monovalente',         lote: 'RV-2027-A', diasVenc:  210, cantidad: 45 },
+      { vacuna: 'Antimeningocócica tetravalente conjugada', lote: 'AM-2027-A', diasVenc: 300, cantidad: 40 },
+      // Stock bajo: poco disponible pero vence lejos
+      { vacuna: 'Doble viral (SR)',              lote: 'DV-2027-B', diasVenc:  150, cantidad: 8 },
+      { vacuna: 'Varicela',                      lote: 'VR-2027-B', diasVenc:  120, cantidad: 5 },
+      // Por vencer: buen stock pero cerca de vencer
+      { vacuna: 'Hepatitis A',                   lote: 'HA-2026-C', diasVenc:    7, cantidad: 30 },
+      { vacuna: 'Neumococo conjugada VCN 20',    lote: 'NM-2026-C', diasVenc:   12, cantidad: 25 },
+      // Vencidos: para probar el banner y la acción "descartar todas las vencidas"
+      { vacuna: 'Antigripal trivalente adultos', lote: 'AG-2026-D', diasVenc:   -5, cantidad: 15 },
+      { vacuna: 'Doble bacteriana (dT)',         lote: 'DT-2026-D', diasVenc:  -10, cantidad: 20 }, // multidosis
+      // Multidosis con estado OK (para verlo con chip)
+      { vacuna: 'Salk',                          lote: 'SK-2027-E', diasVenc:  180, cantidad: 50 },
+      { vacuna: 'Hepatitis B',                   lote: 'HB-2027-E', diasVenc:  240, cantidad: 40 }, // multidosis
+    ];
+
+    let creados = 0;
+    const lotesCreados = [];
+    const hoy = new Date();
+
+    for (const l of lotesPrueba) {
+      const vac = vacPorNombre[l.vacuna];
+      if (!vac) continue;
+      const venc = new Date(hoy);
+      venc.setDate(venc.getDate() + l.diasVenc);
+      const vencStr = venc.toISOString().slice(0, 10);
+
+      // Insertar lote
+      const [r] = await conn.query(
+        `INSERT INTO lotes (vacuna_id, numero_lote, vencimiento, cantidad_inicial, disponible)
+         VALUES (?,?,?,?,?)`,
+        [vac.id, l.lote, vencStr, l.cantidad, l.cantidad]
+      );
+      // Movimiento de ingreso
+      await conn.query(
+        `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, usuario_id)
+         VALUES ('ingreso',?,?,?,?)`,
+        [vac.id, r.insertId, l.cantidad, req.user.id]
+      );
+      creados++;
+      lotesCreados.push({ id: r.insertId, vacuna_id: vac.id, cantidad: l.cantidad });
+    }
+
+    // Aplicaciones de prueba distribuidas en los últimos días
+    // (para probar los filtros de fecha en Movimientos)
+    const aplicaciones = [
+      { loteIdx: 0, cantidad: 3, diasAtras: 0 },   // hoy
+      { loteIdx: 0, cantidad: 2, diasAtras: 1 },   // ayer
+      { loteIdx: 1, cantidad: 5, diasAtras: 2 },
+      { loteIdx: 2, cantidad: 8, diasAtras: 5 },   // hace 5 días
+      { loteIdx: 3, cantidad: 2, diasAtras: 7 },   // hace 1 semana
+      { loteIdx: 5, cantidad: 4, diasAtras: 10 },
+      { loteIdx: 9, cantidad: 3, diasAtras: 15 },
+    ];
+    for (const a of aplicaciones) {
+      const lote = lotesCreados[a.loteIdx];
+      if (!lote || a.cantidad > lote.cantidad) continue;
+      const fecha = new Date(hoy);
+      fecha.setDate(fecha.getDate() - a.diasAtras);
+      const fechaStr = fecha.toISOString().slice(0, 10);
+      await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [a.cantidad, lote.id]);
+      await conn.query(
+        `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, fecha_aplicacion, fecha_mov, usuario_id)
+         VALUES ('aplicacion',?,?,?,?,?,?)`,
+        [lote.vacuna_id, lote.id, a.cantidad, fechaStr, fechaStr + ' 10:30:00', req.user.id]
+      );
+      lote.cantidad -= a.cantidad;
+    }
+
+    // Un descarte de prueba (para tener los tres tipos en el historial)
+    if (lotesCreados[4]) {
+      const l = lotesCreados[4];
+      const fecha = new Date(hoy);
+      fecha.setDate(fecha.getDate() - 3);
+      await conn.query('UPDATE lotes SET disponible = disponible - 1 WHERE id = ?', [l.id]);
+      await conn.query(
+        `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, motivo, fecha_mov, usuario_id)
+         VALUES ('descarte',?,?,?,?,?,?)`,
+        [l.vacuna_id, l.id, 1, 'Rotura / derrame', fecha.toISOString().slice(0, 19).replace('T', ' '), req.user.id]
+      );
+    }
+
+    await conn.commit();
+    res.json({
+      ok: true,
+      lotes: creados,
+      mensaje: `Se cargaron ${creados} lotes de prueba con movimientos variados.`,
+    });
+  } catch (err) {
+    await conn.rollback();
+    console.error('admin/cargar-prueba:', err.message);
+    res.status(500).json({ error: 'Error del servidor: ' + err.message });
+  } finally { conn.release(); }
+});
+
 /* ===========================================================
  * HISTORIAL — RF08
  * ========================================================= */
