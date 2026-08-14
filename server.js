@@ -353,7 +353,8 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
     );
     // Vencidas = ya pasó la fecha y todavía hay stock disponible (no se descartó)
     const [vencidas] = await pool.query(
-      `SELECT v.nombre AS vacuna, v.dosis_por_frasco, l.vencimiento, DATEDIFF(l.vencimiento, CURDATE()) AS dias, l.disponible
+      `SELECT l.id AS lote_id, v.id AS vacuna_id, v.nombre AS vacuna, v.dosis_por_frasco,
+              l.numero_lote, l.vencimiento, DATEDIFF(l.vencimiento, CURDATE()) AS dias, l.disponible
          FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
         WHERE DATEDIFF(l.vencimiento, CURDATE()) < 0 AND l.disponible > 0
         ORDER BY l.vencimiento`

@@ -166,6 +166,9 @@ async function loadVacunas(){
   if ($('ap-fecha')) $('ap-fecha').value = today();
 }
 
+// Guardamos la lista de vencidas para poder saltar al descarte precargado
+let VENCIDAS_CACHE = [];
+
 async function loadDashboard(){
   const d = await api('/dashboard');
   // KPIs (5: tipos, unidades, stockBajo, porVencer, vencidas)
@@ -180,6 +183,7 @@ async function loadDashboard(){
   }
   // Alertas
   const low = d.alertas.stockBajo, exp = d.alertas.porVencer, vencidas = d.alertas.vencidas || [];
+  VENCIDAS_CACHE = vencidas;
   const lowUl = document.querySelector('#page-inicio .alert.low ul');
   const expUl = document.querySelector('#page-inicio .alert.exp ul');
   if (lowUl) lowUl.innerHTML = low.length
@@ -204,6 +208,31 @@ async function loadDashboard(){
       banner.style.display = 'none';
     }
   }
+}
+
+/* Va al descarte con el primer lote vencido ya precargado en el formulario. */
+async function irADescartar(){
+  if (VENCIDAS_CACHE.length === 0) { go('descarte'); return; }
+  const primero = VENCIDAS_CACHE[0];
+  go('descarte');
+  // Precargamos la vacuna, cargamos sus lotes y elegimos el que venció
+  const selVac = $('de-vac');
+  selVac.value = String(primero.vacuna_id);
+  await loadLotes('de');
+  $('de-lote').value = String(primero.lote_id);
+  $('de-motivo').value = 'Vencimiento';
+  // Si es multidosis, autocompletamos frascos+sueltas con el total disponible
+  const multi = esMulti(primero.vacuna_id);
+  if (multi) {
+    const d = dpf(primero.vacuna_id);
+    const frascos = Math.floor(primero.disponible / d);
+    const sueltas = primero.disponible % d;
+    $('de-cant').value = frascos;
+    $('de-sueltas').value = sueltas;
+  } else {
+    $('de-cant').value = primero.disponible;
+  }
+  toggleDescarteMulti();
 }
 
 // Cache de la última respuesta del stock para poder re-renderizar con
