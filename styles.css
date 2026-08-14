@@ -642,21 +642,61 @@
 .kpi.orange .num{color:#C25E1A}
 
 /* ============================================================
-   Filtros de movimientos (pensados para uso rápido de enfermería)
+   Página Movimientos: layout con sidebar de filtros a la izquierda
    ============================================================ */
-.mov-filtros{
+.mov-layout{
+  display:grid;
+  grid-template-columns: 240px 1fr;
+  gap:20px;
+  align-items:start;
+}
+
+.mov-sidebar{
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:var(--r-md);
+  padding:16px;
   display:flex;
   flex-direction:column;
   gap:14px;
-  padding:14px 16px;
-  background:#F7FAF9;
-  border-radius:var(--r-md);
-  margin-bottom:14px;
+  position:sticky;
+  top:80px;
 }
-.mov-rango-rapido{ display:flex; gap:8px; flex-wrap:wrap; }
+.mov-sidebar-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding-bottom:10px;
+  border-bottom:1px solid var(--line);
+}
+.mov-sidebar-head h4{
+  margin:0;
+  font-size:14px;
+  font-weight:700;
+  color:var(--text);
+  text-transform:uppercase;
+  letter-spacing:.03em;
+}
+.btn-limpiar{
+  background:none;
+  border:none;
+  color:var(--teal-deep);
+  font-size:12px;
+  font-weight:600;
+  cursor:pointer;
+  padding:2px 6px;
+  border-radius:4px;
+}
+.btn-limpiar:hover{ background:var(--teal-tint); }
+
+.mov-rango-rapido{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
 .chip-rango{
-  padding:6px 14px;
-  border-radius:999px;
+  padding:8px 12px;
+  border-radius:8px;
   border:1px solid var(--line);
   background:#fff;
   color:var(--text);
@@ -664,6 +704,7 @@
   font-weight:500;
   cursor:pointer;
   transition:all .15s ease;
+  text-align:left;
 }
 .chip-rango:hover{ border-color:var(--teal); color:var(--teal-deep); }
 .chip-rango.active{
@@ -672,11 +713,7 @@
   border-color:var(--teal-deep);
   font-weight:600;
 }
-.mov-filtros-detalle{
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
-  gap:10px;
-}
+
 .mov-campo{ display:flex; flex-direction:column; gap:4px; }
 .mov-campo label{
   font-size:11px;
@@ -694,21 +731,38 @@
   font-family:inherit;
   color:var(--text);
   background:#fff;
+  width:100%;
 }
 .mov-campo select:focus, .mov-campo input:focus{
   outline:none;
   border-color:var(--teal);
   box-shadow:0 0 0 3px var(--teal-tint);
 }
-.mov-info{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:12px;
-  font-size:13px;
-}
+
+.mov-main{ min-width:0; /* evita que la tabla desborde el grid */ }
 .mov-contador{
   color:var(--muted);
+  font-size:13px;
   font-weight:500;
+  margin-left:12px;
 }
 .mov-contador b{ color:var(--text); }
+
+/* Responsive: en pantallas chicas, filtros arriba en horizontal */
+@media (max-width: 900px){
+  .mov-layout{
+    grid-template-columns: 1fr;
+  }
+  .mov-sidebar{
+    position:static;
+  }
+  .mov-rango-rapido{
+    flex-direction:row;
+    flex-wrap:wrap;
+  }
+  .chip-rango{
+    flex:1;
+    min-width:80px;
+    text-align:center;
+  }
+}
