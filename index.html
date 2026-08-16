@@ -225,8 +225,7 @@
             <h4>Historial</h4>
             <span id="mv-contador" class="mov-contador">Mostrando 0 movimientos</span>
             <div class="spacer"></div>
-            <button class="btn subtle sm" onclick="excelMovimientosCompleto()">⬇ Excel · completo</button>
-            <button class="btn subtle sm" onclick="openExcelMov()">⬇ Excel · por tipo</button>
+            <button class="btn subtle sm" onclick="excelMovimientosFiltrado()" title="Descarga los movimientos que se ven ahora en pantalla con los filtros aplicados">⬇ Excel</button>
           </div>
           <table>
             <thead><tr><th>Fecha mov.</th><th>Fecha aplic.</th><th>Vacuna</th><th>Lote</th><th>Tipo</th><th>Motivo</th><th>Cant.</th><th>Resp.</th></tr></thead>
@@ -420,21 +419,6 @@
 </div>
 
 <!-- MODAL Excel por tipo (movimientos) -->
-<div class="overlay" id="ovExcelMov">
-  <div class="modal">
-    <div class="modal-head"><h4>Excel · Movimientos por tipo</h4><button class="x" onclick="closeOv('ovExcelMov')">×</button></div>
-    <div class="modal-body">
-      <label>Elegí el tipo de movimiento para descargar</label>
-      <select id="exm-tipo"><option value="">Seleccionar…</option><option value="aplicacion">Aplicaciones</option><option value="descarte">Descartes</option><option value="ingreso">Ingresos de lote</option></select>
-      <div id="exm-msg"></div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn ghost" onclick="closeOv('ovExcelMov')">Cancelar</button>
-      <button class="btn" onclick="doExcelMov()">Descargar</button>
-    </div>
-  </div>
-</div>
-
 <!-- MODAL Editar lote -->
 <div class="overlay" id="ovEditLote">
   <div class="modal">

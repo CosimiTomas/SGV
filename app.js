@@ -899,8 +899,25 @@ function excelStockGeneral() {
   descargarArchivo('/reportes/stock', 'SGV_stock.xlsx');
 }
 
-function excelMovimientosCompleto() {
-  descargarArchivo('/reportes/movimientos', 'SGV_movimientos_completo.xlsx');
+/**
+ * Descarga los movimientos aplicando exactamente los filtros que están
+ * activos en el sidebar (tipo, vacuna, desde, hasta). Si no hay ninguno,
+ * descarga el historial completo.
+ */
+function excelMovimientosFiltrado() {
+  const params = new URLSearchParams();
+  const tipo  = $('mv-tipo')?.value;
+  const vac   = $('mv-vac')?.value;
+  const desde = $('mv-desde')?.value;
+  const hasta = $('mv-hasta')?.value;
+  if (tipo)  params.set('tipo', tipo);
+  if (vac)   params.set('vacuna', vac);
+  if (desde) params.set('desde', desde);
+  if (hasta) params.set('hasta', hasta);
+  const qs = params.toString();
+  const url = '/reportes/movimientos' + (qs ? '?' + qs : '');
+  const suf = qs ? 'filtrado' : 'completo';
+  descargarArchivo(url, `SGV_movimientos_${suf}.xlsx`);
 }
 
 function openExcelEsp() {
@@ -914,19 +931,6 @@ function doExcelEsp() {
   v.classList.remove('bad');
   closeOv('ovExcel');
   descargarArchivo(`/reportes/stock/${v.value}`, 'SGV_stock_vacuna.xlsx');
-}
-
-function openExcelMov() {
-  $('exm-msg').innerHTML = '';
-  $('exm-tipo').value = '';
-  $('ovExcelMov').classList.add('on');
-}
-function doExcelMov() {
-  const t = $('exm-tipo');
-  if (!t.value) { t.classList.add('bad'); return msg('exm-msg', 'err', 'Elegí un tipo de movimiento.'); }
-  t.classList.remove('bad');
-  closeOv('ovExcelMov');
-  descargarArchivo(`/reportes/movimientos?tipo=${t.value}`, `SGV_movimientos_${t.value}.xlsx`);
 }
 
 /* ---------- Editar lote (corrección de errores de tipeo) ---------- */

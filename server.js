@@ -16,7 +16,7 @@ const path = require('path');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const XLSX = require('xlsx');
+const XLSX = require('xlsx-js-style');
 
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || 'dev_secret';
@@ -639,19 +639,147 @@ app.get('/api/movimientos', requireAuth, async (req, res) => {
  * REPORTES — descarga de Excel (.xlsx)
  * Todos requieren autenticación. Cualquier rol puede descargar.
  * ========================================================= */
-// Helper: convierte un array de objetos en un buffer .xlsx y lo devuelve
-// como respuesta HTTP con headers de descarga.
-function sendXlsx(res, filename, sheetName, rows) {
-  const ws = XLSX.utils.json_to_sheet(rows);
-  // Autoancho aproximado por columna
-  if (rows.length > 0) {
-    const cols = Object.keys(rows[0]).map(k => {
-      const maxLen = Math.max(k.length, ...rows.map(r => String(r[k] ?? '').length));
-      return { wch: Math.min(Math.max(maxLen + 2, 10), 40) };
-    });
-    ws['!cols'] = cols;
+// Estilos base reutilizables (paleta alineada con la app)
+const XLSX_STYLES = {
+  border: {
+    top:    { style: 'thin', color: { rgb: 'D0D5DD' } },
+    bottom: { style: 'thin', color: { rgb: 'D0D5DD' } },
+    left:   { style: 'thin', color: { rgb: 'D0D5DD' } },
+    right:  { style: 'thin', color: { rgb: 'D0D5DD' } },
+  },
+  header: {
+    fill: { patternType: 'solid', fgColor: { rgb: '0FA99E' } },
+    font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11, name: 'Calibri' },
+    alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+  },
+  cellBase: {
+    font: { sz: 10, name: 'Calibri' },
+    alignment: { vertical: 'center', wrapText: true },
+  },
+  zebra: {
+    fill: { patternType: 'solid', fgColor: { rgb: 'F7FAF9' } },
+  },
+};
+
+// Paleta de estado (Stock)
+const ESTADO_STYLE = {
+  'Vencida':     { fill: { patternType: 'solid', fgColor: { rgb: 'FDE8E4' } }, font: { bold: true, color: { rgb: '7A1E14' }, sz: 10, name: 'Calibri' } },
+  'Por vencer':  { fill: { patternType: 'solid', fgColor: { rgb: 'FEECEB' } }, font: { bold: true, color: { rgb: 'A02814' }, sz: 10, name: 'Calibri' } },
+  'Stock bajo':  { fill: { patternType: 'solid', fgColor: { rgb: 'FDF3D9' } }, font: { bold: true, color: { rgb: '795000' }, sz: 10, name: 'Calibri' } },
+  'OK':          { fill: { patternType: 'solid', fgColor: { rgb: 'E4F4EA' } }, font: { bold: true, color: { rgb: '155F35' }, sz: 10, name: 'Calibri' } },
+};
+// Paleta de tipo de movimiento
+const TIPO_STYLE = {
+  'Ingreso':    { fill: { patternType: 'solid', fgColor: { rgb: 'E4F4EA' } }, font: { bold: true, color: { rgb: '155F35' }, sz: 10, name: 'Calibri' } },
+  'Aplicación': { fill: { patternType: 'solid', fgColor: { rgb: 'E4EFF9' } }, font: { bold: true, color: { rgb: '134A7E' }, sz: 10, name: 'Calibri' } },
+  'Descarte':   { fill: { patternType: 'solid', fgColor: { rgb: 'FEECEB' } }, font: { bold: true, color: { rgb: 'A02814' }, sz: 10, name: 'Calibri' } },
+};
+
+// Convierte índice numérico (0-based) a letra de columna Excel (0→A, 25→Z, 26→AA)
+function colLetter(idx) {
+  let s = '';
+  idx++;
+  while (idx > 0) {
+    const rem = (idx - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    idx = Math.floor((idx - 1) / 26);
   }
+  return s;
+}
+
+/**
+ * Genera un .xlsx con formato profesional: header teal, bordes finos en
+ * todas las celdas, zebra en filas alternadas, y coloreado condicional
+ * de columnas específicas (Estado / Tipo).
+ *
+ * @param {*} res response HTTP
+ * @param {string} filename nombre del archivo
+ * @param {string} sheetName nombre de la hoja
+ * @param {Array<Object>} rows array de objetos con los datos
+ * @param {Object} opts { colorearCol: 'Nombre', paleta: {valor: styleObj}, tituloReporte: 'Texto opcional' }
+ */
+function sendXlsx(res, filename, sheetName, rows, opts = {}) {
   const wb = XLSX.utils.book_new();
+  const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
+
+  // Armamos la matriz manualmente para tener control total sobre el estilo
+  // Si viene título de reporte, va en la fila 1 fusionado; los datos empiezan más abajo
+  let filaInicioDatos = 0;
+  const aoa = [];
+  const merges = [];
+
+  if (opts.tituloReporte) {
+    aoa.push([opts.tituloReporte]);
+    aoa.push([`Generado: ${new Date().toLocaleString('es-AR')}`]);
+    aoa.push([]); // fila en blanco
+    filaInicioDatos = 3;
+    if (headers.length > 1) {
+      merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } });
+      merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } });
+    }
+  }
+  aoa.push(headers);
+  rows.forEach(r => aoa.push(headers.map(h => r[h] ?? '')));
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  if (merges.length) ws['!merges'] = merges;
+
+  // Autoancho por columna
+  ws['!cols'] = headers.map(h => {
+    const maxLen = Math.max(h.length, ...rows.map(r => String(r[h] ?? '').length));
+    return { wch: Math.min(Math.max(maxLen + 2, 12), 42) };
+  });
+
+  // Altura mínima para header
+  ws['!rows'] = [];
+  if (opts.tituloReporte) {
+    ws['!rows'][0] = { hpt: 24 };
+    ws['!rows'][1] = { hpt: 16 };
+  }
+  ws['!rows'][filaInicioDatos] = { hpt: 28 };
+
+  // Estilos del título si lo hay
+  if (opts.tituloReporte) {
+    ws[colLetter(0) + '1'].s = {
+      font: { bold: true, sz: 14, color: { rgb: '0B5C56' }, name: 'Calibri' },
+      alignment: { horizontal: 'left', vertical: 'center' },
+    };
+    ws[colLetter(0) + '2'].s = {
+      font: { italic: true, sz: 9, color: { rgb: '6B7572' }, name: 'Calibri' },
+      alignment: { horizontal: 'left', vertical: 'center' },
+    };
+  }
+
+  // Estilos del header
+  headers.forEach((_, c) => {
+    const addr = colLetter(c) + (filaInicioDatos + 1);
+    if (ws[addr]) ws[addr].s = { ...XLSX_STYLES.header, border: XLSX_STYLES.border };
+  });
+
+  // Estilos de las filas de datos
+  rows.forEach((row, i) => {
+    const rowIdx = filaInicioDatos + 1 + i; // 1-based
+    const zebra = i % 2 === 1;
+    headers.forEach((h, c) => {
+      const addr = colLetter(c) + (rowIdx + 1);
+      if (!ws[addr]) return;
+      let style = { ...XLSX_STYLES.cellBase, border: XLSX_STYLES.border };
+      if (zebra) style = { ...style, ...XLSX_STYLES.zebra };
+      // Coloreado condicional para la columna indicada
+      if (opts.colorearCol && h === opts.colorearCol && opts.paleta) {
+        const p = opts.paleta[row[h]];
+        if (p) style = { ...style, ...p, border: XLSX_STYLES.border, alignment: { horizontal: 'center', vertical: 'center' } };
+      }
+      ws[addr].s = style;
+    });
+  });
+
+  // Freeze header
+  ws['!freeze'] = { xSplit: 0, ySplit: filaInicioDatos + 1 };
+  ws['!autofilter'] = {
+    ref: `${colLetter(0)}${filaInicioDatos + 1}:${colLetter(headers.length - 1)}${filaInicioDatos + 1 + rows.length}`
+  };
+
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
   const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -679,9 +807,9 @@ app.get('/api/reportes/stock', requireAuth, async (req, res) => {
     );
     const data = rows.map(r => ({
       'Vacuna': r.vacuna,
-      'Presentación': r.dosis_por_frasco > 1 ? `Frasco x ${r.dosis_por_frasco}` : 'Monodosis',
+      'Presentación': r.dosis_por_frasco > 1 ? `Frasco × ${r.dosis_por_frasco}` : 'Monodosis',
       'N° de lote': r.numero_lote,
-      'Vencimiento': r.vencimiento,
+      'Vencimiento': fmtFechaAR(r.vencimiento),
       'Días para vencer': r.dias,
       'Cantidad inicial (dosis)': r.cantidad_inicial,
       'Disponible (dosis)': r.disponible,
@@ -689,7 +817,11 @@ app.get('/api/reportes/stock', requireAuth, async (req, res) => {
       'Estado': estadoLote(r.dias, r.disponible),
     }));
     const fecha = new Date().toISOString().slice(0, 10);
-    sendXlsx(res, `SGV_stock_${fecha}.xlsx`, 'Stock', data);
+    sendXlsx(res, `SGV_stock_${fecha}.xlsx`, 'Stock', data, {
+      tituloReporte: 'SGV — Stock general del CAPS San José Obrero',
+      colorearCol: 'Estado',
+      paleta: ESTADO_STYLE,
+    });
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
 });
 
@@ -708,7 +840,7 @@ app.get('/api/reportes/stock/:vacunaId', requireAuth, async (req, res) => {
     const vacuna = rows[0].vacuna;
     const data = rows.map(r => ({
       'N° de lote': r.numero_lote,
-      'Vencimiento': r.vencimiento,
+      'Vencimiento': fmtFechaAR(r.vencimiento),
       'Días para vencer': r.dias,
       'Cantidad inicial (dosis)': r.cantidad_inicial,
       'Disponible (dosis)': r.disponible,
@@ -717,23 +849,40 @@ app.get('/api/reportes/stock/:vacunaId', requireAuth, async (req, res) => {
     }));
     const fecha = new Date().toISOString().slice(0, 10);
     const nombreArchivo = vacuna.replace(/[^\w-]+/g, '_');
-    sendXlsx(res, `SGV_stock_${nombreArchivo}_${fecha}.xlsx`, vacuna.slice(0, 31), data);
+    sendXlsx(res, `SGV_stock_${nombreArchivo}_${fecha}.xlsx`, vacuna.slice(0, 31), data, {
+      tituloReporte: `SGV — Stock de ${vacuna}`,
+      colorearCol: 'Estado',
+      paleta: ESTADO_STYLE,
+    });
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
 });
 
-// Reporte 3: Movimientos completo o filtrado por tipo (query ?tipo=ingreso|aplicacion|descarte)
+// Reporte 3: Movimientos (con filtros combinables: tipo, vacuna, desde, hasta)
+// Query params: ?tipo=X&vacuna=Nombre&desde=YYYY-MM-DD&hasta=YYYY-MM-DD
 app.get('/api/reportes/movimientos', requireAuth, async (req, res) => {
   try {
-    const { tipo } = req.query;
+    const { tipo, vacuna, desde, hasta } = req.query;
     let sql =
       `SELECT m.tipo, v.nombre AS vacuna, l.numero_lote, m.cantidad, m.motivo,
               m.fecha_aplicacion, m.fecha_mov, u.rol AS responsable
          FROM movimientos m
          JOIN vacunas v  ON v.id = m.vacuna_id
          JOIN lotes l    ON l.id = m.lote_id
-         JOIN usuarios u ON u.id = m.usuario_id`;
+         JOIN usuarios u ON u.id = m.usuario_id
+        WHERE 1=1`;
     const params = [];
-    if (tipo && ['aplicacion', 'descarte', 'ingreso'].includes(tipo)) { sql += ' WHERE m.tipo = ?'; params.push(tipo); }
+    if (tipo && ['aplicacion', 'descarte', 'ingreso'].includes(tipo)) {
+      sql += ' AND m.tipo = ?'; params.push(tipo);
+    }
+    if (vacuna) {
+      sql += ' AND v.nombre = ?'; params.push(vacuna);
+    }
+    if (desde && /^\d{4}-\d{2}-\d{2}$/.test(desde)) {
+      sql += ' AND DATE(m.fecha_mov) >= ?'; params.push(desde);
+    }
+    if (hasta && /^\d{4}-\d{2}-\d{2}$/.test(hasta)) {
+      sql += ' AND DATE(m.fecha_mov) <= ?'; params.push(hasta);
+    }
     sql += ' ORDER BY m.fecha_mov DESC';
     const [rows] = await pool.query(sql, params);
     const TIPO_LBL = { ingreso: 'Ingreso', aplicacion: 'Aplicación', descarte: 'Descarte' };
@@ -743,15 +892,46 @@ app.get('/api/reportes/movimientos', requireAuth, async (req, res) => {
       'N° de lote': r.numero_lote,
       'Cantidad (dosis)': r.cantidad,
       'Motivo': r.motivo || '',
-      'Fecha aplicación': r.fecha_aplicacion || '',
-      'Fecha del movimiento': r.fecha_mov,
+      'Fecha aplicación': fmtFechaAR(r.fecha_aplicacion),
+      'Fecha del movimiento': fmtFechaARHora(r.fecha_mov),
       'Responsable': r.responsable,
     }));
+    // Construir título y sufijo según los filtros aplicados
     const fecha = new Date().toISOString().slice(0, 10);
-    const suf = tipo ? `_${tipo}` : '_completo';
-    sendXlsx(res, `SGV_movimientos${suf}_${fecha}.xlsx`, 'Movimientos', data);
+    const filtros = [];
+    if (tipo)   filtros.push(TIPO_LBL[tipo] || tipo);
+    if (vacuna) filtros.push(vacuna);
+    if (desde)  filtros.push(`desde ${desde}`);
+    if (hasta)  filtros.push(`hasta ${hasta}`);
+    const tituloFiltros = filtros.length ? ' — ' + filtros.join(', ') : '';
+    const sufArchivo = filtros.length ? '_filtrado' : '_completo';
+    sendXlsx(res, `SGV_movimientos${sufArchivo}_${fecha}.xlsx`, 'Movimientos', data, {
+      tituloReporte: `SGV — Historial de movimientos${tituloFiltros}`,
+      colorearCol: 'Tipo',
+      paleta: TIPO_STYLE,
+    });
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
 });
+
+// Helpers de formato AR para los reportes
+function fmtFechaAR(v) {
+  if (!v) return '';
+  try {
+    const d = (typeof v === 'string') ? new Date(v + (v.length === 10 ? 'T00:00:00' : '')) : new Date(v);
+    if (isNaN(d)) return String(v);
+    return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+  } catch { return String(v); }
+}
+function fmtFechaARHora(v) {
+  if (!v) return '';
+  try {
+    const d = (typeof v === 'string') ? new Date(v) : new Date(v);
+    if (isNaN(d)) return String(v);
+    const f = fmtFechaAR(d);
+    const h = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    return `${f} ${h}`;
+  } catch { return String(v); }
+}
 
 /* ===========================================================
  * USUARIOS — solo coordinadora
