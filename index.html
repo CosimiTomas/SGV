@@ -122,38 +122,57 @@
         <h1>Stock</h1>
       </div>
       <div class="readonly-note readonly-only"><span class="ic">🔒</span><span>Estás en modo <b>solo lectura</b>: podés consultar el stock y descargar los Excel, pero no registrar movimientos.</span></div>
-      <div class="panel">
-        <div class="panel-head">
-          <h4>Inventario</h4>
-          <div class="spacer"></div>
-          <button class="btn subtle sm" onclick="excelStockGeneral()">⬇ Excel · general</button>
-          <button class="btn subtle sm" onclick="openExcelEsp()">⬇ Excel · específico</button>
-        </div>
-        <div class="toolbar">
-          <div class="search">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-            <input type="text" id="stock-search" placeholder="Buscar vacuna…" oninput="renderStock()">
+      <div class="mov-layout">
+        <aside class="mov-sidebar">
+          <div class="mov-sidebar-head">
+            <h4>Filtros</h4>
+            <button type="button" id="st-limpiar" class="btn-limpiar" onclick="stClearFiltros()" style="display:none">Limpiar</button>
           </div>
-          <select id="stock-estado" onchange="renderStock()">
-            <option value="">Todos los estados</option>
-            <option value="vencida">Vencidas</option>
-            <option value="exp">Por vencer</option>
-            <option value="low">Stock bajo</option>
-            <option value="ok">OK</option>
-          </select>
-          <select id="stock-orden" onchange="renderStock()">
-            <option value="urgencia">Ordenar por urgencia</option>
-            <option value="venc-asc">Vencimiento más próximo</option>
-            <option value="venc-desc">Vencimiento más lejano</option>
-            <option value="vacuna">Vacuna (A–Z)</option>
-            <option value="disp-asc">Menor stock disponible</option>
-            <option value="disp-desc">Mayor stock disponible</option>
-          </select>
+          <div class="mov-rango-rapido">
+            <button type="button" class="chip-rango active" data-est="" onclick="stSetEstado('')">Todos</button>
+            <button type="button" class="chip-rango" data-est="vencida" onclick="stSetEstado('vencida')">Vencidas</button>
+            <button type="button" class="chip-rango" data-est="exp" onclick="stSetEstado('exp')">Por vencer</button>
+            <button type="button" class="chip-rango" data-est="low" onclick="stSetEstado('low')">Stock bajo</button>
+          </div>
+          <div class="mov-campo">
+            <label>Buscar vacuna</label>
+            <input type="text" id="stock-search" placeholder="Nombre de vacuna…" oninput="renderStock()">
+          </div>
+          <div class="mov-campo">
+            <label>Estado</label>
+            <select id="stock-estado" onchange="stOnEstadoManual()">
+              <option value="">Todos</option>
+              <option value="vencida">Vencidas</option>
+              <option value="exp">Por vencer</option>
+              <option value="low">Stock bajo</option>
+              <option value="ok">OK</option>
+            </select>
+          </div>
+          <div class="mov-campo">
+            <label>Ordenar por</label>
+            <select id="stock-orden" onchange="renderStock()">
+              <option value="urgencia">Urgencia</option>
+              <option value="venc-asc">Vence más próximo</option>
+              <option value="venc-desc">Vence más lejano</option>
+              <option value="vacuna">Vacuna (A–Z)</option>
+              <option value="disp-asc">Menor stock</option>
+              <option value="disp-desc">Mayor stock</option>
+            </select>
+          </div>
+        </aside>
+        <div class="panel mov-main">
+          <div class="panel-head">
+            <h4>Inventario</h4>
+            <span id="st-contador" class="mov-contador" style="margin-left:10px">Mostrando 0 lotes</span>
+            <div class="spacer"></div>
+            <button class="btn subtle sm" onclick="excelStockGeneral()">⬇ Excel · general</button>
+            <button class="btn subtle sm" onclick="openExcelEsp()">⬇ Excel · específico</button>
+          </div>
+          <table>
+            <thead><tr><th>Vacuna</th><th>Lote</th><th>Vencimiento</th><th>Cant. inicial</th><th>Disp.</th><th>Estado</th><th></th></tr></thead>
+            <tbody id="stockBody"></tbody>
+          </table>
         </div>
-        <table>
-          <thead><tr><th>Vacuna</th><th>Lote</th><th>Vencimiento</th><th>Cant. inicial</th><th>Disp.</th><th>Estado</th><th></th></tr></thead>
-          <tbody id="stockBody"></tbody>
-        </table>
       </div>
     </section>
 

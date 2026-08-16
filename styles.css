@@ -386,6 +386,7 @@
     display:inline-block;
     letter-spacing:.02em; text-transform:uppercase;
     border:1px solid transparent;
+    white-space:nowrap;
   }
   .pill.ok{background:var(--ok-tint);color:var(--ok);border-color:#BFE3CF}
   .pill.low{background:var(--warn-tint);color:var(--warn);border-color:#EFD2A0}

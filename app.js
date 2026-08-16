@@ -303,6 +303,43 @@ function renderStock(){
      </tr>`;
   }).join('')
     : '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Sin resultados para los filtros aplicados.</td></tr>';
+
+  // Contador y botón limpiar
+  const total = STOCK_CACHE.length;
+  const contador = $('st-contador');
+  if (contador) {
+    contador.innerHTML = rows.length === total
+      ? `Mostrando <b>${total}</b> ${total === 1 ? 'lote' : 'lotes'}`
+      : `Mostrando <b>${rows.length}</b> de <b>${total}</b> lotes`;
+  }
+  const hayFiltros = !!(q || est);
+  const btnLimpiar = $('st-limpiar');
+  if (btnLimpiar) btnLimpiar.style.display = hayFiltros ? '' : 'none';
+}
+
+// Los chips rápidos son atajo para el filtro de estado
+function stSetEstado(est){
+  $('stock-estado').value = est;
+  document.querySelectorAll('#page-stock .chip-rango').forEach(c => c.classList.remove('active'));
+  document.querySelector(`#page-stock .chip-rango[data-est="${est}"]`)?.classList.add('active');
+  renderStock();
+}
+
+// Si eligen el estado desde el dropdown, sincronizar los chips
+function stOnEstadoManual(){
+  const est = $('stock-estado').value;
+  document.querySelectorAll('#page-stock .chip-rango').forEach(c => c.classList.remove('active'));
+  document.querySelector(`#page-stock .chip-rango[data-est="${est}"]`)?.classList.add('active');
+  renderStock();
+}
+
+function stClearFiltros(){
+  $('stock-search').value = '';
+  $('stock-estado').value = '';
+  $('stock-orden').value = 'urgencia';
+  document.querySelectorAll('#page-stock .chip-rango').forEach(c => c.classList.remove('active'));
+  document.querySelector('#page-stock .chip-rango[data-est=""]')?.classList.add('active');
+  renderStock();
 }
 
 /* ---------- Movimientos: cache + filtros ---------- */
