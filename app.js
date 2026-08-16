@@ -112,7 +112,10 @@ async function enterApp(){
   applyRole();
   await loadVacunas();
   await Promise.all([ loadDashboard(), loadStock(), loadMovimientos() ]);
-  if (ROL_INFO[USER.rol].manageUsers) loadUsuarios();
+  if (ROL_INFO[USER.rol].manageUsers) {
+    loadUsuarios();
+    loadCatalogo();
+  }
   go('inicio');
 }
 
@@ -602,33 +605,225 @@ function clearLote(){
 }
 
 /* ---------- Usuarios (coordinadora) ---------- */
+/* ============================================================
+   USUARIOS — gestión desde el rol coordinadora
+   ============================================================ */
+let USUARIOS_CACHE = [];
+const ROL_LBL = { enfermeria:'Enfermería', coordinadora:'Coordinadora', jefa:'Jefa', proveedora:'Proveedora' };
+
 async function loadUsuarios(){
-  const tbody = document.querySelector('#page-usuarios tbody');
-  if(!tbody) return;
-  try{
-    const us = await api('/usuarios');
-    const ROL = { enfermeria:'Enfermería', coordinadora:'Coordinadora', jefa:'Jefa', proveedora:'Proveedora' };
-    tbody.innerHTML = us.map(u=>`
-      <tr>
-        <td data-label="Correo">${u.correo}</td>
-        <td data-label="Rol">${ROL[u.rol]||u.rol}</td>
-        <td data-label="Estado"><span class="pill ${u.activo?'act':'ina'}">${u.activo?'Activo':'Inactivo'}</span></td>
-        <td data-label="Acciones">
-          <button class="iconbtn" onclick="resetPass(${u.id})">Resetear</button>
-          <button class="iconbtn ${u.activo?'del':''}" onclick="toggleUser(${u.id})">${u.activo?'Desactivar':'Activar'}</button>
-        </td>
-      </tr>`).join('');
-  }catch(err){ toast('err', err.message); }
+  try {
+    USUARIOS_CACHE = await api('/usuarios');
+    renderUsuarios();
+  } catch(err) { toast('err', err.message); }
 }
+
+function renderUsuarios(){
+  const tbody = $('usuariosBody');
+  if (!tbody) return;
+  let rows = [...USUARIOS_CACHE];
+  const q = ($('us-search')?.value || '').trim().toLowerCase();
+  const rol = $('us-rol')?.value || '';
+  const est = $('us-estado')?.value;
+  if (q)   rows = rows.filter(u => u.correo.toLowerCase().includes(q));
+  if (rol) rows = rows.filter(u => u.rol === rol);
+  if (est !== '' && est !== undefined) rows = rows.filter(u => String(u.activo) === est);
+
+  const yoId = USER?.id;
+  tbody.innerHTML = rows.length ? rows.map(u => {
+    const esYo = u.id === yoId;
+    return `<tr>
+      <td data-label="Correo">${u.correo}${esYo ? ' <small style="color:var(--muted)">(vos)</small>' : ''}</td>
+      <td data-label="Rol">${ROL_LBL[u.rol] || u.rol}</td>
+      <td data-label="Estado"><span class="pill ${u.activo?'act':'ina'}">${u.activo?'Activo':'Inactivo'}</span></td>
+      <td data-label="Acciones" style="text-align:right;white-space:nowrap">
+        <button class="iconbtn" onclick="openEditarUsuario(${u.id})">Editar</button>
+        <button class="iconbtn" onclick="openResetPass(${u.id})">Resetear</button>
+        <button class="iconbtn ${u.activo?'del':''}" onclick="toggleUser(${u.id})" ${esYo?'disabled title="No podés desactivarte a vos misma"':''}>${u.activo?'Desactivar':'Activar'}</button>
+      </td>
+    </tr>`;
+  }).join('')
+    : '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px">Sin usuarios que coincidan con los filtros.</td></tr>';
+}
+
+let _editandoUsuarioId = null;
+function openCrearUsuario(){
+  _editandoUsuarioId = null;
+  $('us-modal-titulo').textContent = 'Nuevo usuario';
+  $('us-correo').value = '';
+  $('us-nuevo-rol').value = 'enfermeria';
+  $('us-nuevo-rol').disabled = false;
+  $('us-pass').value = '';
+  $('us-pass-wrap').style.display = '';
+  $('us-modal-msg').innerHTML = '';
+  ['us-correo','us-nuevo-rol','us-pass'].forEach(id => $(id).classList.remove('bad'));
+  $('ovUsuario').classList.add('on');
+}
+function openEditarUsuario(id){
+  const u = USUARIOS_CACHE.find(x => x.id === id);
+  if (!u) return;
+  _editandoUsuarioId = id;
+  $('us-modal-titulo').textContent = 'Editar usuario';
+  $('us-correo').value = u.correo;
+  $('us-nuevo-rol').value = u.rol;
+  // No permitir cambiar el propio rol
+  $('us-nuevo-rol').disabled = (u.id === USER?.id);
+  $('us-pass-wrap').style.display = 'none';   // en edición no se pide password
+  $('us-modal-msg').innerHTML = '';
+  ['us-correo','us-nuevo-rol'].forEach(id => $(id).classList.remove('bad'));
+  $('ovUsuario').classList.add('on');
+}
+
+async function saveUsuario(){
+  const correo = $('us-correo').value.trim().toLowerCase();
+  const rol = $('us-nuevo-rol').value;
+  const pass = $('us-pass').value;
+  let bad = false;
+  if (!correo || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(correo)) { $('us-correo').classList.add('bad'); bad = true; } else $('us-correo').classList.remove('bad');
+  if (_editandoUsuarioId === null && (!pass || pass.length < 6)) { $('us-pass').classList.add('bad'); bad = true; } else $('us-pass').classList.remove('bad');
+  if (bad) return msg('us-modal-msg', 'err', 'Revisá los campos marcados.');
+
+  try {
+    if (_editandoUsuarioId === null) {
+      // Crear
+      const r = await api('/usuarios', { method:'POST', body: JSON.stringify({ correo, rol, password: pass }) });
+      toast('ok', r.mensaje);
+    } else {
+      // Editar
+      const cambios = { correo };
+      if (!$('us-nuevo-rol').disabled) cambios.rol = rol;
+      const r = await api(`/usuarios/${_editandoUsuarioId}`, { method:'PATCH', body: JSON.stringify(cambios) });
+      toast('ok', r.mensaje);
+    }
+    closeOv('ovUsuario');
+    loadUsuarios();
+  } catch(err) { msg('us-modal-msg', 'err', err.message); }
+}
+
 async function toggleUser(id){
-  try{ const r = await api(`/usuarios/${id}/estado`, { method:'PATCH' }); toast('ok', r.mensaje); loadUsuarios(); }
-  catch(err){ toast('err', err.message); }
+  const u = USUARIOS_CACHE.find(x => x.id === id);
+  if (!u) return;
+  const accion = u.activo ? 'desactivar' : 'activar';
+  if (u.activo && !confirm(`¿Seguro que querés desactivar a ${u.correo}? No va a poder ingresar hasta que lo actives de nuevo.`)) return;
+  try {
+    const r = await api(`/usuarios/${id}/estado`, { method:'PATCH' });
+    toast('ok', r.mensaje);
+    loadUsuarios();
+  } catch(err) { toast('err', err.message); }
 }
-async function resetPass(id){
-  const nueva = prompt('Nueva contraseña para el usuario:');
-  if(!nueva) return;
-  try{ const r = await api(`/usuarios/${id}/password`, { method:'PATCH', body: JSON.stringify({ password:nueva }) }); toast('ok', r.mensaje); }
-  catch(err){ toast('err', err.message); }
+
+let _reseteandoPassId = null;
+function openResetPass(id){
+  const u = USUARIOS_CACHE.find(x => x.id === id);
+  if (!u) return;
+  _reseteandoPassId = id;
+  $('rp-correo').textContent = u.correo;
+  $('rp-pass').value = '';
+  $('rp-pass').classList.remove('bad');
+  $('rp-msg').innerHTML = '';
+  $('ovResetPass').classList.add('on');
+}
+async function saveResetPass(){
+  const pass = $('rp-pass').value;
+  if (!pass || pass.length < 6) { $('rp-pass').classList.add('bad'); return msg('rp-msg', 'err', 'Mínimo 6 caracteres.'); }
+  try {
+    const r = await api(`/usuarios/${_reseteandoPassId}/password`, { method:'PATCH', body: JSON.stringify({ password: pass }) });
+    closeOv('ovResetPass');
+    toast('ok', r.mensaje);
+  } catch(err) { msg('rp-msg', 'err', err.message); }
+}
+
+/* ============================================================
+   CATÁLOGO DE VACUNAS — ABM desde el rol coordinadora
+   ============================================================ */
+let CATALOGO_CACHE = [];
+
+async function loadCatalogo(){
+  try {
+    CATALOGO_CACHE = await api('/catalogo/vacunas');
+    renderCatalogo();
+  } catch(err) { toast('err', err.message); }
+}
+
+function renderCatalogo(){
+  const tbody = $('catalogoBody');
+  if (!tbody) return;
+  let rows = [...CATALOGO_CACHE];
+  const q = ($('cat-search')?.value || '').trim().toLowerCase();
+  const est = $('cat-estado')?.value;
+  if (q)   rows = rows.filter(v => v.nombre.toLowerCase().includes(q));
+  if (est !== '' && est !== undefined) rows = rows.filter(v => String(v.activa) === est);
+
+  tbody.innerHTML = rows.length ? rows.map(v => {
+    const multi = Number(v.dosis_por_frasco) > 1;
+    const presentacion = multi ? `Frasco × ${v.dosis_por_frasco}` : 'Monodosis';
+    return `<tr>
+      <td data-label="Vacuna"><b>${v.nombre}</b></td>
+      <td data-label="Presentación">${presentacion}</td>
+      <td data-label="Lotes">${v.cant_lotes}</td>
+      <td data-label="Estado"><span class="pill ${v.activa?'act':'ina'}">${v.activa?'Activa':'Dada de baja'}</span></td>
+      <td data-label="Acciones" style="text-align:right;white-space:nowrap">
+        <button class="iconbtn" onclick="openEditarVacuna(${v.id})">Editar</button>
+        <button class="iconbtn ${v.activa?'del':''}" onclick="toggleVacuna(${v.id})">${v.activa?'Dar de baja':'Reactivar'}</button>
+      </td>
+    </tr>`;
+  }).join('')
+    : '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">Sin vacunas que coincidan con los filtros.</td></tr>';
+}
+
+let _editandoVacunaId = null;
+function openCrearVacuna(){
+  _editandoVacunaId = null;
+  $('cat-modal-titulo').textContent = 'Nueva vacuna';
+  $('cat-nombre').value = '';
+  $('cat-dpf').value = '1';
+  $('cat-modal-msg').innerHTML = '';
+  ['cat-nombre','cat-dpf'].forEach(id => $(id).classList.remove('bad'));
+  $('ovVacuna').classList.add('on');
+}
+function openEditarVacuna(id){
+  const v = CATALOGO_CACHE.find(x => x.id === id);
+  if (!v) return;
+  _editandoVacunaId = id;
+  $('cat-modal-titulo').textContent = 'Editar vacuna';
+  $('cat-nombre').value = v.nombre;
+  $('cat-dpf').value = v.dosis_por_frasco;
+  $('cat-modal-msg').innerHTML = '';
+  ['cat-nombre','cat-dpf'].forEach(id => $(id).classList.remove('bad'));
+  $('ovVacuna').classList.add('on');
+}
+
+async function saveVacuna(){
+  const nombre = $('cat-nombre').value.trim();
+  const dpf = Number($('cat-dpf').value);
+  let bad = false;
+  if (!nombre) { $('cat-nombre').classList.add('bad'); bad = true; } else $('cat-nombre').classList.remove('bad');
+  if (!Number.isInteger(dpf) || dpf < 1) { $('cat-dpf').classList.add('bad'); bad = true; } else $('cat-dpf').classList.remove('bad');
+  if (bad) return msg('cat-modal-msg', 'err', 'Revisá los campos marcados.');
+
+  try {
+    if (_editandoVacunaId === null) {
+      const r = await api('/catalogo/vacunas', { method:'POST', body: JSON.stringify({ nombre, dosis_por_frasco: dpf }) });
+      toast('ok', r.mensaje);
+    } else {
+      const r = await api(`/catalogo/vacunas/${_editandoVacunaId}`, { method:'PATCH', body: JSON.stringify({ nombre, dosis_por_frasco: dpf }) });
+      toast('ok', r.mensaje);
+    }
+    closeOv('ovVacuna');
+    // Actualizar el catálogo cacheado global también, porque afecta a los otros selectores
+    await Promise.all([loadCatalogo(), loadVacunas()]);
+  } catch(err) { msg('cat-modal-msg', 'err', err.message); }
+}
+
+async function toggleVacuna(id){
+  const v = CATALOGO_CACHE.find(x => x.id === id);
+  if (!v) return;
+  if (v.activa && !confirm(`¿Dar de baja "${v.nombre}"? Ya no va a aparecer para cargar nuevos lotes ni aplicaciones. Los lotes existentes se mantienen.`)) return;
+  try {
+    const r = await api(`/catalogo/vacunas/${id}`, { method:'PATCH', body: JSON.stringify({ activa: v.activa ? 0 : 1 }) });
+    toast('ok', r.mensaje);
+    await Promise.all([loadCatalogo(), loadVacunas()]);
+  } catch(err) { toast('err', err.message); }
 }
 
 /* ---------- Excel (descarga real desde el backend) ---------- */

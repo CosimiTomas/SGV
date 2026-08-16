@@ -757,18 +757,21 @@ app.get('/api/reportes/movimientos', requireAuth, async (req, res) => {
  * USUARIOS — solo coordinadora
  * ========================================================= */
 const soloCoord = [requireAuth, requireRole('coordinadora')];
+const ROLES_VALIDOS = ['enfermeria', 'coordinadora', 'jefa', 'proveedora'];
 
 app.get('/api/usuarios', soloCoord, async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT id, correo, rol, activo FROM usuarios ORDER BY rol');
+    const [rows] = await pool.query('SELECT id, correo, rol, activo FROM usuarios ORDER BY rol, correo');
     res.json(rows);
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
 });
 
 app.post('/api/usuarios', soloCoord, async (req, res) => {
   const { correo, rol, password } = req.body;
-  const roles = ['enfermeria', 'coordinadora', 'jefa', 'proveedora'];
-  if (!correo || !rol || !password || !roles.includes(rol)) return res.status(400).json({ error: 'Datos inválidos.' });
+  if (!correo || !rol || !password || !ROLES_VALIDOS.includes(rol))
+    return res.status(400).json({ error: 'Completá correo, rol y contraseña.' });
+  if (password.length < 6)
+    return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres.' });
   try {
     const hash = await bcrypt.hash(password, 10);
     await pool.query('INSERT INTO usuarios (correo, password_hash, rol, activo) VALUES (?,?,?,1)',
@@ -780,23 +783,127 @@ app.post('/api/usuarios', soloCoord, async (req, res) => {
   }
 });
 
-app.patch('/api/usuarios/:id/estado', soloCoord, async (req, res) => {
+// Editar correo y/o rol de un usuario existente
+app.patch('/api/usuarios/:id', soloCoord, async (req, res) => {
+  const id = Number(req.params.id);
+  const { correo, rol } = req.body;
+  if (!correo && !rol) return res.status(400).json({ error: 'Nada para actualizar.' });
+  if (rol && !ROLES_VALIDOS.includes(rol)) return res.status(400).json({ error: 'Rol inválido.' });
+  // Prevención: no permitir cambiar el propio rol
+  if (rol && id === req.user.id) return res.status(400).json({ error: 'No podés cambiar tu propio rol.' });
   try {
-    const [r] = await pool.query('UPDATE usuarios SET activo = NOT activo WHERE id = ?', [req.params.id]);
+    // Si se cambia el rol y el usuario que se edita es la última coordinadora activa, bloquear
+    if (rol && rol !== 'coordinadora') {
+      const [[u]] = await pool.query('SELECT rol, activo FROM usuarios WHERE id = ?', [id]);
+      if (u && u.rol === 'coordinadora' && u.activo) {
+        const [[{ n }]] = await pool.query("SELECT COUNT(*) AS n FROM usuarios WHERE rol='coordinadora' AND activo=1");
+        if (n <= 1) return res.status(400).json({ error: 'No se puede quitar el rol de la única coordinadora activa.' });
+      }
+    }
+    const campos = [], vals = [];
+    if (correo) { campos.push('correo = ?'); vals.push(correo.trim().toLowerCase()); }
+    if (rol)    { campos.push('rol = ?');    vals.push(rol); }
+    vals.push(id);
+    const [r] = await pool.query(`UPDATE usuarios SET ${campos.join(', ')} WHERE id = ?`, vals);
     if (!r.affectedRows) return res.status(404).json({ error: 'Usuario no encontrado.' });
-    res.json({ ok: true, mensaje: 'Estado actualizado.' });
+    res.json({ ok: true, mensaje: 'Usuario actualizado.' });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Ese correo ya está en uso.' });
+    console.error(err.message); res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
+app.patch('/api/usuarios/:id/estado', soloCoord, async (req, res) => {
+  const id = Number(req.params.id);
+  // Prevenciones: no auto-desactivarse, no desactivar la última coordinadora activa
+  if (id === req.user.id) return res.status(400).json({ error: 'No podés desactivarte a vos misma.' });
+  try {
+    const [[u]] = await pool.query('SELECT rol, activo FROM usuarios WHERE id = ?', [id]);
+    if (!u) return res.status(404).json({ error: 'Usuario no encontrado.' });
+    // Si se está desactivando (estaba activo) y es coordinadora, revisar que quede alguna
+    if (u.activo && u.rol === 'coordinadora') {
+      const [[{ n }]] = await pool.query("SELECT COUNT(*) AS n FROM usuarios WHERE rol='coordinadora' AND activo=1");
+      if (n <= 1) return res.status(400).json({ error: 'No se puede desactivar la única coordinadora activa.' });
+    }
+    await pool.query('UPDATE usuarios SET activo = NOT activo WHERE id = ?', [id]);
+    res.json({ ok: true, mensaje: u.activo ? 'Usuario desactivado.' : 'Usuario activado.' });
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
 });
 
 app.patch('/api/usuarios/:id/password', soloCoord, async (req, res) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: 'Indicá la nueva contraseña.' });
+  if (password.length < 6) return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres.' });
   try {
     const hash = await bcrypt.hash(password, 10);
     const [r] = await pool.query('UPDATE usuarios SET password_hash = ? WHERE id = ?', [hash, req.params.id]);
     if (!r.affectedRows) return res.status(404).json({ error: 'Usuario no encontrado.' });
     res.json({ ok: true, mensaje: 'Contraseña actualizada.' });
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
+});
+
+/* ===========================================================
+ * CATÁLOGO DE VACUNAS — ABM solo para coordinadora
+ * (el GET /api/vacunas que ya existe devuelve solo activas y lo
+ *  usan todos los roles para los selectores de lote/aplicación/etc.)
+ * ========================================================= */
+
+// Listado completo (activas + inactivas) para el panel de coordinadora
+app.get('/api/catalogo/vacunas', soloCoord, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT v.id, v.nombre, v.dosis_por_frasco, v.activa,
+              (SELECT COUNT(*) FROM lotes l WHERE l.vacuna_id = v.id) AS cant_lotes
+         FROM vacunas v ORDER BY v.activa DESC, v.nombre`
+    );
+    res.json(rows);
+  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
+});
+
+// Alta de vacuna nueva
+app.post('/api/catalogo/vacunas', soloCoord, async (req, res) => {
+  const { nombre, dosis_por_frasco } = req.body;
+  const dpf = Number(dosis_por_frasco);
+  if (!nombre || !nombre.trim()) return res.status(400).json({ error: 'Ingresá el nombre de la vacuna.' });
+  if (!Number.isInteger(dpf) || dpf < 1) return res.status(400).json({ error: 'Dosis por frasco debe ser un número entero mayor o igual a 1.' });
+  try {
+    const [r] = await pool.query(
+      'INSERT INTO vacunas (nombre, dosis_por_frasco, activa) VALUES (?,?,1)',
+      [nombre.trim(), dpf]
+    );
+    res.status(201).json({ ok: true, id: r.insertId, mensaje: 'Vacuna agregada al catálogo.' });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Ya existe una vacuna con ese nombre.' });
+    console.error(err.message); res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
+// Editar / dar de baja / reactivar vacuna. Todos los campos son opcionales.
+app.patch('/api/catalogo/vacunas/:id', soloCoord, async (req, res) => {
+  const { nombre, dosis_por_frasco, activa } = req.body;
+  const campos = [], vals = [];
+  if (nombre !== undefined) {
+    if (!nombre.trim()) return res.status(400).json({ error: 'El nombre no puede estar vacío.' });
+    campos.push('nombre = ?'); vals.push(nombre.trim());
+  }
+  if (dosis_por_frasco !== undefined) {
+    const dpf = Number(dosis_por_frasco);
+    if (!Number.isInteger(dpf) || dpf < 1) return res.status(400).json({ error: 'Dosis por frasco debe ser entero ≥ 1.' });
+    campos.push('dosis_por_frasco = ?'); vals.push(dpf);
+  }
+  if (activa !== undefined) {
+    campos.push('activa = ?'); vals.push(activa ? 1 : 0);
+  }
+  if (campos.length === 0) return res.status(400).json({ error: 'Nada para actualizar.' });
+  vals.push(req.params.id);
+  try {
+    const [r] = await pool.query(`UPDATE vacunas SET ${campos.join(', ')} WHERE id = ?`, vals);
+    if (!r.affectedRows) return res.status(404).json({ error: 'Vacuna no encontrada.' });
+    res.json({ ok: true, mensaje: 'Catálogo actualizado.' });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Ya existe otra vacuna con ese nombre.' });
+    console.error(err.message); res.status(500).json({ error: 'Error del servidor.' });
+  }
 });
 
 /* ------------------------------------------------------------
