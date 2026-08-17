@@ -255,7 +255,7 @@
     background:var(--teal);
   }
 
-  .content{padding:32px 28px 56px;max-width:1180px;width:100%;margin:0 auto;flex:1}
+  .content{padding:32px 28px 56px;max-width:1400px;width:100%;margin:0 auto;flex:1}
 
   /* Encabezado de página */
   .page-head{margin-bottom:28px}
@@ -649,8 +649,8 @@
    ============================================================ */
 .mov-layout{
   display:grid;
-  grid-template-columns: 240px 1fr;
-  gap:20px;
+  grid-template-columns: 220px 1fr;
+  gap:18px;
   align-items:start;
 }
 
@@ -743,6 +743,10 @@
 }
 
 .mov-main{ min-width:0; /* evita que la tabla desborde el grid */ }
+/* Si en pantallas chicas la tabla es más ancha que el panel, permitimos
+   scroll horizontal en lugar de cortar contenido. */
+.mov-main > .panel{ overflow-x:auto; }
+.mov-main table{ min-width:640px; }
 .mov-contador{
   color:var(--muted);
   font-size:13px;
