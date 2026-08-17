@@ -133,6 +133,7 @@
             <button type="button" class="chip-rango" data-est="vencida" onclick="stSetEstado('vencida')">Vencidas</button>
             <button type="button" class="chip-rango" data-est="exp" onclick="stSetEstado('exp')">Por vencer</button>
             <button type="button" class="chip-rango" data-est="low" onclick="stSetEstado('low')">Stock bajo</button>
+            <button type="button" class="chip-rango" data-est="nostock" onclick="stSetEstado('nostock')">Sin stock</button>
           </div>
           <div class="mov-campo">
             <label>Buscar vacuna</label>
@@ -146,6 +147,7 @@
               <option value="exp">Por vencer</option>
               <option value="low">Stock bajo</option>
               <option value="ok">OK</option>
+              <option value="nostock">Sin stock</option>
             </select>
           </div>
           <div class="mov-campo">
@@ -169,7 +171,7 @@
             <button class="btn subtle sm" onclick="openExcelEsp()">⬇ Excel · específico</button>
           </div>
           <table>
-            <thead><tr><th>Vacuna</th><th>Lote</th><th>Vencimiento</th><th>Cant. inicial</th><th>Disp.</th><th>Estado</th><th></th></tr></thead>
+            <thead><tr><th>Vacuna</th><th>Lote</th><th>Vencimiento</th><th>Dosis disponibles</th><th>Estado</th><th></th></tr></thead>
             <tbody id="stockBody"></tbody>
           </table>
         </div>

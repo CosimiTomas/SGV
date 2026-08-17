@@ -247,12 +247,18 @@ async function loadStock(){
   renderStock();
 }
 
-// Orden por urgencia: vencida → exp → low → ok, y dentro de cada grupo
-// por fecha de vencimiento (más próxima primero).
-const ESTADO_PRIO = { vencida: 0, exp: 1, low: 2, ok: 3 };
+// Orden por urgencia. Las vacunas SIN stock quedan al final por defecto
+// (menos importantes que las alertas activas).
+const ESTADO_PRIO = { vencida: 0, exp: 1, low: 2, ok: 3, nostock: 4 };
 
 function renderStock(){
-  const ETIQ = { ok:'OK', low:'Stock bajo', exp:'Por vencer', vencida:'Vencida' };
+  const ETIQ = {
+    ok: 'Disponible',
+    low: 'Stock bajo',
+    exp: 'Por vencer',
+    vencida: 'Vencida',
+    nostock: 'Sin stock',
+  };
   let rows = [...STOCK_CACHE];
 
   // Filtros
@@ -261,60 +267,77 @@ function renderStock(){
   if (q)   rows = rows.filter(r => r.vacuna.toLowerCase().includes(q));
   if (est) rows = rows.filter(r => r.estado === est);
 
-  // Orden
+  // Orden — para vacunas sin stock (dias_para_vencer null), tratamos como infinito
+  const dias = r => (r.dias_para_vencer === null || r.dias_para_vencer === undefined) ? 999999 : Number(r.dias_para_vencer);
+  const disp = r => (r.disponible === null || r.disponible === undefined) ? 0 : Number(r.disponible);
+  const lote = r => r.numero_lote || '';
+
   const ord = $('stock-orden')?.value || 'urgencia';
   const cmp = {
     urgencia:   (a,b) => ESTADO_PRIO[a.estado] - ESTADO_PRIO[b.estado]
-                       || a.dias_para_vencer - b.dias_para_vencer
+                       || dias(a) - dias(b)
                        || a.vacuna.localeCompare(b.vacuna),
-    'venc-asc': (a,b) => a.dias_para_vencer - b.dias_para_vencer,
-    'venc-desc':(a,b) => b.dias_para_vencer - a.dias_para_vencer,
+    'venc-asc': (a,b) => dias(a) - dias(b),
+    'venc-desc':(a,b) => dias(b) - dias(a),
     vacuna:     (a,b) => a.vacuna.localeCompare(b.vacuna)
-                       || a.numero_lote.localeCompare(b.numero_lote),
-    'disp-asc': (a,b) => a.disponible - b.disponible,
-    'disp-desc':(a,b) => b.disponible - a.disponible,
+                       || lote(a).localeCompare(lote(b)),
+    'disp-asc': (a,b) => disp(a) - disp(b),
+    'disp-desc':(a,b) => disp(b) - disp(a),
   }[ord];
   if (cmp) rows.sort(cmp);
 
-  $('stockBody').innerHTML = rows.length ? rows.map(r=>{
-    const multi = Number(r.dosis_por_frasco) > 1;
-    const dispCell = multi
-      ? `${fmtDisp(r.disponible, r.dosis_por_frasco)} <small style="color:var(--muted);display:block">(${r.disponible} dosis)</small>`
-      : `${r.disponible} dosis`;
-    const iniCell = multi
-      ? `${Math.floor(r.cantidad_inicial / r.dosis_por_frasco)} frascos <small style="color:var(--muted);display:block">(${r.cantidad_inicial} dosis)</small>`
-      : `${r.cantidad_inicial}`;
-    const dias = Number(r.dias_para_vencer);
-    const venceCell = `${fmtFecha(r.vencimiento)} <small style="color:var(--muted);display:block">${dias < 0 ? 'venció' : 'vence'} ${fmtDias(dias)}</small>`;
-    // Payload en un data-attribute para no reformatear la fecha después
-    const payload = encodeURIComponent(JSON.stringify({
-      id: r.id, vacuna: r.vacuna, numero_lote: r.numero_lote, vencimiento: r.vencimiento
-    }));
-    return `<tr>
-       <td data-label="Vacuna"><b>${r.vacuna}</b>${chipMulti(r.dosis_por_frasco)}</td>
-       <td data-label="Lote">${r.numero_lote}</td>
-       <td data-label="Vencimiento">${venceCell}</td>
-       <td data-label="Cant. inicial">${iniCell}</td>
-       <td data-label="Disp.">${dispCell}</td>
-       <td data-label="Estado"><span class="pill ${r.estado}">${ETIQ[r.estado]}</span></td>
-       <td data-label="" class="enfermeria-only" style="text-align:right">
-         <button class="btn subtle sm" onclick="openEditLote('${payload}')" title="Corregir número de lote o fecha de vencimiento">Editar</button>
-       </td>
-     </tr>`;
-  }).join('')
-    : '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Sin resultados para los filtros aplicados.</td></tr>';
+  $('stockBody').innerHTML = rows.length ? rows.map(r => renderStockRow(r, ETIQ)).join('')
+    : '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Sin resultados para los filtros aplicados.</td></tr>';
 
   // Contador y botón limpiar
   const total = STOCK_CACHE.length;
   const contador = $('st-contador');
   if (contador) {
     contador.innerHTML = rows.length === total
-      ? `Mostrando <b>${total}</b> ${total === 1 ? 'lote' : 'lotes'}`
-      : `Mostrando <b>${rows.length}</b> de <b>${total}</b> lotes`;
+      ? `Mostrando <b>${total}</b> ${total === 1 ? 'vacuna' : 'vacunas'}`
+      : `Mostrando <b>${rows.length}</b> de <b>${total}</b>`;
   }
   const hayFiltros = !!(q || est);
   const btnLimpiar = $('st-limpiar');
   if (btnLimpiar) btnLimpiar.style.display = hayFiltros ? '' : 'none';
+}
+
+// Renderiza una fila de la tabla de stock. Maneja dos casos:
+//  1) vacuna con lote (fila normal)
+//  2) vacuna sin lotes (fila especial con placeholders)
+function renderStockRow(r, ETIQ) {
+  const dash = '<span style="color:var(--muted)">—</span>';
+  // Vacuna sin stock: mostramos fila especial más simple
+  if (r.estado === 'nostock') {
+    return `<tr class="row-sinstock">
+      <td data-label="Vacuna"><b>${r.vacuna}</b>${chipMulti(r.dosis_por_frasco)}</td>
+      <td data-label="Lote">${dash}</td>
+      <td data-label="Vencimiento">${dash}</td>
+      <td data-label="Dosis disponibles"><span style="color:var(--muted)">0 dosis</span></td>
+      <td data-label="Estado"><span class="pill nostock">${ETIQ.nostock}</span></td>
+      <td></td>
+    </tr>`;
+  }
+  // Fila normal con lote
+  const multi = Number(r.dosis_por_frasco) > 1;
+  const dispCell = multi
+    ? `<b>${r.disponible}</b> dosis <small style="color:var(--muted);display:block">${fmtDisp(r.disponible, r.dosis_por_frasco)}</small>`
+    : `<b>${r.disponible}</b> dosis`;
+  const dias = Number(r.dias_para_vencer);
+  const venceCell = `${fmtFecha(r.vencimiento)} <small style="color:var(--muted);display:block">${dias < 0 ? 'venció' : 'vence'} ${fmtDias(dias)}</small>`;
+  const payload = encodeURIComponent(JSON.stringify({
+    id: r.id, vacuna: r.vacuna, numero_lote: r.numero_lote, vencimiento: r.vencimiento
+  }));
+  return `<tr>
+    <td data-label="Vacuna"><b>${r.vacuna}</b>${chipMulti(r.dosis_por_frasco)}</td>
+    <td data-label="Lote">${r.numero_lote}</td>
+    <td data-label="Vencimiento">${venceCell}</td>
+    <td data-label="Dosis disponibles">${dispCell}</td>
+    <td data-label="Estado"><span class="pill ${r.estado}">${ETIQ[r.estado]}</span></td>
+    <td class="enfermeria-only" style="text-align:right">
+      <button class="btn subtle sm" onclick="openEditLote('${payload}')" title="Corregir número de lote o fecha de vencimiento">Editar</button>
+    </td>
+  </tr>`;
 }
 
 // Los chips rápidos son atajo para el filtro de estado

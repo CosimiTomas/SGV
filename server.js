@@ -313,18 +313,34 @@ app.get('/api/vacunas/:id/lotes', requireAuth, async (req, res) => {
 
 app.get('/api/stock', requireAuth, async (req, res) => {
   try {
+    // LEFT JOIN para traer también las vacunas activas del catálogo que
+    // todavía no tienen ningún lote cargado — así enfermería ve la lista
+    // completa y puede detectar qué vacunas no tiene disponibles.
     const [rows] = await pool.query(
       `SELECT l.id, v.nombre AS vacuna, v.dosis_por_frasco, l.numero_lote, l.vencimiento,
               l.cantidad_inicial, l.disponible,
-              DATEDIFF(l.vencimiento, CURDATE()) AS dias_para_vencer
-         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
+              CASE WHEN l.vencimiento IS NULL THEN NULL
+                   ELSE DATEDIFF(l.vencimiento, CURDATE()) END AS dias_para_vencer
+         FROM vacunas v
+         LEFT JOIN lotes l ON l.vacuna_id = v.id
+        WHERE v.activa = 1
         ORDER BY v.nombre, l.vencimiento`
     );
     const stock = rows.map(r => {
-      let estado = 'ok';
-      if (r.dias_para_vencer < 0) estado = 'vencida';
-      else if (r.dias_para_vencer <= DIAS_VENCIMIENTO) estado = 'exp';
-      else if (r.disponible <= UMBRAL_STOCK_BAJO) estado = 'low';
+      let estado;
+      if (r.id === null) {
+        estado = 'nostock';               // vacuna sin ningún lote
+      } else if (r.disponible === 0) {
+        estado = 'nostock';               // lote agotado
+      } else if (r.dias_para_vencer < 0) {
+        estado = 'vencida';
+      } else if (r.dias_para_vencer <= DIAS_VENCIMIENTO) {
+        estado = 'exp';
+      } else if (r.disponible <= UMBRAL_STOCK_BAJO) {
+        estado = 'low';
+      } else {
+        estado = 'ok';
+      }
       return { ...r, estado };
     });
     res.json(stock);
@@ -667,6 +683,7 @@ const ESTADO_STYLE = {
   'Por vencer':  { fill: { patternType: 'solid', fgColor: { rgb: 'FEECEB' } }, font: { bold: true, color: { rgb: 'A02814' }, sz: 10, name: 'Calibri' } },
   'Stock bajo':  { fill: { patternType: 'solid', fgColor: { rgb: 'FDF3D9' } }, font: { bold: true, color: { rgb: '795000' }, sz: 10, name: 'Calibri' } },
   'OK':          { fill: { patternType: 'solid', fgColor: { rgb: 'E4F4EA' } }, font: { bold: true, color: { rgb: '155F35' }, sz: 10, name: 'Calibri' } },
+  'Sin stock':   { fill: { patternType: 'solid', fgColor: { rgb: 'EFF2F1' } }, font: { bold: true, color: { rgb: '6B7572' }, sz: 10, name: 'Calibri' } },
 };
 // Paleta de tipo de movimiento
 const TIPO_STYLE = {
@@ -795,27 +812,33 @@ function estadoLote(dias, disponible) {
   return 'OK';
 }
 
-// Reporte 1: Stock general (todos los lotes)
+// Reporte 1: Stock general (todas las vacunas activas, incluyendo las sin lotes)
 app.get('/api/reportes/stock', requireAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT v.nombre AS vacuna, v.dosis_por_frasco, l.numero_lote, l.vencimiento,
-              l.cantidad_inicial, l.disponible,
-              DATEDIFF(l.vencimiento, CURDATE()) AS dias
-         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
+              l.disponible,
+              CASE WHEN l.vencimiento IS NULL THEN NULL
+                   ELSE DATEDIFF(l.vencimiento, CURDATE()) END AS dias
+         FROM vacunas v
+         LEFT JOIN lotes l ON l.vacuna_id = v.id
+        WHERE v.activa = 1
         ORDER BY v.nombre, l.vencimiento`
     );
-    const data = rows.map(r => ({
-      'Vacuna': r.vacuna,
-      'Presentación': r.dosis_por_frasco > 1 ? `Frasco × ${r.dosis_por_frasco}` : 'Monodosis',
-      'N° de lote': r.numero_lote,
-      'Vencimiento': fmtFechaAR(r.vencimiento),
-      'Días para vencer': r.dias,
-      'Cantidad inicial (dosis)': r.cantidad_inicial,
-      'Disponible (dosis)': r.disponible,
-      'Frascos disponibles': r.dosis_por_frasco > 1 ? Math.floor(r.disponible / r.dosis_por_frasco) : '',
-      'Estado': estadoLote(r.dias, r.disponible),
-    }));
+    const data = rows.map(r => {
+      const sinStock = r.numero_lote === null || r.disponible === 0;
+      return {
+        'Vacuna': r.vacuna,
+        'Presentación': r.dosis_por_frasco > 1 ? `Frasco × ${r.dosis_por_frasco}` : 'Monodosis',
+        'N° de lote': r.numero_lote || '—',
+        'Vencimiento': fmtFechaAR(r.vencimiento) || '—',
+        'Días para vencer': r.dias ?? '—',
+        'Dosis disponibles': r.disponible ?? 0,
+        'Frascos disponibles': (r.dosis_por_frasco > 1 && r.disponible)
+          ? Math.floor(r.disponible / r.dosis_por_frasco) : '',
+        'Estado': sinStock ? 'Sin stock' : estadoLote(r.dias, r.disponible),
+      };
+    });
     const fecha = new Date().toISOString().slice(0, 10);
     sendXlsx(res, `SGV_stock_${fecha}.xlsx`, 'Stock', data, {
       tituloReporte: 'SGV — Stock general del CAPS San José Obrero',
