@@ -144,7 +144,11 @@ function applyRole(){
   }
   document.querySelectorAll('.enfermeria-only:not(.page)').forEach(e => e.style.display = info.write ? '' : 'none');
   document.querySelectorAll('.coordinadora-only:not(.page)').forEach(e => e.style.display = info.manageUsers ? '' : 'none');
-  document.querySelectorAll('.readonly-only').forEach(e => e.style.display = info.write ? 'none' : 'flex');
+  // El cartel de "solo lectura" se muestra solo a los roles que
+  // efectivamente son solo consulta (jefa, proveedora). La coordinadora
+  // no lo ve porque tiene funciones propias (usuarios y catálogo).
+  const soloLectura = !info.write && !info.manageUsers;
+  document.querySelectorAll('.readonly-only').forEach(e => e.style.display = soloLectura ? 'flex' : 'none');
 }
 
 /* ---------- Navegación ---------- */
