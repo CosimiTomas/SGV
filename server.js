@@ -696,107 +696,198 @@ app.post('/api/admin/cargar-prueba', requireAuth, requireRole('enfermeria'), asy
   try {
     await conn.beginTransaction();
 
-    // Traer catálogo para conseguir vacuna_id por nombre
-    const [vacs] = await conn.query('SELECT id, nombre, dosis_por_frasco FROM vacunas');
+    const [vacs] = await conn.query('SELECT id, nombre, dosis_por_frasco FROM vacunas WHERE activa = 1');
     const vacPorNombre = Object.fromEntries(vacs.map(v => [v.nombre, v]));
+    const userId = req.user.id;
+    const hoy = new Date();
+    const iso = (d) => d.toISOString().slice(0, 10);
+    const isoDT = (d) => d.toISOString().slice(0, 19).replace('T', ' ');
+    const restar = (d, n) => { const c = new Date(d); c.setDate(c.getDate() - n); return c; };
+    const sumar  = (d, n) => { const c = new Date(d); c.setDate(c.getDate() + n); return c; };
 
-    // Lotes de prueba, distribuidos para cubrir todos los estados posibles.
-    // "diasVenc" es relativo a hoy: negativo = vencido, positivo = a futuro.
+    /* ==========================================================
+       LOTES — cubren todos los estados: OK, stock bajo, por vencer,
+       vencido, monodosis y multidosis. Usamos 12 vacunas de las 18
+       del catálogo para que queden 6 sin stock (así se prueba también
+       la vista de vacunas sin stock).
+       ========================================================== */
     const lotesPrueba = [
-      // OK: buen stock, vence lejos
-      { vacuna: 'Triple viral (SRP)',            lote: 'TP-2027-A', diasVenc:  180, cantidad: 60 },
-      { vacuna: 'Rotavirus monovalente',         lote: 'RV-2027-A', diasVenc:  210, cantidad: 45 },
-      { vacuna: 'Antimeningocócica tetravalente conjugada', lote: 'AM-2027-A', diasVenc: 300, cantidad: 40 },
-      // Stock bajo: poco disponible pero vence lejos
-      { vacuna: 'Doble viral (SR)',              lote: 'DV-2027-B', diasVenc:  150, cantidad: 8 },
-      { vacuna: 'Varicela',                      lote: 'VR-2027-B', diasVenc:  120, cantidad: 5 },
-      // Por vencer: buen stock pero cerca de vencer
-      { vacuna: 'Hepatitis A',                   lote: 'HA-2026-C', diasVenc:    7, cantidad: 30 },
-      { vacuna: 'Neumococo conjugada VCN 20',    lote: 'NM-2026-C', diasVenc:   12, cantidad: 25 },
-      // Vencidos: para probar el banner y la acción "descartar todas las vencidas"
-      { vacuna: 'Antigripal trivalente adultos', lote: 'AG-2026-D', diasVenc:   -5, cantidad: 15 },
-      { vacuna: 'Doble bacteriana (dT)',         lote: 'DT-2026-D', diasVenc:  -10, cantidad: 20 }, // multidosis
-      // Multidosis con estado OK (para verlo con chip)
-      { vacuna: 'Salk',                          lote: 'SK-2027-E', diasVenc:  180, cantidad: 50 },
-      { vacuna: 'Hepatitis B',                   lote: 'HB-2027-E', diasVenc:  240, cantidad: 40 }, // multidosis
+      // === Monodosis OK (stock normal, vencimiento lejano) ===
+      { vacuna: 'Triple viral (SRP)',             lote: 'SRP-2027-001', diasVenc:  240, cantidad: 60 },
+      { vacuna: 'Rotavirus monovalente',          lote: 'RV-2027-042',  diasVenc:  180, cantidad: 45 },
+      { vacuna: 'Neumococo conjugada VCN 20',     lote: 'NM-2027-115',  diasVenc:  300, cantidad: 40 },
+
+      // === Monodosis stock bajo (poco disponible, vence lejos) ===
+      { vacuna: 'Doble viral (SR)',               lote: 'DV-2027-B12',  diasVenc:  150, cantidad: 8 },
+      { vacuna: 'Varicela',                       lote: 'VR-2027-C33',  diasVenc:  120, cantidad: 5 },
+
+      // === Monodosis por vencer (5-15 días) ===
+      { vacuna: 'Hepatitis A',                    lote: 'HA-2026-P07',  diasVenc:    7, cantidad: 30 },
+      { vacuna: 'Antimeningocócica tetravalente conjugada', lote: 'AM-2026-P12', diasVenc: 12, cantidad: 25 },
+
+      // === Monodosis VENCIDA (para banner rojo + descarte masivo) ===
+      { vacuna: 'Antigripal trivalente adultos',  lote: 'AG-2026-V05',  diasVenc:   -5, cantidad: 15 },
+
+      // === Multidosis OK — Hepatitis B (10 dosis/frasco), buen stock ===
+      { vacuna: 'Hepatitis B',                    lote: 'HB-2027-M01',  diasVenc:  240, cantidad: 60 },
+
+      // === Multidosis stock bajo — Salk (5 dosis/frasco), 2 frascos ===
+      { vacuna: 'Salk',                           lote: 'SK-2027-M02',  diasVenc:  100, cantidad: 10 },
+
+      // === Multidosis por vencer — dTpa (10 dosis/frasco) ===
+      { vacuna: 'Triple bacteriana acelular dTpa',lote: 'TDP-2026-M03', diasVenc:    8, cantidad: 20 },
+
+      // === Multidosis VENCIDA — dT (10 dosis/frasco) ===
+      { vacuna: 'Doble bacteriana (dT)',          lote: 'DT-2026-M04',  diasVenc:  -10, cantidad: 30 },
     ];
 
-    let creados = 0;
     const lotesCreados = [];
-    const hoy = new Date();
-
     for (const l of lotesPrueba) {
       const vac = vacPorNombre[l.vacuna];
       if (!vac) continue;
-      const venc = new Date(hoy);
-      venc.setDate(venc.getDate() + l.diasVenc);
-      const vencStr = venc.toISOString().slice(0, 10);
-
-      // Insertar lote
+      const vencStr = iso(sumar(hoy, l.diasVenc));
+      const fechaIngreso = restar(hoy, 20); // ingresados hace 20 días para que los ingresos aparezcan en el historial
       const [r] = await conn.query(
         `INSERT INTO lotes (vacuna_id, numero_lote, vencimiento, cantidad_inicial, disponible)
          VALUES (?,?,?,?,?)`,
         [vac.id, l.lote, vencStr, l.cantidad, l.cantidad]
       );
-      // Movimiento de ingreso
       await conn.query(
-        `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, usuario_id)
-         VALUES ('ingreso',?,?,?,?)`,
-        [vac.id, r.insertId, l.cantidad, req.user.id]
+        `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, fecha_mov, usuario_id)
+         VALUES ('ingreso',?,?,?,?,?)`,
+        [vac.id, r.insertId, l.cantidad, isoDT(fechaIngreso), userId]
       );
-      creados++;
-      lotesCreados.push({ id: r.insertId, vacuna_id: vac.id, cantidad: l.cantidad });
+      lotesCreados.push({
+        id: r.insertId, vacuna_id: vac.id, dosis_por_frasco: vac.dosis_por_frasco,
+        disponible: l.cantidad, vencido: l.diasVenc < 0,
+      });
     }
 
-    // Aplicaciones de prueba distribuidas en los últimos días
-    // (para probar los filtros de fecha en Movimientos)
+    /* ==========================================================
+       APLICACIONES distribuidas en el tiempo — para probar filtros
+       de fecha en Movimientos (hoy, ayer, esta semana, este mes,
+       mes pasado). Solo se aplican dosis de lotes NO vencidos.
+       ========================================================== */
     const aplicaciones = [
-      { loteIdx: 0, cantidad: 3, diasAtras: 0 },   // hoy
-      { loteIdx: 0, cantidad: 2, diasAtras: 1 },   // ayer
-      { loteIdx: 1, cantidad: 5, diasAtras: 2 },
-      { loteIdx: 2, cantidad: 8, diasAtras: 5 },   // hace 5 días
-      { loteIdx: 3, cantidad: 2, diasAtras: 7 },   // hace 1 semana
-      { loteIdx: 5, cantidad: 4, diasAtras: 10 },
-      { loteIdx: 9, cantidad: 3, diasAtras: 15 },
+      // Hoy
+      { loteIdx: 0, cantidad: 3, diasAtras: 0 },   // Triple viral
+      { loteIdx: 2, cantidad: 2, diasAtras: 0 },   // Neumococo
+      // Ayer
+      { loteIdx: 0, cantidad: 2, diasAtras: 1 },
+      // Últimos 7 días
+      { loteIdx: 1, cantidad: 5, diasAtras: 3 },   // Rotavirus
+      { loteIdx: 2, cantidad: 4, diasAtras: 5 },
+      { loteIdx: 5, cantidad: 2, diasAtras: 6 },   // Hep A (por vencer)
+      // Este mes
+      { loteIdx: 6, cantidad: 3, diasAtras: 14 },  // Antimenin (por vencer)
+      { loteIdx: 1, cantidad: 6, diasAtras: 18 },
+      // Mes pasado (para probar el filtro de fecha "hasta")
+      { loteIdx: 2, cantidad: 3, diasAtras: 35 },
+      { loteIdx: 0, cantidad: 4, diasAtras: 45 },
     ];
     for (const a of aplicaciones) {
       const lote = lotesCreados[a.loteIdx];
-      if (!lote || a.cantidad > lote.cantidad) continue;
-      const fecha = new Date(hoy);
-      fecha.setDate(fecha.getDate() - a.diasAtras);
-      const fechaStr = fecha.toISOString().slice(0, 10);
+      if (!lote || lote.vencido || a.cantidad > lote.disponible) continue;
+      const fecha = restar(hoy, a.diasAtras);
+      const fechaStr = iso(fecha);
+      const fechaDT = isoDT(new Date(fecha.setHours(10, 30, 0, 0)));
       await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [a.cantidad, lote.id]);
       await conn.query(
         `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, fecha_aplicacion, fecha_mov, usuario_id)
          VALUES ('aplicacion',?,?,?,?,?,?)`,
-        [lote.vacuna_id, lote.id, a.cantidad, fechaStr, fechaStr + ' 10:30:00', req.user.id]
+        [lote.vacuna_id, lote.id, a.cantidad, fechaStr, fechaDT, userId]
       );
-      lote.cantidad -= a.cantidad;
+      lote.disponible -= a.cantidad;
     }
 
-    // Un descarte de prueba (para tener los tres tipos en el historial)
-    if (lotesCreados[4]) {
-      const l = lotesCreados[4];
-      const fecha = new Date(hoy);
-      fecha.setDate(fecha.getDate() - 3);
-      await conn.query('UPDATE lotes SET disponible = disponible - 1 WHERE id = ?', [l.id]);
+    /* ==========================================================
+       DESCARTES con distintos motivos para probar el historial y
+       los filtros del Excel.
+       ========================================================== */
+    const descartes = [
+      { loteIdx: 4, cantidad: 1, motivo: 'Rotura / derrame',    diasAtras: 3 },  // Varicela
+      { loteIdx: 3, cantidad: 1, motivo: 'Cadena de frío',      diasAtras: 8 },  // Doble viral
+      { loteIdx: 1, cantidad: 2, motivo: 'Vencimiento',         diasAtras: 20 }, // Rotavirus
+      { loteIdx: 5, cantidad: 1, motivo: 'Otro',                diasAtras: 12 }, // Hep A
+    ];
+    for (const d of descartes) {
+      const lote = lotesCreados[d.loteIdx];
+      if (!lote || lote.vencido || d.cantidad > lote.disponible) continue;
+      const fecha = restar(hoy, d.diasAtras);
+      const fechaDT = isoDT(new Date(fecha.setHours(14, 15, 0, 0)));
+      await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [d.cantidad, lote.id]);
       await conn.query(
         `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, motivo, fecha_mov, usuario_id)
          VALUES ('descarte',?,?,?,?,?,?)`,
-        [l.vacuna_id, l.id, 1, 'Rotura / derrame', fecha.toISOString().slice(0, 19).replace('T', ' '), req.user.id]
+        [lote.vacuna_id, lote.id, d.cantidad, d.motivo, fechaDT, userId]
       );
+      lote.disponible -= d.cantidad;
+    }
+
+    /* ==========================================================
+       FRASCOS ABIERTOS — cubren los 4 estados posibles:
+        - activo recién abierto (~2 días)
+        - activo por vencer (28 días, cae en la alerta de stock bajo)
+        - vencido con sobrantes (>30 días, cae en el banner rojo)
+        - agotado (todas las dosis usadas)
+       Se ubican en los lotes multidosis NO vencidos.
+       ========================================================== */
+    // Índices de los lotes multidosis por su posición en lotesPrueba
+    const idxHepB = 8;   // Hepatitis B — recién abierto
+    const idxSalk = 9;   // Salk — por vencer
+    const idxDtpa = 10;  // dTpa — agotado (frasco cerrado ya, abrimos nuevo)
+    // dT (idxDtM = 11) está vencido como lote, no se le abre frasco
+
+    // Necesitamos un multidosis extra para el vencido con sobrantes.
+    // Usamos Salk también: creamos un frasco vencido histórico en el mismo lote.
+    // Alternativa más limpia: agregamos otro lote multidosis para el vencido.
+    // Para no ensuciar el conteo de lotes, usamos Hep B (que tiene stock de sobra).
+
+    const escenariosFrasco = [
+      // Recién abierto: Hep B, hace 2 días, 3 dosis usadas de 10
+      { loteIdx: idxHepB, diasAtras: 2,  usadas: 3, estado: 'activo' },
+      // Por vencer: Salk, hace 28 días, 3 dosis usadas de 5
+      { loteIdx: idxSalk, diasAtras: 28, usadas: 3, estado: 'activo' },
+      // Vencido con sobrantes: Hep B, hace 35 días, 4 dosis usadas de 10 (6 sobrantes)
+      { loteIdx: idxHepB, diasAtras: 35, usadas: 4, estado: 'activo' },
+      // Agotado: dTpa, hace 15 días, 10 dosis usadas de 10 (histórico, no molesta)
+      { loteIdx: idxDtpa, diasAtras: 15, usadas: 10, estado: 'agotado' },
+    ];
+
+    for (const esc of escenariosFrasco) {
+      const lote = lotesCreados[esc.loteIdx];
+      if (!lote || lote.vencido) continue;
+      const dpf = lote.dosis_por_frasco;
+      if (dpf < 2) continue;                 // solo multidosis
+      if (esc.usadas > lote.disponible) continue; // no descontar más de lo que hay
+      const fechaAp = restar(hoy, esc.diasAtras);
+      const cierre = esc.estado === 'agotado' ? iso(restar(hoy, esc.diasAtras - 8)) : null;
+      await conn.query(
+        `INSERT INTO frascos_abiertos (lote_id, fecha_apertura, dosis_totales, dosis_usadas, estado, fecha_cierre)
+         VALUES (?,?,?,?,?,?)`,
+        [lote.id, iso(fechaAp), dpf, esc.usadas, esc.estado, cierre]
+      );
+      // Descontar del stock las dosis efectivamente usadas y generar aplicaciones
+      if (esc.usadas > 0) {
+        await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [esc.usadas, lote.id]);
+        // Distribuimos las aplicaciones a lo largo de la vida del frasco
+        for (let i = 0; i < esc.usadas; i++) {
+          const fApp = restar(hoy, Math.max(0, esc.diasAtras - i * 2));
+          await conn.query(
+            `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, fecha_aplicacion, fecha_mov, usuario_id)
+             VALUES ('aplicacion',?,?,?,?,?,?)`,
+            [lote.vacuna_id, lote.id, 1, iso(fApp), isoDT(new Date(fApp.setHours(9, 0, 0, 0))), userId]
+          );
+        }
+        lote.disponible -= esc.usadas;
+      }
     }
 
     await conn.commit();
-
-    // Después del commit, agregar frascos abiertos de prueba a los lotes multidosis
-    // en distintos estados para poder probar todas las alertas.
-    await agregarFrascosPrueba(conn, req.user.id);
-
     res.json({
       ok: true,
-      lotes: creados,
-      mensaje: `Se cargaron ${creados} lotes de prueba con movimientos variados.`,
+      lotes: lotesCreados.length,
+      mensaje: `Se cargaron ${lotesCreados.length} lotes con datos completos para probar todos los escenarios.`,
     });
   } catch (err) {
     await conn.rollback();
@@ -804,57 +895,6 @@ app.post('/api/admin/cargar-prueba', requireAuth, requireRole('enfermeria'), asy
     res.status(500).json({ error: 'Error del servidor: ' + err.message });
   } finally { conn.release(); }
 });
-
-/**
- * Crea frascos abiertos de prueba para los lotes multidosis:
- * - Uno recién abierto (activo, ~2 días)
- * - Uno por vencer (28 días de abierto, 2 días para vencer)
- * - Uno ya vencido (35 días de abierto, con dosis sobrantes)
- * Esto permite ver las alertas del dashboard sin esperar días reales.
- */
-async function agregarFrascosPrueba(conn, usuarioId) {
-  try {
-    const [multi] = await conn.query(
-      `SELECT l.id AS lote_id, v.id AS vacuna_id, v.dosis_por_frasco
-         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
-        WHERE v.dosis_por_frasco > 1 AND l.disponible > 0
-        ORDER BY l.id LIMIT 3`
-    );
-    if (multi.length === 0) return;
-
-    const escenarios = [
-      { diasAtras: 2,  usadas: 2, descuenta: true },   // recién abierto, activo
-      { diasAtras: 28, usadas: 4, descuenta: true },   // por vencer (25-30 días)
-      { diasAtras: 35, usadas: 3, descuenta: true },   // vencido con sobrantes
-    ];
-    for (let i = 0; i < Math.min(multi.length, escenarios.length); i++) {
-      const lote = multi[i];
-      const esc = escenarios[i];
-      const dpf = lote.dosis_por_frasco;
-      const usadas = Math.min(esc.usadas, dpf);
-      const fecha = new Date();
-      fecha.setDate(fecha.getDate() - esc.diasAtras);
-      const fechaStr = fecha.toISOString().slice(0, 10);
-      await conn.query(
-        `INSERT INTO frascos_abiertos (lote_id, fecha_apertura, dosis_totales, dosis_usadas, estado)
-         VALUES (?,?,?,?, 'activo')`,
-        [lote.lote_id, fechaStr, dpf, usadas]
-      );
-      // Descontar del stock las dosis usadas y registrar como aplicaciones
-      if (esc.descuenta && usadas > 0) {
-        await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [usadas, lote.lote_id]);
-        await conn.query(
-          `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, fecha_aplicacion, fecha_mov, usuario_id)
-           VALUES ('aplicacion',?,?,?,?,?,?)`,
-          [lote.vacuna_id, lote.lote_id, usadas, fechaStr, fechaStr + ' 09:00:00', usuarioId]
-        );
-      }
-    }
-  } catch (err) {
-    console.error('agregar frascos de prueba:', err.message);
-    // No propagamos: los lotes ya se crearon, solo fallaron los frascos
-  }
-}
 
 /* ===========================================================
  * HISTORIAL — RF08
