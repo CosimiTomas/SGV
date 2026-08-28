@@ -85,6 +85,16 @@
         <button class="banner-vencidas-btn enfermeria-only" onclick="irADescartar()">Ir a descartar</button>
       </div>
 
+      <!-- Banner de frascos multidosis abiertos vencidos (>30 días) -->
+      <div class="banner-vencidas" id="bannerFrascosVencidos" style="display:none">
+        <div class="banner-vencidas-ic">💉</div>
+        <div class="banner-vencidas-txt">
+          <div class="banner-vencidas-titulo" id="bannerFrascosTitulo"></div>
+          <div class="banner-vencidas-lista" id="bannerFrascosLista"></div>
+        </div>
+        <button class="banner-vencidas-btn enfermeria-only" onclick="descartarFrascoVencido()">Descartar frasco</button>
+      </div>
+
       <div class="alerts">
         <div class="alert low">
           <div class="ic">!</div>

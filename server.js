@@ -135,12 +135,31 @@ async function bootstrapDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
+    // Frascos multidosis abiertos: un frasco se abre al aplicar la primera
+    // dosis y vence 30 días después. Solo puede haber uno activo por lote.
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS frascos_abiertos (
+        id              INT AUTO_INCREMENT PRIMARY KEY,
+        lote_id         INT NOT NULL,
+        fecha_apertura  DATE NOT NULL,
+        dosis_totales   INT NOT NULL,
+        dosis_usadas    INT NOT NULL DEFAULT 0,
+        estado          ENUM('activo','agotado','vencido') NOT NULL DEFAULT 'activo',
+        fecha_cierre    DATE NULL,
+        motivo_cierre   VARCHAR(80) NULL,
+        CONSTRAINT fk_frasco_lote FOREIGN KEY (lote_id) REFERENCES lotes(id),
+        CONSTRAINT chk_frasco_dosis CHECK (dosis_usadas >= 0 AND dosis_usadas <= dosis_totales)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
     // Índices (se intentan crear; si ya existen se ignora)
     const indices = [
       'CREATE INDEX idx_lotes_vacuna ON lotes(vacuna_id)',
       'CREATE INDEX idx_lotes_venc   ON lotes(vencimiento)',
       'CREATE INDEX idx_mov_tipo     ON movimientos(tipo)',
       'CREATE INDEX idx_mov_fecha    ON movimientos(fecha_mov)',
+      'CREATE INDEX idx_frasco_lote  ON frascos_abiertos(lote_id)',
+      'CREATE INDEX idx_frasco_estado ON frascos_abiertos(estado)',
     ];
     for (const sql of indices) {
       try { await conn.query(sql); }
@@ -375,9 +394,45 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
         WHERE DATEDIFF(l.vencimiento, CURDATE()) < 0 AND l.disponible > 0
         ORDER BY l.vencimiento`
     );
+    // Frascos abiertos vencidos (>30 días desde apertura) con dosis sobrantes
+    const [frascosVencidos] = await pool.query(
+      `SELECT f.id AS frasco_id, f.lote_id, l.numero_lote, f.fecha_apertura,
+              DATEDIFF(CURDATE(), f.fecha_apertura) AS dias_abierto,
+              (f.dosis_totales - f.dosis_usadas) AS dosis_sobrantes,
+              v.id AS vacuna_id, v.nombre AS vacuna, v.dosis_por_frasco
+         FROM frascos_abiertos f
+         JOIN lotes l   ON l.id = f.lote_id
+         JOIN vacunas v ON v.id = l.vacuna_id
+        WHERE f.estado = 'activo'
+          AND DATEDIFF(CURDATE(), f.fecha_apertura) > 30
+          AND (f.dosis_totales - f.dosis_usadas) > 0
+        ORDER BY f.fecha_apertura`
+    );
+    // Frascos abiertos por vencer (25-30 días de apertura, todavía activos)
+    const [frascosPorVencer] = await pool.query(
+      `SELECT f.id AS frasco_id, f.lote_id, l.numero_lote, f.fecha_apertura,
+              DATEDIFF(CURDATE(), f.fecha_apertura) AS dias_abierto,
+              (30 - DATEDIFF(CURDATE(), f.fecha_apertura)) AS dias_restantes,
+              (f.dosis_totales - f.dosis_usadas) AS dosis_sobrantes,
+              v.nombre AS vacuna, v.dosis_por_frasco
+         FROM frascos_abiertos f
+         JOIN lotes l   ON l.id = f.lote_id
+         JOIN vacunas v ON v.id = l.vacuna_id
+        WHERE f.estado = 'activo'
+          AND DATEDIFF(CURDATE(), f.fecha_apertura) BETWEEN 25 AND 30
+          AND (f.dosis_totales - f.dosis_usadas) > 0
+        ORDER BY f.fecha_apertura`
+    );
     res.json({
-      kpis: { tipos, unidades, stockBajo: bajo.length, porVencer: vencer.length, vencidas: vencidas.length },
-      alertas: { stockBajo: bajo, porVencer: vencer, vencidas },
+      kpis: {
+        tipos, unidades,
+        stockBajo: bajo.length, porVencer: vencer.length, vencidas: vencidas.length,
+        frascosVencidos: frascosVencidos.length,
+      },
+      alertas: {
+        stockBajo: bajo, porVencer: vencer, vencidas,
+        frascosVencidos, frascosPorVencer,
+      },
       umbrales: { stockBajo: UMBRAL_STOCK_BAJO, diasVencimiento: DIAS_VENCIMIENTO },
     });
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
@@ -445,22 +500,96 @@ app.post('/api/aplicaciones', requireAuth, requireRole('enfermeria'), async (req
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[lote]] = await conn.query('SELECT id, vacuna_id, disponible FROM lotes WHERE id = ? FOR UPDATE', [lote_id]);
+    const [[lote]] = await conn.query(
+      `SELECT l.id, l.vacuna_id, l.disponible, v.dosis_por_frasco
+         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
+        WHERE l.id = ? FOR UPDATE`, [lote_id]
+    );
     if (!lote) { await conn.rollback(); return res.status(404).json({ error: 'El lote no existe.' }); }
-    if (Number(cantidad) > lote.disponible) { await conn.rollback(); return res.status(400).json({ error: 'La cantidad supera el stock disponible del lote.' }); }
-    await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [cantidad, lote_id]);
+    const cant = Number(cantidad);
+    if (cant > lote.disponible) { await conn.rollback(); return res.status(400).json({ error: 'La cantidad supera el stock disponible del lote.' }); }
+
+    // Descuento del stock general del lote
+    await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [cant, lote_id]);
     await conn.query(
       `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, fecha_aplicacion, usuario_id)
        VALUES ('aplicacion',?,?,?,?,?)`,
-      [lote.vacuna_id, lote_id, cantidad, fecha_aplicacion, req.user.id]
+      [lote.vacuna_id, lote_id, cant, fecha_aplicacion, req.user.id]
     );
+
+    // Gestión automática de frascos abiertos (solo multidosis)
+    let mensajeExtra = '';
+    if (lote.dosis_por_frasco > 1) {
+      await gestionarFrascoAbierto(conn, lote_id, cant, lote.dosis_por_frasco, (msg) => { mensajeExtra = msg; });
+    }
+
     await conn.commit();
-    res.status(201).json({ ok: true, mensaje: 'Aplicación registrada con éxito.' });
+    res.status(201).json({ ok: true, mensaje: 'Aplicación registrada con éxito.' + (mensajeExtra ? ' ' + mensajeExtra : '') });
   } catch (err) {
     await conn.rollback(); console.error('aplicaciones:', err.message);
     res.status(500).json({ error: 'Error del servidor.' });
   } finally { conn.release(); }
 });
+
+/**
+ * Gestiona el frasco abierto de un lote multidosis al aplicar dosis.
+ * Regla del CAPS: solo un frasco abierto por lote a la vez, se usa hasta
+ * agotar o vencer (30 días), recién ahí se abre otro.
+ *
+ * Al aplicar N dosis:
+ *  - Si no hay frasco activo → abre uno nuevo (fecha_apertura = hoy)
+ *  - Suma las dosis usadas al frasco activo
+ *  - Si el frasco se llena (agota) → lo marca como agotado
+ *  - Si sobran dosis por aplicar → abre otro frasco nuevo (caso raro pero posible
+ *    si aplican más dosis que las que quedan en el frasco actual)
+ */
+async function gestionarFrascoAbierto(conn, lote_id, cantidad, dosisPorFrasco, notify) {
+  let restantes = cantidad;
+  let frascosAbiertos = 0;
+
+  while (restantes > 0) {
+    // Buscar frasco activo del lote
+    const [[frasco]] = await conn.query(
+      `SELECT id, dosis_totales, dosis_usadas
+         FROM frascos_abiertos
+        WHERE lote_id = ? AND estado = 'activo'
+        LIMIT 1 FOR UPDATE`, [lote_id]
+    );
+
+    if (!frasco) {
+      // Abrir uno nuevo
+      const usar = Math.min(restantes, dosisPorFrasco);
+      const nuevoEstado = (usar === dosisPorFrasco) ? 'agotado' : 'activo';
+      await conn.query(
+        `INSERT INTO frascos_abiertos (lote_id, fecha_apertura, dosis_totales, dosis_usadas, estado, fecha_cierre)
+         VALUES (?, CURDATE(), ?, ?, ?, ?)`,
+        [lote_id, dosisPorFrasco, usar, nuevoEstado, nuevoEstado === 'agotado' ? new Date() : null]
+      );
+      restantes -= usar;
+      frascosAbiertos++;
+    } else {
+      const espacioLibre = frasco.dosis_totales - frasco.dosis_usadas;
+      const usar = Math.min(restantes, espacioLibre);
+      const nuevasUsadas = frasco.dosis_usadas + usar;
+      if (nuevasUsadas >= frasco.dosis_totales) {
+        // Frasco se agota
+        await conn.query(
+          `UPDATE frascos_abiertos SET dosis_usadas = ?, estado = 'agotado', fecha_cierre = CURDATE()
+            WHERE id = ?`, [nuevasUsadas, frasco.id]
+        );
+      } else {
+        await conn.query(
+          `UPDATE frascos_abiertos SET dosis_usadas = ? WHERE id = ?`,
+          [nuevasUsadas, frasco.id]
+        );
+      }
+      restantes -= usar;
+    }
+  }
+  if (frascosAbiertos > 0 && notify) {
+    notify(`Se ${frascosAbiertos === 1 ? 'abrió un frasco nuevo' : `abrieron ${frascosAbiertos} frascos nuevos`} (vence a los 30 días).`);
+  }
+}
 
 app.post('/api/descartes', requireAuth, requireRole('enfermeria'), async (req, res) => {
   const { lote_id, cantidad, motivo } = req.body;
@@ -487,6 +616,45 @@ app.post('/api/descartes', requireAuth, requireRole('enfermeria'), async (req, r
 });
 
 /**
+ * Descarte de frasco multidosis abierto vencido (>30 días de apertura).
+ * Descuenta las dosis restantes del stock del lote y registra el movimiento
+ * con motivo "Frasco abierto vencido". Marca el frasco como vencido.
+ */
+app.post('/api/descartes/frasco/:id', requireAuth, requireRole('enfermeria'), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[frasco]] = await conn.query(
+      `SELECT f.id, f.lote_id, f.dosis_totales, f.dosis_usadas, f.estado,
+              l.vacuna_id
+         FROM frascos_abiertos f
+         JOIN lotes l ON l.id = f.lote_id
+        WHERE f.id = ? FOR UPDATE`, [req.params.id]
+    );
+    if (!frasco) { await conn.rollback(); return res.status(404).json({ error: 'Frasco no encontrado.' }); }
+    if (frasco.estado !== 'activo') { await conn.rollback(); return res.status(400).json({ error: 'El frasco ya no está activo.' }); }
+    const dosisAdescartar = frasco.dosis_totales - frasco.dosis_usadas;
+    if (dosisAdescartar > 0) {
+      await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [dosisAdescartar, frasco.lote_id]);
+      await conn.query(
+        `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, motivo, usuario_id)
+         VALUES ('descarte',?,?,?,?,?)`,
+        [frasco.vacuna_id, frasco.lote_id, dosisAdescartar, 'Frasco abierto vencido', req.user.id]
+      );
+    }
+    await conn.query(
+      `UPDATE frascos_abiertos SET estado = 'vencido', fecha_cierre = CURDATE(), motivo_cierre = 'Vencimiento a los 30 días'
+        WHERE id = ?`, [frasco.id]
+    );
+    await conn.commit();
+    res.json({ ok: true, dosis_descartadas: dosisAdescartar, mensaje: `Se descartó el frasco con ${dosisAdescartar} dosis sobrantes.` });
+  } catch (err) {
+    await conn.rollback(); console.error('descartes/frasco:', err.message);
+    res.status(500).json({ error: 'Error del servidor.' });
+  } finally { conn.release(); }
+});
+
+/**
  * RESET completo — solo para fase de prueba.
  * Borra todos los lotes y movimientos para empezar de cero.
  * NO toca usuarios ni catálogo de vacunas (sino habría que reseedear).
@@ -496,10 +664,12 @@ app.post('/api/admin/reset', requireAuth, requireRole('enfermeria'), async (req,
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    // Orden importante: primero movimientos (tiene FK a lotes)
+    // Orden importante por foreign keys: primero movimientos y frascos, después lotes
     const [mov] = await conn.query('DELETE FROM movimientos');
+    await conn.query('DELETE FROM frascos_abiertos');
     const [lot] = await conn.query('DELETE FROM lotes');
     await conn.query('ALTER TABLE movimientos AUTO_INCREMENT = 1');
+    await conn.query('ALTER TABLE frascos_abiertos AUTO_INCREMENT = 1');
     await conn.query('ALTER TABLE lotes AUTO_INCREMENT = 1');
     await conn.commit();
     res.json({
@@ -618,6 +788,11 @@ app.post('/api/admin/cargar-prueba', requireAuth, requireRole('enfermeria'), asy
     }
 
     await conn.commit();
+
+    // Después del commit, agregar frascos abiertos de prueba a los lotes multidosis
+    // en distintos estados para poder probar todas las alertas.
+    await agregarFrascosPrueba(conn, req.user.id);
+
     res.json({
       ok: true,
       lotes: creados,
@@ -629,6 +804,57 @@ app.post('/api/admin/cargar-prueba', requireAuth, requireRole('enfermeria'), asy
     res.status(500).json({ error: 'Error del servidor: ' + err.message });
   } finally { conn.release(); }
 });
+
+/**
+ * Crea frascos abiertos de prueba para los lotes multidosis:
+ * - Uno recién abierto (activo, ~2 días)
+ * - Uno por vencer (28 días de abierto, 2 días para vencer)
+ * - Uno ya vencido (35 días de abierto, con dosis sobrantes)
+ * Esto permite ver las alertas del dashboard sin esperar días reales.
+ */
+async function agregarFrascosPrueba(conn, usuarioId) {
+  try {
+    const [multi] = await conn.query(
+      `SELECT l.id AS lote_id, v.id AS vacuna_id, v.dosis_por_frasco
+         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
+        WHERE v.dosis_por_frasco > 1 AND l.disponible > 0
+        ORDER BY l.id LIMIT 3`
+    );
+    if (multi.length === 0) return;
+
+    const escenarios = [
+      { diasAtras: 2,  usadas: 2, descuenta: true },   // recién abierto, activo
+      { diasAtras: 28, usadas: 4, descuenta: true },   // por vencer (25-30 días)
+      { diasAtras: 35, usadas: 3, descuenta: true },   // vencido con sobrantes
+    ];
+    for (let i = 0; i < Math.min(multi.length, escenarios.length); i++) {
+      const lote = multi[i];
+      const esc = escenarios[i];
+      const dpf = lote.dosis_por_frasco;
+      const usadas = Math.min(esc.usadas, dpf);
+      const fecha = new Date();
+      fecha.setDate(fecha.getDate() - esc.diasAtras);
+      const fechaStr = fecha.toISOString().slice(0, 10);
+      await conn.query(
+        `INSERT INTO frascos_abiertos (lote_id, fecha_apertura, dosis_totales, dosis_usadas, estado)
+         VALUES (?,?,?,?, 'activo')`,
+        [lote.lote_id, fechaStr, dpf, usadas]
+      );
+      // Descontar del stock las dosis usadas y registrar como aplicaciones
+      if (esc.descuenta && usadas > 0) {
+        await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [usadas, lote.lote_id]);
+        await conn.query(
+          `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, fecha_aplicacion, fecha_mov, usuario_id)
+           VALUES ('aplicacion',?,?,?,?,?,?)`,
+          [lote.vacuna_id, lote.lote_id, usadas, fechaStr, fechaStr + ' 09:00:00', usuarioId]
+        );
+      }
+    }
+  } catch (err) {
+    console.error('agregar frascos de prueba:', err.message);
+    // No propagamos: los lotes ya se crearon, solo fallaron los frascos
+  }
+}
 
 /* ===========================================================
  * HISTORIAL — RF08

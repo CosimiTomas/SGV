@@ -175,6 +175,7 @@ async function loadVacunas(){
 
 // Guardamos la lista de vencidas para poder saltar al descarte precargado
 let VENCIDAS_CACHE = [];
+let FRASCOS_VENCIDOS_CACHE = [];
 
 async function loadDashboard(){
   const d = await api('/dashboard');
@@ -190,29 +191,54 @@ async function loadDashboard(){
   }
   // Alertas
   const low = d.alertas.stockBajo, exp = d.alertas.porVencer, vencidas = d.alertas.vencidas || [];
+  const frascosVencidos = d.alertas.frascosVencidos || [];
+  const frascosPorVencer = d.alertas.frascosPorVencer || [];
   VENCIDAS_CACHE = vencidas;
+  FRASCOS_VENCIDOS_CACHE = frascosVencidos;
+
   const lowUl = document.querySelector('#page-inicio .alert.low ul');
   const expUl = document.querySelector('#page-inicio .alert.exp ul');
-  if (lowUl) lowUl.innerHTML = low.length
-    ? low.map(a=>`<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — quedan ${fmtDisp(a.disponible, a.dosis_por_frasco)}</li>`).join('')
-    : '<li class="alert-empty">Sin vacunas con stock bajo.</li>';
+  if (lowUl) {
+    // Incluimos también los frascos por vencer en el bloque "stock bajo"
+    // porque son igualmente una advertencia leve. Los mostramos con estilo distintivo.
+    const items = [];
+    low.forEach(a => items.push(`<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — quedan ${fmtDisp(a.disponible, a.dosis_por_frasco)}</li>`));
+    frascosPorVencer.forEach(f => items.push(`<li>Frasco abierto de <b>${f.vacuna}</b> vence en <b>${f.dias_restantes} día${f.dias_restantes === 1 ? '' : 's'}</b> (${f.dosis_sobrantes} dosis sobrantes)</li>`));
+    lowUl.innerHTML = items.length ? items.join('') : '<li class="alert-empty">Sin vacunas con stock bajo.</li>';
+  }
   if (expUl) expUl.innerHTML = exp.length
     ? exp.map(a=>`<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — vence <b>${fmtFecha(a.vencimiento)}</b> (${fmtDias(a.dias)})</li>`).join('')
     : '<li class="alert-empty">Sin vacunas próximas a vencer.</li>';
 
-  // Banner de vencidas: solo se muestra si hay lotes vencidos
+  // Banner de lotes vencidos
   const banner = $('bannerVencidas');
   if (banner) {
     if (vencidas.length > 0) {
       const n = vencidas.length;
       $('bannerVencidasTitulo').textContent =
         `${n} ${n === 1 ? 'lote vencido' : 'lotes vencidos'} sin descartar`;
-      // Nombres únicos de vacunas afectadas, separados por punto medio
       const nombres = [...new Set(vencidas.map(v => v.vacuna))];
       $('bannerVencidasLista').textContent = nombres.join(' · ');
       banner.style.display = 'flex';
     } else {
       banner.style.display = 'none';
+    }
+  }
+
+  // Banner de frascos abiertos vencidos (>30 días desde apertura)
+  const bFras = $('bannerFrascosVencidos');
+  if (bFras) {
+    if (frascosVencidos.length > 0) {
+      const n = frascosVencidos.length;
+      $('bannerFrascosTitulo').textContent =
+        `${n} frasco${n === 1 ? '' : 's'} abierto${n === 1 ? '' : 's'} vencido${n === 1 ? '' : 's'} (más de 30 días)`;
+      const items = frascosVencidos.map(f =>
+        `${f.vacuna} · lote ${f.numero_lote} · ${f.dosis_sobrantes} dosis sobrantes`
+      );
+      $('bannerFrascosLista').textContent = items.join(' · ');
+      bFras.style.display = 'flex';
+    } else {
+      bFras.style.display = 'none';
     }
   }
 }
@@ -240,6 +266,27 @@ async function irADescartar(){
     $('de-cant').value = primero.disponible;
   }
   toggleDescarteMulti();
+}
+
+/**
+ * Descarta el primer frasco abierto vencido de la lista. Llama al endpoint
+ * dedicado que descuenta solo las dosis sobrantes del frasco (no todo el lote).
+ */
+async function descartarFrascoVencido(){
+  if (FRASCOS_VENCIDOS_CACHE.length === 0) return;
+  const f = FRASCOS_VENCIDOS_CACHE[0];
+  const ok = confirm(
+    `¿Descartar el frasco abierto de ${f.vacuna} (lote ${f.numero_lote})?\n\n` +
+    `Se descuentan ${f.dosis_sobrantes} dosis sobrantes con motivo "Frasco abierto vencido".`
+  );
+  if (!ok) return;
+  try {
+    const r = await api(`/descartes/frasco/${f.frasco_id}`, { method: 'POST' });
+    toast('ok', r.mensaje);
+    await Promise.all([loadDashboard(), loadStock(), loadMovimientos()]);
+  } catch (err) {
+    toast('err', err.message);
+  }
 }
 
 // Cache de la última respuesta del stock para poder re-renderizar con
