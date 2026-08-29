@@ -179,148 +179,72 @@ let FRASCOS_VENCIDOS_CACHE = [];
 
 async function loadDashboard(){
   const d = await api('/dashboard');
+  // KPIs (5: tipos, unidades, stockBajo, porVencer, vencidas)
   const k = d.kpis;
+  const nums = document.querySelectorAll('#page-inicio .kpi .num');
+  if (nums.length >= 4){
+    nums[0].textContent = k.tipos;
+    nums[1].textContent = k.unidades;
+    nums[2].textContent = k.stockBajo;
+    nums[3].textContent = k.porVencer;
+    if (nums[4]) nums[4].textContent = k.vencidas;
+  }
+  // Alertas
   const low = d.alertas.stockBajo || [];
   const exp = d.alertas.porVencer || [];
   const vencidas = d.alertas.vencidas || [];
   const frascosVencidos = d.alertas.frascosVencidos || [];
   const frascosPorVencer = d.alertas.frascosPorVencer || [];
+  const frascosActivos = d.alertas.frascosActivos || [];
   VENCIDAS_CACHE = vencidas;
   FRASCOS_VENCIDOS_CACHE = frascosVencidos;
 
-  // ==============================================================
-  // Saludo con nombre — se calcula del correo del usuario
-  // ==============================================================
-  const saludo = $('dashSaludo');
-  if (saludo && USER) {
-    const hora = new Date().getHours();
-    const franja = hora < 12 ? 'Buenos días' : (hora < 19 ? 'Buenas tardes' : 'Buenas noches');
-    // Nombre "amigable" a partir del rol o el correo
-    const info = ROL_INFO[USER.rol] || {};
-    const nombre = info.name || USER.correo?.split('@')[0] || '';
-    saludo.textContent = `${franja}, ${nombre}`;
-  }
+  const lowUl  = document.querySelector('#page-inicio .alert.low ul');
+  const expUl  = document.querySelector('#page-inicio .alert.exp ul');
+  const multiUl = document.querySelector('#page-inicio .alert.multi ul');
 
-  // ==============================================================
-  // BLOQUE 1: Resumen del día — mensaje humano
-  // ==============================================================
-  const totalUrgente = vencidas.length + frascosVencidos.length;
-  const totalAvisos  = low.length + exp.length + frascosPorVencer.length;
-  const resumen = $('dashResumen');
-  const rTit = $('dashResumenTitulo');
-  const rSub = $('dashResumenSub');
-  const rIc  = $('dashResumenIc');
-  if (resumen) {
-    resumen.classList.remove('ok', 'aviso', 'critico');
-    if (totalUrgente > 0) {
-      resumen.classList.add('critico');
-      rIc.textContent = '!';
-      rTit.textContent = 'Hay acciones urgentes pendientes';
-      rSub.textContent = totalAvisos > 0
-        ? `${totalUrgente} ${totalUrgente === 1 ? 'crítica' : 'críticas'} y ${totalAvisos} para revisar pronto.`
-        : `${totalUrgente} ${totalUrgente === 1 ? 'situación crítica' : 'situaciones críticas'} para resolver.`;
-    } else if (totalAvisos > 0) {
-      resumen.classList.add('aviso');
-      rIc.textContent = '⚠';
-      rTit.textContent = totalAvisos === 1
-        ? 'Hay 1 alerta para revisar'
-        : `Hay ${totalAvisos} alertas para revisar`;
-      rSub.textContent = 'Sin urgencias críticas. Revisá cuando puedas.';
-    } else {
-      resumen.classList.add('ok');
-      rIc.textContent = '✓';
-      rTit.textContent = 'Todo en orden hoy';
-      rSub.textContent = 'No hay alertas ni acciones pendientes.';
-    }
-  }
+  if (lowUl) lowUl.innerHTML = low.length
+    ? low.map(a => `<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — quedan ${fmtDisp(a.disponible, a.dosis_por_frasco)}</li>`).join('')
+    : '<li class="alert-empty">Sin vacunas con stock bajo.</li>';
 
-  // ==============================================================
-  // BLOQUE 2: Acción requerida — banner rojo unificado
-  // ==============================================================
-  const accion = $('dashAccion');
-  const accionLista = $('dashAccionLista');
-  if (accion && accionLista) {
+  if (expUl) expUl.innerHTML = exp.length
+    ? exp.map(a => `<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — vence <b>${fmtFecha(a.vencimiento)}</b> (${fmtDias(a.dias)})</li>`).join('')
+    : '<li class="alert-empty">Sin vacunas próximas a vencer.</li>';
+
+  // Bloque MULTIDOSIS — toda la info de frascos abiertos junta
+  if (multiUl) {
     const items = [];
-    // Lotes vencidos (agrupamos por vacuna para no listar 20 lotes iguales)
-    if (vencidas.length > 0) {
-      const porVacuna = {};
-      vencidas.forEach(v => {
-        porVacuna[v.vacuna] = (porVacuna[v.vacuna] || 0) + 1;
-      });
-      Object.entries(porVacuna).forEach(([vacuna, n]) => {
-        items.push(`<b>${vacuna}</b> — ${n === 1 ? 'lote vencido' : `${n} lotes vencidos`} con stock que hay que descartar`);
-      });
-    }
-    // Frascos abiertos vencidos
+    // Vencidos primero (críticos, con botón)
     frascosVencidos.forEach(f => {
-      items.push(`<b>${f.vacuna}</b> — frasco abierto vencido hace ${f.dias_abierto - 30} ${(f.dias_abierto - 30) === 1 ? 'día' : 'días'} (${f.dosis_sobrantes} ${f.dosis_sobrantes === 1 ? 'dosis sobrante' : 'dosis sobrantes'})`);
+      const dosis = f.dosis_sobrantes;
+      items.push(`<li class="venc"><b>${f.vacuna}</b> — frasco vencido, ${dosis} ${dosis === 1 ? 'dosis' : 'dosis'} para descartar <button class="btn-mini enfermeria-only" onclick="descartarFrascoVencido(${f.frasco_id})">Descartar</button></li>`);
     });
-    if (items.length > 0) {
-      accionLista.innerHTML = items.map(i => `<li>${i}</li>`).join('');
-      accion.style.display = '';
+    // Por vencer (amarillo)
+    frascosPorVencer.forEach(f => {
+      items.push(`<li class="porv"><b>${f.vacuna}</b> — frasco abierto vence en ${f.dias_restantes} ${f.dias_restantes === 1 ? 'día' : 'días'} (${f.dosis_sobrantes} sobrantes)</li>`);
+    });
+    // Activos normales (informativo, sin destacar)
+    frascosActivos.forEach(f => {
+      items.push(`<li><b>${f.vacuna}</b> — abierto hace ${f.dias_abierto} ${f.dias_abierto === 1 ? 'día' : 'días'} (${f.dosis_sobrantes} de ${f.dosis_totales} dosis restantes)</li>`);
+    });
+    multiUl.innerHTML = items.length
+      ? items.join('')
+      : '<li class="alert-empty">Sin frascos multidosis abiertos.</li>';
+  }
+
+  // Banner de lotes vencidos (arriba de todo)
+  const banner = $('bannerVencidas');
+  if (banner) {
+    if (vencidas.length > 0) {
+      const n = vencidas.length;
+      $('bannerVencidasTitulo').textContent =
+        `${n} ${n === 1 ? 'lote vencido' : 'lotes vencidos'} sin descartar`;
+      const nombres = [...new Set(vencidas.map(v => v.vacuna))];
+      $('bannerVencidasLista').textContent = nombres.join(' · ');
+      banner.style.display = 'flex';
     } else {
-      accion.style.display = 'none';
+      banner.style.display = 'none';
     }
-  }
-
-  // ==============================================================
-  // BLOQUE 3: KPIs — 3 tarjetas
-  // ==============================================================
-  if ($('kpiTipos'))    $('kpiTipos').textContent = k.tipos;
-  if ($('kpiUnidades')) $('kpiUnidades').textContent = k.unidades;
-  const totalAlertas = totalUrgente + totalAvisos;
-  if ($('kpiAlertas')) $('kpiAlertas').textContent = totalAlertas;
-  // Coloreado del KPI de alertas según urgencia
-  const kBox = $('kpiAlertasBox');
-  if (kBox) {
-    kBox.classList.remove('warn', 'crit');
-    if (totalUrgente > 0) kBox.classList.add('crit');
-    else if (totalAvisos > 0) kBox.classList.add('warn');
-  }
-
-  // ==============================================================
-  // BLOQUE 4: Revisar pronto — advertencias no urgentes
-  // ==============================================================
-  const revisar = $('dashRevisar');
-  const colPV = $('listPorVencer');
-  const colSB = $('listStockBajo');
-  const cntPV = $('cntPorVencer');
-  const cntSB = $('cntStockBajo');
-  if (revisar) {
-    revisar.style.display = totalAvisos > 0 ? '' : 'none';
-    // Por vencer: incluye lotes por vencer + frascos abiertos por vencer
-    const itemsPV = [];
-    exp.forEach(a => itemsPV.push(
-      `<b>${a.vacuna}</b>${chipMulti(a.dosis_por_frasco)} — vence <b>${fmtFecha(a.vencimiento)}</b> (${fmtDias(a.dias)})`
-    ));
-    frascosPorVencer.forEach(f => itemsPV.push(
-      `<b>${f.vacuna}</b> — frasco abierto vence en <b>${f.dias_restantes} ${f.dias_restantes === 1 ? 'día' : 'días'}</b> (${f.dosis_sobrantes} sobrantes)`
-    ));
-    if (cntPV) cntPV.textContent = itemsPV.length || '';
-    if (cntPV) cntPV.style.display = itemsPV.length ? '' : 'none';
-    if (colPV) colPV.innerHTML = itemsPV.length
-      ? itemsPV.map(i => `<li>${i}</li>`).join('')
-      : '<li class="empty">Sin vacunas próximas a vencer.</li>';
-
-    // Stock bajo
-    if (cntSB) cntSB.textContent = low.length || '';
-    if (cntSB) cntSB.style.display = low.length ? '' : 'none';
-    if (colSB) colSB.innerHTML = low.length
-      ? low.map(a => `<li><b>${a.vacuna}</b>${chipMulti(a.dosis_por_frasco)} — quedan ${fmtDisp(a.disponible, a.dosis_por_frasco)}</li>`).join('')
-      : '<li class="empty">Sin vacunas con stock bajo.</li>';
-  }
-}
-
-/**
- * Resuelve la primera urgencia — decide inteligentemente entre descartar
- * un frasco abierto vencido o un lote vencido según lo que haya cargado.
- * Prioriza frascos porque son intervenciones más específicas y rápidas.
- */
-async function resolverPrimeraUrgencia(){
-  if (FRASCOS_VENCIDOS_CACHE.length > 0) {
-    await descartarFrascoVencido();
-  } else if (VENCIDAS_CACHE.length > 0) {
-    await irADescartar();
   }
 }
 
@@ -348,12 +272,16 @@ async function irADescartar(){
 }
 
 /**
- * Descarta el primer frasco abierto vencido de la lista. Confirma con el
- * usuario antes de ejecutar y muestra los detalles del frasco a descartar.
+ * Descarta un frasco abierto vencido específico (por ID). Si no se
+ * pasa ID, descarta el primero de la lista cacheada.
  */
-async function descartarFrascoVencido(){
-  if (FRASCOS_VENCIDOS_CACHE.length === 0) return;
-  const f = FRASCOS_VENCIDOS_CACHE[0];
+async function descartarFrascoVencido(frascoId){
+  let f;
+  if (frascoId) {
+    f = FRASCOS_VENCIDOS_CACHE.find(x => x.frasco_id === frascoId);
+  }
+  if (!f) f = FRASCOS_VENCIDOS_CACHE[0];
+  if (!f) return;
   const ok = confirm(
     `¿Descartar el frasco abierto de ${f.vacuna} (lote ${f.numero_lote})?\n\n` +
     `Se descuentan ${f.dosis_sobrantes} dosis sobrantes con motivo "Frasco abierto vencido".`

@@ -423,6 +423,23 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
           AND (f.dosis_totales - f.dosis_usadas) > 0
         ORDER BY f.fecha_apertura`
     );
+    // Frascos abiertos activos "normales" (menos de 25 días, no urgentes)
+    // Van al bloque informativo del dashboard para que enfermería sepa
+    // qué frascos están en curso sin que sean alertas.
+    const [frascosActivos] = await pool.query(
+      `SELECT f.id AS frasco_id, f.lote_id, l.numero_lote, f.fecha_apertura,
+              DATEDIFF(CURDATE(), f.fecha_apertura) AS dias_abierto,
+              f.dosis_totales,
+              (f.dosis_totales - f.dosis_usadas) AS dosis_sobrantes,
+              v.nombre AS vacuna
+         FROM frascos_abiertos f
+         JOIN lotes l   ON l.id = f.lote_id
+         JOIN vacunas v ON v.id = l.vacuna_id
+        WHERE f.estado = 'activo'
+          AND DATEDIFF(CURDATE(), f.fecha_apertura) < 25
+          AND (f.dosis_totales - f.dosis_usadas) > 0
+        ORDER BY f.fecha_apertura DESC`
+    );
     res.json({
       kpis: {
         tipos, unidades,
@@ -431,7 +448,7 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
       },
       alertas: {
         stockBajo: bajo, porVencer: vencer, vencidas,
-        frascosVencidos, frascosPorVencer,
+        frascosVencidos, frascosPorVencer, frascosActivos,
       },
       umbrales: { stockBajo: UMBRAL_STOCK_BAJO, diasVencimiento: DIAS_VENCIMIENTO },
     });
