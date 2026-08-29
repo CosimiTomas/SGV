@@ -343,7 +343,15 @@ app.get('/api/stock', requireAuth, async (req, res) => {
               f.id AS frasco_id,
               f.fecha_apertura AS frasco_apertura,
               CASE WHEN f.fecha_apertura IS NULL THEN NULL
-                   ELSE (30 - DATEDIFF(CURDATE(), f.fecha_apertura)) END AS frasco_dias_restantes,
+                   ELSE LEAST(
+                     30 - DATEDIFF(CURDATE(), f.fecha_apertura),
+                     DATEDIFF(l.vencimiento, CURDATE())
+                   ) END AS frasco_dias_restantes,
+              CASE
+                WHEN f.fecha_apertura IS NULL THEN NULL
+                WHEN DATEDIFF(l.vencimiento, CURDATE()) < (30 - DATEDIFF(CURDATE(), f.fecha_apertura))
+                THEN 'lote' ELSE '30dias'
+              END AS frasco_causa_vencimiento,
               CASE WHEN f.id IS NULL THEN NULL
                    ELSE (f.dosis_totales - f.dosis_usadas) END AS frasco_dosis_sobrantes
          FROM vacunas v
@@ -401,38 +409,69 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
         WHERE DATEDIFF(l.vencimiento, CURDATE()) < 0 AND l.disponible > 0
         ORDER BY l.vencimiento`
     );
-    // Frascos abiertos vencidos (>30 días desde apertura) con dosis sobrantes
+    // Frascos abiertos vencidos: ya se cumplieron 30 días DE APERTURA o el
+    // LOTE mismo venció (lo que llegue primero manda). Con dosis sobrantes.
+    // Devolvemos también la causa del vencimiento ('30dias' o 'lote').
     const [frascosVencidos] = await pool.query(
       `SELECT f.id AS frasco_id, f.lote_id, l.numero_lote, f.fecha_apertura,
+              l.vencimiento AS vencimiento_lote,
               DATEDIFF(CURDATE(), f.fecha_apertura) AS dias_abierto,
               (f.dosis_totales - f.dosis_usadas) AS dosis_sobrantes,
-              v.id AS vacuna_id, v.nombre AS vacuna, v.dosis_por_frasco
+              v.id AS vacuna_id, v.nombre AS vacuna, v.dosis_por_frasco,
+              CASE
+                WHEN DATEDIFF(l.vencimiento, CURDATE()) < 0
+                     AND (30 - DATEDIFF(CURDATE(), f.fecha_apertura)) > 0
+                THEN 'lote'
+                WHEN DATEDIFF(CURDATE(), f.fecha_apertura) > 30
+                     AND DATEDIFF(l.vencimiento, CURDATE()) >= 0
+                THEN '30dias'
+                ELSE 'ambos'
+              END AS causa_vencimiento
          FROM frascos_abiertos f
          JOIN lotes l   ON l.id = f.lote_id
          JOIN vacunas v ON v.id = l.vacuna_id
         WHERE f.estado = 'activo'
-          AND DATEDIFF(CURDATE(), f.fecha_apertura) > 30
           AND (f.dosis_totales - f.dosis_usadas) > 0
+          AND (
+            DATEDIFF(CURDATE(), f.fecha_apertura) > 30
+            OR DATEDIFF(l.vencimiento, CURDATE()) < 0
+          )
         ORDER BY f.fecha_apertura`
     );
-    // Frascos abiertos por vencer (25-30 días de apertura, todavía activos)
+    // Frascos abiertos por vencer: van a vencer dentro del mismo umbral
+    // que los lotes (DIAS_VENCIMIENTO), considerando el mínimo entre
+    // "30 días desde apertura" y "vencimiento del lote".
+    // Se excluyen los que ya están vencidos (esos ya salieron en frascosVencidos).
     const [frascosPorVencer] = await pool.query(
       `SELECT f.id AS frasco_id, f.lote_id, l.numero_lote, f.fecha_apertura,
+              l.vencimiento AS vencimiento_lote,
               DATEDIFF(CURDATE(), f.fecha_apertura) AS dias_abierto,
-              (30 - DATEDIFF(CURDATE(), f.fecha_apertura)) AS dias_restantes,
+              LEAST(
+                30 - DATEDIFF(CURDATE(), f.fecha_apertura),
+                DATEDIFF(l.vencimiento, CURDATE())
+              ) AS dias_restantes,
+              CASE
+                WHEN DATEDIFF(l.vencimiento, CURDATE()) < (30 - DATEDIFF(CURDATE(), f.fecha_apertura))
+                THEN 'lote' ELSE '30dias'
+              END AS causa_vencimiento,
               (f.dosis_totales - f.dosis_usadas) AS dosis_sobrantes,
               v.nombre AS vacuna, v.dosis_por_frasco
          FROM frascos_abiertos f
          JOIN lotes l   ON l.id = f.lote_id
          JOIN vacunas v ON v.id = l.vacuna_id
         WHERE f.estado = 'activo'
-          AND DATEDIFF(CURDATE(), f.fecha_apertura) BETWEEN 25 AND 30
           AND (f.dosis_totales - f.dosis_usadas) > 0
-        ORDER BY f.fecha_apertura`
+          AND DATEDIFF(CURDATE(), f.fecha_apertura) <= 30
+          AND DATEDIFF(l.vencimiento, CURDATE()) >= 0
+          AND LEAST(
+            30 - DATEDIFF(CURDATE(), f.fecha_apertura),
+            DATEDIFF(l.vencimiento, CURDATE())
+          ) <= ?
+        ORDER BY dias_restantes`,
+      [DIAS_VENCIMIENTO]
     );
-    // Frascos abiertos activos "normales" (menos de 25 días, no urgentes)
-    // Van al bloque informativo del dashboard para que enfermería sepa
-    // qué frascos están en curso sin que sean alertas.
+    // Frascos abiertos activos "normales" (con más margen que el umbral),
+    // informativos únicamente. No entran en alertas.
     const [frascosActivos] = await pool.query(
       `SELECT f.id AS frasco_id, f.lote_id, l.numero_lote, f.fecha_apertura,
               DATEDIFF(CURDATE(), f.fecha_apertura) AS dias_abierto,
@@ -443,9 +482,15 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
          JOIN lotes l   ON l.id = f.lote_id
          JOIN vacunas v ON v.id = l.vacuna_id
         WHERE f.estado = 'activo'
-          AND DATEDIFF(CURDATE(), f.fecha_apertura) < 25
           AND (f.dosis_totales - f.dosis_usadas) > 0
-        ORDER BY f.fecha_apertura DESC`
+          AND DATEDIFF(CURDATE(), f.fecha_apertura) <= 30
+          AND DATEDIFF(l.vencimiento, CURDATE()) >= 0
+          AND LEAST(
+            30 - DATEDIFF(CURDATE(), f.fecha_apertura),
+            DATEDIFF(l.vencimiento, CURDATE())
+          ) > ?
+        ORDER BY f.fecha_apertura DESC`,
+      [DIAS_VENCIMIENTO]
     );
     res.json({
       kpis: {
@@ -618,20 +663,37 @@ async function gestionarFrascoAbierto(conn, lote_id, cantidad, dosisPorFrasco) {
     }
   }
 
-  // Buscar info del último frasco tocado para devolver al frontend
+  // Buscar info del último frasco tocado para devolver al frontend.
+  // Calculamos el vencimiento REAL del frasco: el mínimo entre "30 días de apertura"
+  // y "vencimiento del lote". Devolvemos también la causa para que el toast la muestre.
   if (ultimoFrascoId) {
     const [[f]] = await conn.query(
       `SELECT f.fecha_apertura, f.dosis_totales, f.dosis_usadas, f.estado,
+              l.vencimiento AS vencimiento_lote,
               (f.dosis_totales - f.dosis_usadas) AS dosis_restantes,
-              (30 - DATEDIFF(CURDATE(), f.fecha_apertura)) AS dias_para_vencer,
-              DATE_ADD(f.fecha_apertura, INTERVAL 30 DAY) AS fecha_vencimiento_frasco
-         FROM frascos_abiertos f WHERE f.id = ?`, [ultimoFrascoId]
+              LEAST(
+                30 - DATEDIFF(CURDATE(), f.fecha_apertura),
+                DATEDIFF(l.vencimiento, CURDATE())
+              ) AS dias_para_vencer,
+              CASE
+                WHEN DATEDIFF(l.vencimiento, CURDATE()) < (30 - DATEDIFF(CURDATE(), f.fecha_apertura))
+                THEN 'lote' ELSE '30dias'
+              END AS causa_vencimiento,
+              CASE
+                WHEN DATEDIFF(l.vencimiento, CURDATE()) < (30 - DATEDIFF(CURDATE(), f.fecha_apertura))
+                THEN l.vencimiento
+                ELSE DATE_ADD(f.fecha_apertura, INTERVAL 30 DAY)
+              END AS fecha_vencimiento_frasco
+         FROM frascos_abiertos f
+         JOIN lotes l ON l.id = f.lote_id
+        WHERE f.id = ?`, [ultimoFrascoId]
     );
     return {
       abrioNuevo,
       dosisRestantes: f.dosis_restantes,
       diasParaVencer: f.dias_para_vencer,
       fechaVencimientoFrasco: f.fecha_vencimiento_frasco,
+      causaVencimiento: f.causa_vencimiento,     // '30dias' o 'lote'
       agotado: f.estado === 'agotado',
     };
   }

@@ -216,9 +216,14 @@ async function loadDashboard(){
     exp.forEach(a => items.push(
       `<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — vence <b>${fmtFecha(a.vencimiento)}</b> (${fmtDias(a.dias)})</li>`
     ));
-    frascosPorVencer.forEach(f => items.push(
-      `<li class="frasco">${f.vacuna} <span class="frasco-tag">💉 frasco abierto</span> — vence en <b>${f.dias_restantes} ${f.dias_restantes === 1 ? 'día' : 'días'}</b> (${f.dosis_sobrantes} ${f.dosis_sobrantes === 1 ? 'dosis' : 'dosis'} sobrantes)</li>`
-    ));
+    frascosPorVencer.forEach(f => {
+      const causaTxt = f.causa_vencimiento === 'lote'
+        ? ' <span style="color:#795000;font-size:11px">(por venc. del lote)</span>'
+        : '';
+      items.push(
+        `<li class="frasco">${f.vacuna} <span class="frasco-tag">💉 frasco abierto</span> — vence en <b>${f.dias_restantes} ${f.dias_restantes === 1 ? 'día' : 'días'}</b> (${f.dosis_sobrantes} ${f.dosis_sobrantes === 1 ? 'dosis' : 'dosis'} sobrantes)${causaTxt}</li>`
+      );
+    });
     expUl.innerHTML = items.length ? items.join('')
       : '<li class="alert-empty">Sin vacunas próximas a vencer.</li>';
   }
@@ -401,10 +406,11 @@ function renderStockRow(r, ETIQ) {
   if (r.frasco_id) {
     const dr = Number(r.frasco_dias_restantes);
     const sob = Number(r.frasco_dosis_sobrantes);
+    const causaTxt = r.frasco_causa_vencimiento === 'lote' ? ' (por venc. del lote)' : '';
     const cls = dr < 0 ? 'frasco-info venc' : (dr <= 5 ? 'frasco-info porv' : 'frasco-info');
     const txt = dr < 0
-      ? `💉 Frasco abierto vencido hace ${Math.abs(dr)} ${Math.abs(dr) === 1 ? 'día' : 'días'} (${sob} dosis)`
-      : `💉 Frasco abierto vence en ${dr} ${dr === 1 ? 'día' : 'días'} (${sob} ${sob === 1 ? 'dosis' : 'dosis'})`;
+      ? `💉 Frasco abierto vencido hace ${Math.abs(dr)} ${Math.abs(dr) === 1 ? 'día' : 'días'} (${sob} dosis)${causaTxt}`
+      : `💉 Frasco abierto vence en ${dr} ${dr === 1 ? 'día' : 'días'} (${sob} ${sob === 1 ? 'dosis' : 'dosis'})${causaTxt}`;
     venceCell += `<div class="${cls}">${txt}</div>`;
   }
   const payload = encodeURIComponent(JSON.stringify({
@@ -637,13 +643,15 @@ async function saveAplicacion(pref){
     if (r.frasco) {
       const f = r.frasco;
       const nombreVac = $(pref+'-vac').selectedOptions[0]?.text || 'la vacuna';
+      // Si el frasco vence por el lote (antes que por los 30 días de apertura),
+      // lo aclaramos para que enfermería sepa por qué el margen es más corto.
+      const causaExtra = f.causaVencimiento === 'lote' ? ' (limitado por el vencimiento del lote)' : '';
       if (f.abrioNuevo) {
-        // Se abrió un frasco nuevo
-        toastMsg = `✓ Aplicación registrada. Se abrió un frasco nuevo de ${nombreVac} — vence el ${fmtFecha(f.fechaVencimientoFrasco)} (en ${f.diasParaVencer} días). Quedan ${f.dosisRestantes} dosis en el frasco.`;
+        toastMsg = `✓ Aplicación registrada. Se abrió un frasco nuevo de ${nombreVac} — vence el ${fmtFecha(f.fechaVencimientoFrasco)} (en ${f.diasParaVencer} días)${causaExtra}. Quedan ${f.dosisRestantes} dosis en el frasco.`;
       } else if (f.agotado) {
         toastMsg = `✓ Aplicación registrada. El frasco de ${nombreVac} se terminó (todas las dosis usadas).`;
       } else {
-        toastMsg = `✓ Aplicación registrada. Quedan ${f.dosisRestantes} dosis en el frasco abierto de ${nombreVac} (vence en ${f.diasParaVencer} días).`;
+        toastMsg = `✓ Aplicación registrada. Quedan ${f.dosisRestantes} dosis en el frasco abierto de ${nombreVac} (vence en ${f.diasParaVencer} días)${causaExtra}.`;
       }
     }
     toast('ok', toastMsg);
