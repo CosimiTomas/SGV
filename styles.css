@@ -258,7 +258,7 @@
   .content{padding:32px 28px 56px;max-width:1400px;width:100%;margin:0 auto;flex:1}
 
   /* Encabezado de página */
-  .page-head{margin-bottom:28px}
+  .page-head{margin-bottom:28px;display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:12px}
   .page-head h1{
     font-family:var(--font-display);
     font-size:28px; font-weight:700;
@@ -851,3 +851,236 @@
    las alertas activas destaquen visualmente por contraste. */
 .row-sinstock td { opacity: 0.72; }
 .row-sinstock:hover td { opacity: 1; }
+
+/* ============================================================
+   Dashboard rediseñado — pirámide de urgencia
+   Bloques: resumen del día → acción requerida → KPIs → revisar pronto
+   ============================================================ */
+
+/* Saludo en el header de la página */
+.page-head-saludo{
+  font-size:14px;
+  color:var(--muted);
+  font-weight:500;
+}
+
+/* BLOQUE 1: Resumen del día */
+.dash-resumen{
+  display:flex;
+  align-items:center;
+  gap:16px;
+  padding:20px 24px;
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:12px;
+  margin-bottom:20px;
+  box-shadow:var(--shadow-1);
+}
+.dash-resumen-ic{
+  flex-shrink:0;
+  width:52px; height:52px;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:50%;
+  font-size:24px;
+  font-weight:700;
+}
+.dash-resumen.ok    .dash-resumen-ic{ background:#E4F4EA; color:#155F35; }
+.dash-resumen.aviso .dash-resumen-ic{ background:#FDF3D9; color:#795000; }
+.dash-resumen.critico .dash-resumen-ic{ background:#FEE4E2; color:#B42318; }
+.dash-resumen-titulo{
+  font-size:18px;
+  font-weight:700;
+  color:var(--ink);
+  line-height:1.3;
+  margin-bottom:2px;
+}
+.dash-resumen-sub{
+  font-size:14px;
+  color:var(--muted);
+  line-height:1.4;
+}
+
+/* BLOQUE 2: Acción requerida (banner rojo unificado) */
+.dash-accion{
+  background:#FEF3F2;
+  border:1px solid #FDA29B;
+  border-left:5px solid #B42318;
+  border-radius:12px;
+  padding:20px 24px;
+  margin-bottom:20px;
+}
+.dash-accion-head{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:12px;
+}
+.dash-accion-ic{ font-size:22px; }
+.dash-accion-head h3{
+  font-size:16px;
+  font-weight:700;
+  color:#7A1E14;
+  margin:0;
+  text-transform:uppercase;
+  letter-spacing:.03em;
+}
+.dash-accion-lista{
+  list-style:none;
+  padding:0;
+  margin:0 0 16px 0;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.dash-accion-lista li{
+  font-size:14.5px;
+  color:#912018;
+  line-height:1.45;
+  padding-left:16px;
+  position:relative;
+}
+.dash-accion-lista li::before{
+  content:"•";
+  position:absolute;
+  left:0;
+  color:#B42318;
+  font-weight:700;
+}
+.dash-accion-lista li b{ font-weight:700; }
+.dash-accion-btn{
+  padding:10px 20px;
+  background:#B42318;
+  color:#fff;
+  border:none;
+  border-radius:8px;
+  font-size:14px;
+  font-weight:600;
+  cursor:pointer;
+  transition:background .15s ease;
+}
+.dash-accion-btn:hover{ background:#912018; }
+
+/* BLOQUE 3: KPIs — 3 tarjetas grandes limpias */
+.dash-kpis{
+  display:grid;
+  grid-template-columns:repeat(3, 1fr);
+  gap:18px;
+  margin-bottom:24px;
+}
+.dash-kpis .kpi{
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:24px 26px;
+  box-shadow:var(--shadow-1);
+  min-height:120px;
+}
+.dash-kpis .kpi .lab{
+  font-size:12.5px;
+  color:var(--muted);
+  font-weight:600;
+  letter-spacing:.03em;
+  text-transform:uppercase;
+  margin-bottom:8px;
+}
+.dash-kpis .kpi .num{
+  font-family:var(--font-display, inherit);
+  font-size:42px;
+  font-weight:700;
+  color:var(--ink);
+  line-height:1;
+  letter-spacing:-0.02em;
+  font-variant-numeric:tabular-nums;
+}
+.dash-kpis .kpi .delta{
+  font-size:13px;
+  color:var(--muted);
+  margin-top:10px;
+}
+/* KPI de alertas: cambia de color según cuántas haya */
+#kpiAlertasBox.warn .num{ color:#B25E00; }
+#kpiAlertasBox.warn{ border-color:#F0D5A2; }
+#kpiAlertasBox.crit .num{ color:#B42318; }
+#kpiAlertasBox.crit{ border-color:#FDA29B; }
+
+/* BLOQUE 4: Revisar pronto */
+.dash-revisar{
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:20px 24px;
+  box-shadow:var(--shadow-1);
+}
+.dash-revisar-head{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:16px;
+  padding-bottom:12px;
+  border-bottom:1px solid var(--line);
+}
+.dash-revisar-ic{ font-size:18px; color:#B25E00; }
+.dash-revisar-head h3{
+  font-size:15px;
+  font-weight:700;
+  color:var(--ink);
+  margin:0;
+  text-transform:uppercase;
+  letter-spacing:.03em;
+}
+.dash-revisar-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:32px;
+}
+.dash-revisar-col h4{
+  font-size:13px;
+  font-weight:600;
+  color:var(--muted);
+  margin:0 0 10px 0;
+  text-transform:uppercase;
+  letter-spacing:.03em;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.dash-revisar-col h4 .cnt{
+  background:#EFF2F1;
+  color:var(--muted);
+  font-size:11px;
+  padding:2px 8px;
+  border-radius:20px;
+  font-weight:700;
+}
+.dash-revisar-col ul{
+  list-style:none;
+  padding:0;
+  margin:0;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.dash-revisar-col ul li{
+  font-size:14px;
+  color:var(--text);
+  padding:8px 12px;
+  background:#F9FAFB;
+  border-radius:8px;
+  line-height:1.4;
+}
+.dash-revisar-col ul li b{ font-weight:600; color:var(--ink); }
+.dash-revisar-col ul li.empty{
+  color:var(--muted);
+  font-style:italic;
+  background:transparent;
+  padding-left:0;
+  font-size:13.5px;
+}
+
+@media (max-width: 900px){
+  .dash-kpis{ grid-template-columns:1fr 1fr; }
+  .dash-revisar-grid{ grid-template-columns:1fr; gap:20px; }
+}
+@media (max-width: 560px){
+  .dash-kpis{ grid-template-columns:1fr; }
+}

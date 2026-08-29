@@ -73,55 +73,65 @@
     <section class="page on" id="page-inicio">
       <div class="page-head">
         <h1>Inicio</h1>
+        <div class="page-head-saludo" id="dashSaludo"></div>
       </div>
 
-      <!-- Banner de alerta crítica: solo aparece si hay lotes vencidos -->
-      <div class="banner-vencidas" id="bannerVencidas" style="display:none">
-        <div class="banner-vencidas-ic">⚠</div>
-        <div class="banner-vencidas-txt">
-          <div class="banner-vencidas-titulo" id="bannerVencidasTitulo"></div>
-          <div class="banner-vencidas-lista" id="bannerVencidasLista"></div>
+      <!-- BLOQUE 1: Resumen del día — mensaje humano en lenguaje natural -->
+      <div class="dash-resumen" id="dashResumen">
+        <div class="dash-resumen-ic" id="dashResumenIc">✓</div>
+        <div class="dash-resumen-txt">
+          <div class="dash-resumen-titulo" id="dashResumenTitulo">Cargando…</div>
+          <div class="dash-resumen-sub" id="dashResumenSub"></div>
         </div>
-        <button class="banner-vencidas-btn enfermeria-only" onclick="irADescartar()">Ir a descartar</button>
       </div>
 
-      <!-- Banner de frascos multidosis abiertos vencidos (>30 días) -->
-      <div class="banner-vencidas" id="bannerFrascosVencidos" style="display:none">
-        <div class="banner-vencidas-ic">💉</div>
-        <div class="banner-vencidas-txt">
-          <div class="banner-vencidas-titulo" id="bannerFrascosTitulo"></div>
-          <div class="banner-vencidas-lista" id="bannerFrascosLista"></div>
+      <!-- BLOQUE 2: Acción requerida — banner rojo unificado para todo lo vencido.
+           Solo se muestra si hay lotes o frascos vencidos con stock. -->
+      <div class="dash-accion" id="dashAccion" style="display:none">
+        <div class="dash-accion-head">
+          <span class="dash-accion-ic">🚨</span>
+          <h3>Acción requerida</h3>
         </div>
-        <button class="banner-vencidas-btn enfermeria-only" onclick="descartarFrascoVencido()">Descartar frasco</button>
+        <ul class="dash-accion-lista" id="dashAccionLista"></ul>
+        <button class="dash-accion-btn enfermeria-only" onclick="resolverPrimeraUrgencia()">Resolver ahora →</button>
       </div>
 
-      <div class="alerts">
-        <div class="alert low">
-          <div class="ic">!</div>
-          <div>
-            <h4>Stock bajo</h4>
-            <ul>
-              <li class="alert-empty">Sin vacunas con stock bajo.</li>
-            </ul>
+      <!-- BLOQUE 3: Estado general — 3 KPIs limpios sin duplicar info de alertas -->
+      <div class="dash-kpis">
+        <div class="kpi">
+          <div class="lab">Tipos de vacuna</div>
+          <div class="num" id="kpiTipos">0</div>
+          <div class="delta">registradas en stock</div>
+        </div>
+        <div class="kpi">
+          <div class="lab">Unidades totales</div>
+          <div class="num" id="kpiUnidades">0</div>
+          <div class="delta">dosis disponibles</div>
+        </div>
+        <div class="kpi" id="kpiAlertasBox">
+          <div class="lab">Alertas activas</div>
+          <div class="num" id="kpiAlertas">0</div>
+          <div class="delta">requieren revisión</div>
+        </div>
+      </div>
+
+      <!-- BLOQUE 4: Revisar pronto — advertencias no urgentes (por vencer + stock bajo).
+           Solo se muestra si hay alguna advertencia. -->
+      <div class="dash-revisar" id="dashRevisar" style="display:none">
+        <div class="dash-revisar-head">
+          <span class="dash-revisar-ic">⚠</span>
+          <h3>Revisar pronto</h3>
+        </div>
+        <div class="dash-revisar-grid">
+          <div class="dash-revisar-col" id="colPorVencer">
+            <h4>Próximas a vencer <span class="cnt" id="cntPorVencer"></span></h4>
+            <ul id="listPorVencer"></ul>
+          </div>
+          <div class="dash-revisar-col" id="colStockBajo">
+            <h4>Stock bajo <span class="cnt" id="cntStockBajo"></span></h4>
+            <ul id="listStockBajo"></ul>
           </div>
         </div>
-        <div class="alert exp">
-          <div class="ic">⏱</div>
-          <div>
-            <h4>Por vencer</h4>
-            <ul>
-              <li class="alert-empty">Sin vacunas próximas a vencer.</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-
-      <div class="kpis">
-        <div class="kpi"><div class="lab">Tipos de vacuna</div><div class="num">0</div><div class="delta">registradas en stock</div></div>
-        <div class="kpi"><div class="lab">Unidades totales</div><div class="num">0</div><div class="delta">dosis disponibles</div></div>
-        <div class="kpi warn"><div class="lab">Stock bajo</div><div class="num">0</div><div class="delta">requieren reposición</div></div>
-        <div class="kpi red"><div class="lab">Por vencer</div><div class="num">0</div><div class="delta">próximos 15 días</div></div>
-        <div class="kpi red"><div class="lab">Vencidas</div><div class="num">0</div><div class="delta">descartar urgente</div></div>
       </div>
 
     </section>
