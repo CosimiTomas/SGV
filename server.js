@@ -332,16 +332,23 @@ app.get('/api/vacunas/:id/lotes', requireAuth, async (req, res) => {
 
 app.get('/api/stock', requireAuth, async (req, res) => {
   try {
-    // LEFT JOIN para traer también las vacunas activas del catálogo que
-    // todavía no tienen ningún lote cargado — así enfermería ve la lista
-    // completa y puede detectar qué vacunas no tiene disponibles.
+    // LEFT JOIN doble: vacunas → lotes → frasco abierto activo (si existe).
+    // Así traemos también las vacunas sin lotes y sabemos si un lote
+    // multidosis tiene un frasco abierto en curso.
     const [rows] = await pool.query(
       `SELECT l.id, v.nombre AS vacuna, v.dosis_por_frasco, l.numero_lote, l.vencimiento,
               l.cantidad_inicial, l.disponible,
               CASE WHEN l.vencimiento IS NULL THEN NULL
-                   ELSE DATEDIFF(l.vencimiento, CURDATE()) END AS dias_para_vencer
+                   ELSE DATEDIFF(l.vencimiento, CURDATE()) END AS dias_para_vencer,
+              f.id AS frasco_id,
+              f.fecha_apertura AS frasco_apertura,
+              CASE WHEN f.fecha_apertura IS NULL THEN NULL
+                   ELSE (30 - DATEDIFF(CURDATE(), f.fecha_apertura)) END AS frasco_dias_restantes,
+              CASE WHEN f.id IS NULL THEN NULL
+                   ELSE (f.dosis_totales - f.dosis_usadas) END AS frasco_dosis_sobrantes
          FROM vacunas v
          LEFT JOIN lotes l ON l.vacuna_id = v.id
+         LEFT JOIN frascos_abiertos f ON f.lote_id = l.id AND f.estado = 'activo'
         WHERE v.activa = 1
         ORDER BY v.nombre, l.vencimiento`
     );
@@ -534,14 +541,22 @@ app.post('/api/aplicaciones', requireAuth, requireRole('enfermeria'), async (req
       [lote.vacuna_id, lote_id, cant, fecha_aplicacion, req.user.id]
     );
 
-    // Gestión automática de frascos abiertos (solo multidosis)
-    let mensajeExtra = '';
+    // Gestión automática de frascos abiertos (solo multidosis).
+    // La función devuelve info detallada para armar un mensaje claro.
+    let frascoInfo = null;
     if (lote.dosis_por_frasco > 1) {
-      await gestionarFrascoAbierto(conn, lote_id, cant, lote.dosis_por_frasco, (msg) => { mensajeExtra = msg; });
+      frascoInfo = await gestionarFrascoAbierto(conn, lote_id, cant, lote.dosis_por_frasco);
     }
 
     await conn.commit();
-    res.status(201).json({ ok: true, mensaje: 'Aplicación registrada con éxito.' + (mensajeExtra ? ' ' + mensajeExtra : '') });
+    const respuesta = {
+      ok: true,
+      mensaje: 'Aplicación registrada con éxito.',
+    };
+    if (frascoInfo) {
+      respuesta.frasco = frascoInfo;
+    }
+    res.status(201).json(respuesta);
   } catch (err) {
     await conn.rollback(); console.error('aplicaciones:', err.message);
     res.status(500).json({ error: 'Error del servidor.' });
@@ -550,24 +565,22 @@ app.post('/api/aplicaciones', requireAuth, requireRole('enfermeria'), async (req
 
 /**
  * Gestiona el frasco abierto de un lote multidosis al aplicar dosis.
- * Regla del CAPS: solo un frasco abierto por lote a la vez, se usa hasta
+ * Regla del CAPS: un solo frasco abierto por lote a la vez, se usa hasta
  * agotar o vencer (30 días), recién ahí se abre otro.
  *
- * Al aplicar N dosis:
- *  - Si no hay frasco activo → abre uno nuevo (fecha_apertura = hoy)
- *  - Suma las dosis usadas al frasco activo
- *  - Si el frasco se llena (agota) → lo marca como agotado
- *  - Si sobran dosis por aplicar → abre otro frasco nuevo (caso raro pero posible
- *    si aplican más dosis que las que quedan en el frasco actual)
+ * Devuelve un objeto con info del último frasco tocado, para que el
+ * frontend arme un toast enriquecido:
+ *   { abrioNuevo: bool, nombreVacuna, fechaVencimientoFrasco (ISO date),
+ *     dosisRestantes, diasParaVencer }
  */
-async function gestionarFrascoAbierto(conn, lote_id, cantidad, dosisPorFrasco, notify) {
+async function gestionarFrascoAbierto(conn, lote_id, cantidad, dosisPorFrasco) {
   let restantes = cantidad;
-  let frascosAbiertos = 0;
+  let abrioNuevo = false;
+  let ultimoFrascoId = null;
 
   while (restantes > 0) {
-    // Buscar frasco activo del lote
     const [[frasco]] = await conn.query(
-      `SELECT id, dosis_totales, dosis_usadas
+      `SELECT id, dosis_totales, dosis_usadas, fecha_apertura
          FROM frascos_abiertos
         WHERE lote_id = ? AND estado = 'activo'
         LIMIT 1 FOR UPDATE`, [lote_id]
@@ -577,19 +590,19 @@ async function gestionarFrascoAbierto(conn, lote_id, cantidad, dosisPorFrasco, n
       // Abrir uno nuevo
       const usar = Math.min(restantes, dosisPorFrasco);
       const nuevoEstado = (usar === dosisPorFrasco) ? 'agotado' : 'activo';
-      await conn.query(
+      const [r] = await conn.query(
         `INSERT INTO frascos_abiertos (lote_id, fecha_apertura, dosis_totales, dosis_usadas, estado, fecha_cierre)
          VALUES (?, CURDATE(), ?, ?, ?, ?)`,
         [lote_id, dosisPorFrasco, usar, nuevoEstado, nuevoEstado === 'agotado' ? new Date() : null]
       );
       restantes -= usar;
-      frascosAbiertos++;
+      abrioNuevo = true;
+      ultimoFrascoId = r.insertId;
     } else {
       const espacioLibre = frasco.dosis_totales - frasco.dosis_usadas;
       const usar = Math.min(restantes, espacioLibre);
       const nuevasUsadas = frasco.dosis_usadas + usar;
       if (nuevasUsadas >= frasco.dosis_totales) {
-        // Frasco se agota
         await conn.query(
           `UPDATE frascos_abiertos SET dosis_usadas = ?, estado = 'agotado', fecha_cierre = CURDATE()
             WHERE id = ?`, [nuevasUsadas, frasco.id]
@@ -601,11 +614,28 @@ async function gestionarFrascoAbierto(conn, lote_id, cantidad, dosisPorFrasco, n
         );
       }
       restantes -= usar;
+      ultimoFrascoId = frasco.id;
     }
   }
-  if (frascosAbiertos > 0 && notify) {
-    notify(`Se ${frascosAbiertos === 1 ? 'abrió un frasco nuevo' : `abrieron ${frascosAbiertos} frascos nuevos`} (vence a los 30 días).`);
+
+  // Buscar info del último frasco tocado para devolver al frontend
+  if (ultimoFrascoId) {
+    const [[f]] = await conn.query(
+      `SELECT f.fecha_apertura, f.dosis_totales, f.dosis_usadas, f.estado,
+              (f.dosis_totales - f.dosis_usadas) AS dosis_restantes,
+              (30 - DATEDIFF(CURDATE(), f.fecha_apertura)) AS dias_para_vencer,
+              DATE_ADD(f.fecha_apertura, INTERVAL 30 DAY) AS fecha_vencimiento_frasco
+         FROM frascos_abiertos f WHERE f.id = ?`, [ultimoFrascoId]
+    );
+    return {
+      abrioNuevo,
+      dosisRestantes: f.dosis_restantes,
+      diasParaVencer: f.dias_para_vencer,
+      fechaVencimientoFrasco: f.fecha_vencimiento_frasco,
+      agotado: f.estado === 'agotado',
+    };
   }
+  return null;
 }
 
 app.post('/api/descartes', requireAuth, requireRole('enfermeria'), async (req, res) => {

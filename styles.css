@@ -272,7 +272,6 @@
 
   /* Alertas */
   .alerts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
-  .alerts .alert.multi{grid-column: 1 / -1}
   .alert{
     border-radius:var(--r-lg);
     padding:24px 26px;
@@ -544,12 +543,13 @@
     z-index:300;display:flex;flex-direction:column;gap:10px;
   }
   .toast{
-    min-width:280px;max-width:400px;
+    min-width:280px;max-width:480px;
     padding:14px 18px;
     border-radius:var(--r-md);
     box-shadow:var(--shadow-3);
-    display:flex; gap:12px; align-items:center;
+    display:flex; gap:12px; align-items:flex-start;
     font-size:14px; font-weight:500;
+    line-height:1.45;
     background:var(--card);
     border-left:4px solid var(--ok);
     animation:toastin .25s cubic-bezier(.2,.7,.2,1);
@@ -853,37 +853,38 @@
 .row-sinstock td { opacity: 0.72; }
 .row-sinstock:hover td { opacity: 1; }
 
-/* ============================================================
-   Cuarta alerta: Multidosis · frascos abiertos
-   Estilo violeta/lila para diferenciarla visualmente de las otras
-   tres (que son amarilla, rosa claro y roja).
-   ============================================================ */
-.alert.multi{
-  background:#F4EFFA;
-  border-color:#D6C7EA;
+/* Item de "frasco abierto" dentro de la lista de "Por vencer".
+   Se ve claramente distinto de un lote normal para que no se confunda. */
+.alert.exp ul li.frasco{
+  padding-left:4px;
+  border-left:3px solid #B25E00;
+  padding-left:10px;
 }
-.alert.multi::before{
-  background:radial-gradient(circle,#DCCBEE,transparent 70%);
-}
-.alert.multi .ic{
-  background:#DCCBEE;
-  color:#6941C6;
-}
-.alert.multi h4{ color:#6941C6; }
-.alert.multi ul{ color:#4A2E7A; }
-/* Item con estado especial dentro del bloque */
-.alert.multi ul li.venc{ color:#7A1E14; font-weight:600; }
-.alert.multi ul li.venc::before{ content:"⚠ "; }
-.alert.multi ul li.porv{ color:#795000; }
-.alert.multi ul li .btn-mini{
-  margin-left:6px;
+.alert.exp ul li.frasco .frasco-tag{
+  display:inline-block;
   font-size:11px;
+  font-weight:700;
   padding:2px 8px;
-  background:#7A1E14;
-  color:#fff;
-  border:none;
-  border-radius:6px;
-  cursor:pointer;
-  font-weight:600;
+  background:#FDE8CA;
+  color:#7A4A00;
+  border-radius:10px;
+  margin-left:4px;
+  letter-spacing:.02em;
+  text-transform:uppercase;
 }
-.alert.multi ul li .btn-mini:hover{ background:#5C160E; }
+
+/* Info del frasco abierto dentro de una fila de la tabla de stock.
+   Aparece debajo del vencimiento del envase con un color distintivo. */
+.frasco-info{
+  display:inline-block;
+  margin-top:6px;
+  padding:3px 8px;
+  font-size:11.5px;
+  font-weight:600;
+  background:#F0EDF9;
+  color:#5B3D8C;
+  border-radius:6px;
+  line-height:1.35;
+}
+.frasco-info.porv{ background:#FDF3D9; color:#795000; }
+.frasco-info.venc{ background:#FDE8E4; color:#7A1E14; }

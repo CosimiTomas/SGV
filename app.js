@@ -186,8 +186,10 @@ async function loadDashboard(){
     nums[0].textContent = k.tipos;
     nums[1].textContent = k.unidades;
     nums[2].textContent = k.stockBajo;
-    nums[3].textContent = k.porVencer;
-    if (nums[4]) nums[4].textContent = k.vencidas;
+    // "Por vencer" del KPI incluye lotes por vencer + frascos por vencer
+    nums[3].textContent = (k.porVencer || 0) + (d.alertas.frascosPorVencer?.length || 0);
+    // "Vencidas" incluye lotes vencidos + frascos vencidos
+    if (nums[4]) nums[4].textContent = (k.vencidas || 0) + (d.alertas.frascosVencidos?.length || 0);
   }
   // Alertas
   const low = d.alertas.stockBajo || [];
@@ -195,52 +197,54 @@ async function loadDashboard(){
   const vencidas = d.alertas.vencidas || [];
   const frascosVencidos = d.alertas.frascosVencidos || [];
   const frascosPorVencer = d.alertas.frascosPorVencer || [];
-  const frascosActivos = d.alertas.frascosActivos || [];
   VENCIDAS_CACHE = vencidas;
   FRASCOS_VENCIDOS_CACHE = frascosVencidos;
 
-  const lowUl  = document.querySelector('#page-inicio .alert.low ul');
-  const expUl  = document.querySelector('#page-inicio .alert.exp ul');
-  const multiUl = document.querySelector('#page-inicio .alert.multi ul');
+  const lowUl = document.querySelector('#page-inicio .alert.low ul');
+  const expUl = document.querySelector('#page-inicio .alert.exp ul');
 
+  // STOCK BAJO — solo lotes con poco stock (los frascos no van acá)
   if (lowUl) lowUl.innerHTML = low.length
     ? low.map(a => `<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — quedan ${fmtDisp(a.disponible, a.dosis_por_frasco)}</li>`).join('')
     : '<li class="alert-empty">Sin vacunas con stock bajo.</li>';
 
-  if (expUl) expUl.innerHTML = exp.length
-    ? exp.map(a => `<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — vence <b>${fmtFecha(a.vencimiento)}</b> (${fmtDias(a.dias)})</li>`).join('')
-    : '<li class="alert-empty">Sin vacunas próximas a vencer.</li>';
-
-  // Bloque MULTIDOSIS — toda la info de frascos abiertos junta
-  if (multiUl) {
+  // POR VENCER — lotes por vencer + frascos abiertos por vencer.
+  // Los frascos se marcan con 💉 y texto "frasco abierto" para que sea
+  // claro que es un caso distinto al lote normal.
+  if (expUl) {
     const items = [];
-    // Vencidos primero (críticos, con botón)
-    frascosVencidos.forEach(f => {
-      const dosis = f.dosis_sobrantes;
-      items.push(`<li class="venc"><b>${f.vacuna}</b> — frasco vencido, ${dosis} ${dosis === 1 ? 'dosis' : 'dosis'} para descartar <button class="btn-mini enfermeria-only" onclick="descartarFrascoVencido(${f.frasco_id})">Descartar</button></li>`);
-    });
-    // Por vencer (amarillo)
-    frascosPorVencer.forEach(f => {
-      items.push(`<li class="porv"><b>${f.vacuna}</b> — frasco abierto vence en ${f.dias_restantes} ${f.dias_restantes === 1 ? 'día' : 'días'} (${f.dosis_sobrantes} sobrantes)</li>`);
-    });
-    // Activos normales (informativo, sin destacar)
-    frascosActivos.forEach(f => {
-      items.push(`<li><b>${f.vacuna}</b> — abierto hace ${f.dias_abierto} ${f.dias_abierto === 1 ? 'día' : 'días'} (${f.dosis_sobrantes} de ${f.dosis_totales} dosis restantes)</li>`);
-    });
-    multiUl.innerHTML = items.length
-      ? items.join('')
-      : '<li class="alert-empty">Sin frascos multidosis abiertos.</li>';
+    exp.forEach(a => items.push(
+      `<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — vence <b>${fmtFecha(a.vencimiento)}</b> (${fmtDias(a.dias)})</li>`
+    ));
+    frascosPorVencer.forEach(f => items.push(
+      `<li class="frasco">${f.vacuna} <span class="frasco-tag">💉 frasco abierto</span> — vence en <b>${f.dias_restantes} ${f.dias_restantes === 1 ? 'día' : 'días'}</b> (${f.dosis_sobrantes} ${f.dosis_sobrantes === 1 ? 'dosis' : 'dosis'} sobrantes)</li>`
+    ));
+    expUl.innerHTML = items.length ? items.join('')
+      : '<li class="alert-empty">Sin vacunas próximas a vencer.</li>';
   }
 
-  // Banner de lotes vencidos (arriba de todo)
+  // BANNER DE VENCIDAS — unifica lotes vencidos + frascos vencidos.
+  // Un solo botón "Ir a descartar" que resuelve la primera urgencia.
   const banner = $('bannerVencidas');
   if (banner) {
-    if (vencidas.length > 0) {
-      const n = vencidas.length;
-      $('bannerVencidasTitulo').textContent =
-        `${n} ${n === 1 ? 'lote vencido' : 'lotes vencidos'} sin descartar`;
-      const nombres = [...new Set(vencidas.map(v => v.vacuna))];
-      $('bannerVencidasLista').textContent = nombres.join(' · ');
+    const totalUrgentes = vencidas.length + frascosVencidos.length;
+    if (totalUrgentes > 0) {
+      // Título dinámico según haya lotes, frascos o ambos
+      let titulo;
+      if (vencidas.length > 0 && frascosVencidos.length > 0) {
+        titulo = `${totalUrgentes} vencimientos sin descartar (lotes y frascos abiertos)`;
+      } else if (vencidas.length > 0) {
+        titulo = `${vencidas.length} ${vencidas.length === 1 ? 'lote vencido' : 'lotes vencidos'} sin descartar`;
+      } else {
+        titulo = `${frascosVencidos.length} ${frascosVencidos.length === 1 ? 'frasco abierto vencido' : 'frascos abiertos vencidos'}`;
+      }
+      $('bannerVencidasTitulo').textContent = titulo;
+      // Lista mezclada: primero lotes, después frascos, con etiqueta clara
+      const partes = [];
+      const nombresLotes = [...new Set(vencidas.map(v => v.vacuna))];
+      nombresLotes.forEach(n => partes.push(n));
+      frascosVencidos.forEach(f => partes.push(`${f.vacuna} 💉 (frasco)`));
+      $('bannerVencidasLista').textContent = partes.join(' · ');
       banner.style.display = 'flex';
     } else {
       banner.style.display = 'none';
@@ -248,9 +252,23 @@ async function loadDashboard(){
   }
 }
 
-/* Va al descarte con el primer lote vencido ya precargado en el formulario. */
+/**
+ * Botón unificado "Ir a descartar" del banner de vencidas.
+ * Prioriza lotes vencidos primero (porque suelen ser más dosis que un frasco).
+ * Si no hay lotes vencidos pero sí frascos, descarta el primer frasco.
+ */
 async function irADescartar(){
-  if (VENCIDAS_CACHE.length === 0) { go('descarte'); return; }
+  if (VENCIDAS_CACHE.length > 0) {
+    await irADescartarLote();
+  } else if (FRASCOS_VENCIDOS_CACHE.length > 0) {
+    await descartarFrascoVencido();
+  } else {
+    go('descarte');
+  }
+}
+
+/* Precarga el descarte con el primer lote vencido. */
+async function irADescartarLote(){
   const primero = VENCIDAS_CACHE[0];
   go('descarte');
   const selVac = $('de-vac');
@@ -272,16 +290,12 @@ async function irADescartar(){
 }
 
 /**
- * Descarta un frasco abierto vencido específico (por ID). Si no se
- * pasa ID, descarta el primero de la lista cacheada.
+ * Descarta el primer frasco abierto vencido de la lista cacheada.
+ * Confirma con el usuario mostrando los detalles del frasco.
  */
-async function descartarFrascoVencido(frascoId){
-  let f;
-  if (frascoId) {
-    f = FRASCOS_VENCIDOS_CACHE.find(x => x.frasco_id === frascoId);
-  }
-  if (!f) f = FRASCOS_VENCIDOS_CACHE[0];
-  if (!f) return;
+async function descartarFrascoVencido(){
+  if (FRASCOS_VENCIDOS_CACHE.length === 0) return;
+  const f = FRASCOS_VENCIDOS_CACHE[0];
   const ok = confirm(
     `¿Descartar el frasco abierto de ${f.vacuna} (lote ${f.numero_lote})?\n\n` +
     `Se descuentan ${f.dosis_sobrantes} dosis sobrantes con motivo "Frasco abierto vencido".`
@@ -382,7 +396,17 @@ function renderStockRow(r, ETIQ) {
     ? `<b>${r.disponible}</b> dosis <small style="color:var(--muted);display:block">${fmtDisp(r.disponible, r.dosis_por_frasco)}</small>`
     : `<b>${r.disponible}</b> dosis`;
   const dias = Number(r.dias_para_vencer);
-  const venceCell = `${fmtFecha(r.vencimiento)} <small style="color:var(--muted);display:block">${dias < 0 ? 'venció' : 'vence'} ${fmtDias(dias)}</small>`;
+  // Vencimiento del envase + info del frasco abierto si hay
+  let venceCell = `${fmtFecha(r.vencimiento)} <small style="color:var(--muted);display:block">${dias < 0 ? 'venció' : 'vence'} ${fmtDias(dias)}</small>`;
+  if (r.frasco_id) {
+    const dr = Number(r.frasco_dias_restantes);
+    const sob = Number(r.frasco_dosis_sobrantes);
+    const cls = dr < 0 ? 'frasco-info venc' : (dr <= 5 ? 'frasco-info porv' : 'frasco-info');
+    const txt = dr < 0
+      ? `💉 Frasco abierto vencido hace ${Math.abs(dr)} ${Math.abs(dr) === 1 ? 'día' : 'días'} (${sob} dosis)`
+      : `💉 Frasco abierto vence en ${dr} ${dr === 1 ? 'día' : 'días'} (${sob} ${sob === 1 ? 'dosis' : 'dosis'})`;
+    venceCell += `<div class="${cls}">${txt}</div>`;
+  }
   const payload = encodeURIComponent(JSON.stringify({
     id: r.id, vacuna: r.vacuna, numero_lote: r.numero_lote, vencimiento: r.vencimiento
   }));
@@ -602,12 +626,27 @@ function checkFields(ids){
 async function saveAplicacion(pref){
   if(!checkFields([pref+'-vac',pref+'-lote',pref+'-cant',pref+'-fecha'])) return msg(pref+'-msg','err','Completá todos los campos obligatorios.');
   try{
-    await api('/aplicaciones', { method:'POST', body: JSON.stringify({
+    const r = await api('/aplicaciones', { method:'POST', body: JSON.stringify({
       lote_id: $(pref+'-lote').value,
       cantidad: Number($(pref+'-cant').value),
       fecha_aplicacion: $(pref+'-fecha').value,
     })});
-    msg(pref+'-msg',''); toast('ok','Aplicación registrada con éxito');
+    msg(pref+'-msg','');
+    // Toast enriquecido con info del frasco si aplica (multidosis)
+    let toastMsg = 'Aplicación registrada con éxito';
+    if (r.frasco) {
+      const f = r.frasco;
+      const nombreVac = $(pref+'-vac').selectedOptions[0]?.text || 'la vacuna';
+      if (f.abrioNuevo) {
+        // Se abrió un frasco nuevo
+        toastMsg = `✓ Aplicación registrada. Se abrió un frasco nuevo de ${nombreVac} — vence el ${fmtFecha(f.fechaVencimientoFrasco)} (en ${f.diasParaVencer} días). Quedan ${f.dosisRestantes} dosis en el frasco.`;
+      } else if (f.agotado) {
+        toastMsg = `✓ Aplicación registrada. El frasco de ${nombreVac} se terminó (todas las dosis usadas).`;
+      } else {
+        toastMsg = `✓ Aplicación registrada. Quedan ${f.dosisRestantes} dosis en el frasco abierto de ${nombreVac} (vence en ${f.diasParaVencer} días).`;
+      }
+    }
+    toast('ok', toastMsg);
     clearAplicacion(pref);
     await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
     go('mov');
