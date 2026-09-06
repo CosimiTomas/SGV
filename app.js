@@ -144,11 +144,12 @@ function applyRole(){
   }
   document.querySelectorAll('.enfermeria-only:not(.page)').forEach(e => e.style.display = info.write ? '' : 'none');
   document.querySelectorAll('.coordinadora-only:not(.page)').forEach(e => e.style.display = info.manageUsers ? '' : 'none');
-  // Vistas específicas por rol: solo se muestran a quienes corresponde
-  document.querySelectorAll('.jefa-only').forEach(e => e.style.display = info.viewActividad ? '' : 'none');
-  document.querySelectorAll('.proveedora-only').forEach(e => e.style.display = info.esProveedora ? '' : 'none');
-  // Elementos que se ocultan específicamente a la proveedora (link Movimientos, botón Excel de mov, etc.)
-  document.querySelectorAll('.hide-proveedora').forEach(e => e.style.display = info.esProveedora ? 'none' : '');
+  // Vistas específicas por rol — se usa la clase 'role-hidden' con !important
+  // en CSS para garantizar que el toggle siempre se aplique bien y no dependa
+  // del display default del elemento (que puede ser flex, block o inline-flex).
+  document.querySelectorAll('.jefa-only').forEach(e => e.classList.toggle('role-hidden', !info.viewActividad));
+  document.querySelectorAll('.proveedora-only').forEach(e => e.classList.toggle('role-hidden', !info.esProveedora));
+  document.querySelectorAll('.hide-proveedora').forEach(e => e.classList.toggle('role-hidden', info.esProveedora));
   // Si es proveedora, activar por defecto el filtro "necesita reposición" en Stock
   if (info.esProveedora) {
     setTimeout(() => {

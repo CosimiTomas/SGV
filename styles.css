@@ -1020,3 +1020,28 @@
   line-height:1.45;
   max-width:520px;
 }
+
+/* Toggle robusto por rol — se aplica desde applyRole() en app.js.
+   Usa !important para garantizar que gane sobre cualquier display
+   del elemento (flex, block, inline-block, etc.). */
+.jefa-only.role-hidden,
+.proveedora-only.role-hidden,
+.hide-proveedora.role-hidden {
+  display: none !important;
+}
+/* También ocultamos los elementos -only por defecto (antes de que applyRole
+   corra por primera vez), para que no aparezcan momentáneamente a todos
+   los usuarios en la carga inicial. */
+.jefa-only, .proveedora-only {
+  display: none;
+}
+/* Cuando NO tienen role-hidden (o sea, applyRole les dio permiso de mostrarse),
+   les devolvemos el display que corresponde a cada elemento. */
+.jefa-panel:not(.role-hidden),
+.proveedora-panel:not(.role-hidden) {
+  display: flex;
+}
+.jefa-panel:not(.role-hidden) { flex-direction: column; }
+.chip-rango.proveedora-only:not(.role-hidden) {
+  display: inline-flex;
+}
