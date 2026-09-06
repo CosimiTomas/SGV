@@ -888,3 +888,135 @@
 }
 .frasco-info.porv{ background:#FDF3D9; color:#795000; }
 .frasco-info.venc{ background:#FDE8E4; color:#7A1E14; }
+
+/* ============================================================
+   Panel de resumen de actividad — solo visible para el rol de
+   jefa de enfermería. Indicadores de gestión distintos a los
+   KPIs generales del dashboard.
+   ============================================================ */
+.jefa-panel{
+  margin-top:24px;
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:20px 24px;
+  box-shadow:var(--shadow-1);
+}
+.jefa-panel-head{
+  display:flex;
+  align-items:baseline;
+  gap:12px;
+  margin-bottom:14px;
+  padding-bottom:12px;
+  border-bottom:1px solid var(--line);
+}
+.jefa-panel-head h3{
+  font-size:15px;
+  font-weight:700;
+  color:var(--ink);
+  margin:0;
+  text-transform:uppercase;
+  letter-spacing:.03em;
+}
+.jefa-panel-sub{
+  font-size:12px;
+  color:var(--muted);
+  font-weight:500;
+}
+.jefa-panel-grid{
+  display:grid;
+  grid-template-columns:repeat(3, 1fr);
+  gap:16px;
+  margin-bottom:16px;
+}
+.jefa-card{
+  background:#F9FBFA;
+  border-radius:8px;
+  padding:16px 18px;
+}
+.jefa-lab{
+  font-size:11.5px;
+  color:var(--muted);
+  font-weight:600;
+  letter-spacing:.03em;
+  text-transform:uppercase;
+  margin-bottom:6px;
+}
+.jefa-num{
+  font-size:26px;
+  font-weight:700;
+  color:var(--ink);
+  line-height:1;
+  font-variant-numeric:tabular-nums;
+}
+.jefa-delta{
+  font-size:12px;
+  color:var(--muted);
+  margin-top:6px;
+}
+.jefa-top{
+  margin-top:8px;
+  padding-top:12px;
+  border-top:1px solid var(--line);
+}
+.jefa-top h4{
+  font-size:12.5px;
+  font-weight:600;
+  color:var(--muted);
+  text-transform:uppercase;
+  letter-spacing:.03em;
+  margin:0 0 10px 0;
+}
+.jefa-top h4 span{ color:var(--muted); font-weight:400; text-transform:none; }
+.jefa-top ol{
+  list-style:decimal;
+  padding-left:24px;
+  margin:0;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.jefa-top li{
+  font-size:14px;
+  color:var(--text);
+  line-height:1.4;
+}
+.jefa-top li b{ color:var(--ink); font-weight:600; }
+.jefa-top li.jefa-top-empty{ color:var(--muted); font-style:italic; list-style:none; margin-left:-24px; }
+/* Coloreado semántico de la tasa de descarte */
+.jefa-num.warn{ color:#B25E00; }
+.jefa-num.crit{ color:#B42318; }
+
+@media (max-width: 800px){
+  .jefa-panel-grid{ grid-template-columns:1fr; }
+}
+
+/* ============================================================
+   Panel de reporte de reposición — solo visible para proveedora.
+   Un simple llamado a la acción con contexto.
+   ============================================================ */
+.proveedora-panel{
+  margin-top:24px;
+  background:linear-gradient(135deg, #F0F7F5 0%, var(--teal-tint) 100%);
+  border:1px solid #C7E5D9;
+  border-radius:12px;
+  padding:20px 24px;
+  display:flex;
+  align-items:center;
+  gap:24px;
+  justify-content:space-between;
+  flex-wrap:wrap;
+}
+.proveedora-panel-txt h3{
+  margin:0 0 4px 0;
+  font-size:16px;
+  color:var(--teal-deep);
+  font-weight:700;
+}
+.proveedora-panel-txt p{
+  margin:0;
+  color:var(--text);
+  font-size:14px;
+  line-height:1.45;
+  max-width:520px;
+}

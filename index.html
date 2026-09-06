@@ -61,7 +61,7 @@
     <button class="nav-item enfermeria-only" data-page="aplicar" onclick="go('aplicar')">Aplicación</button>
     <button class="nav-item enfermeria-only" data-page="lote" onclick="go('lote')">Ingresar lote</button>
     <button class="nav-item enfermeria-only" data-page="descarte" onclick="go('descarte')">Descarte</button>
-    <button class="nav-item" data-page="mov" onclick="go('mov')">Movimientos</button>
+    <button class="nav-item hide-proveedora" data-page="mov" onclick="go('mov')">Movimientos</button>
     <button class="nav-item coordinadora-only" data-page="usuarios" onclick="go('usuarios')">Usuarios</button>
     <button class="nav-item coordinadora-only" data-page="catalogo" onclick="go('catalogo')">Vacunas</button>
     <button class="nav-item" data-page="cuenta" onclick="go('cuenta')">Mi cuenta</button>
@@ -115,6 +115,49 @@
         <div class="kpi red"><div class="lab">Vencidas</div><div class="num">0</div><div class="delta">descartar urgente</div></div>
       </div>
 
+      <!-- Panel de resumen de actividad — solo lo ve la jefa de enfermería.
+           Datos de gestión: aplicaciones de la semana, descartes del mes,
+           tasa de descarte por vencimiento y top 3 vacunas más aplicadas. -->
+      <div class="jefa-panel jefa-only">
+        <div class="jefa-panel-head">
+          <h3>Resumen de actividad</h3>
+          <span class="jefa-panel-sub">Indicadores de gestión</span>
+        </div>
+        <div class="jefa-panel-grid">
+          <div class="jefa-card">
+            <div class="jefa-lab">Aplicaciones esta semana</div>
+            <div class="jefa-num" id="jefaApSem">—</div>
+            <div class="jefa-delta" id="jefaApSemDet">últimos 7 días</div>
+          </div>
+          <div class="jefa-card">
+            <div class="jefa-lab">Descartes este mes</div>
+            <div class="jefa-num" id="jefaDescMes">—</div>
+            <div class="jefa-delta" id="jefaDescMesDet">últimos 30 días</div>
+          </div>
+          <div class="jefa-card">
+            <div class="jefa-lab">Tasa de descarte por vencimiento</div>
+            <div class="jefa-num" id="jefaTasa">—</div>
+            <div class="jefa-delta" id="jefaTasaDet">del total de descartes</div>
+          </div>
+        </div>
+        <div class="jefa-top">
+          <h4>Top 3 vacunas más aplicadas <span>(último mes)</span></h4>
+          <ol id="jefaTop">
+            <li class="jefa-top-empty">Sin datos suficientes.</li>
+          </ol>
+        </div>
+      </div>
+
+      <!-- Botón exclusivo para proveedora: descarga el reporte de reposición
+           (solo las vacunas que necesitan pedirse, sin lote por lote). -->
+      <div class="proveedora-panel proveedora-only">
+        <div class="proveedora-panel-txt">
+          <h3>Reporte de reposición</h3>
+          <p>Descargá el listado de vacunas que necesitan reponerse: sin stock, stock bajo o solo con lotes por vencer.</p>
+        </div>
+        <button class="btn primary" onclick="descargarReposicion()">⬇ Descargar Excel</button>
+      </div>
+
     </section>
 
     <!-- STOCK -->
@@ -131,6 +174,7 @@
           </div>
           <div class="mov-rango-rapido">
             <button type="button" class="chip-rango active" data-est="" onclick="stSetEstado('')">Todos</button>
+            <button type="button" class="chip-rango proveedora-only" data-est="reposicion" onclick="stSetEstado('reposicion')">Necesita reposición</button>
             <button type="button" class="chip-rango" data-est="vencida" onclick="stSetEstado('vencida')">Vencidas</button>
             <button type="button" class="chip-rango" data-est="exp" onclick="stSetEstado('exp')">Por vencer</button>
             <button type="button" class="chip-rango" data-est="low" onclick="stSetEstado('low')">Stock bajo</button>

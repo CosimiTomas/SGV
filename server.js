@@ -507,6 +507,67 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
 });
 
+/**
+ * Resumen de actividad — pensado para el rol de jefa de enfermería, que necesita
+ * datos de gestión: aplicaciones de la semana, descartes del mes y qué proporción
+ * de esos descartes fue por vencimiento (indicador clave para saber si se está
+ * pediendo demasiada vacuna o mal planificando).
+ * Accesible a cualquier rol autenticado, pero solo se muestra en el frontend a jefa.
+ */
+app.get('/api/dashboard/actividad', requireAuth, async (req, res) => {
+  try {
+    const [[aplicaciones]] = await pool.query(
+      `SELECT COUNT(*) AS movimientos, COALESCE(SUM(cantidad), 0) AS dosis
+         FROM movimientos
+        WHERE tipo = 'aplicacion'
+          AND fecha_mov >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)`
+    );
+    const [[descartes]] = await pool.query(
+      `SELECT COUNT(*) AS movimientos,
+              COALESCE(SUM(cantidad), 0) AS dosis,
+              COALESCE(SUM(CASE
+                WHEN motivo LIKE '%encim%' OR motivo LIKE '%encido%'
+                THEN cantidad ELSE 0
+              END), 0) AS dosis_por_vencimiento
+         FROM movimientos
+        WHERE tipo = 'descarte'
+          AND fecha_mov >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`
+    );
+    // Tasa de descarte por vencimiento sobre el total de descartes del mes
+    const tasaVencimiento = descartes.dosis > 0
+      ? Math.round((descartes.dosis_por_vencimiento / descartes.dosis) * 100)
+      : 0;
+
+    // Top 3 vacunas más aplicadas en el mes (últimos 30 días)
+    const [topVacunas] = await pool.query(
+      `SELECT v.nombre, COALESCE(SUM(m.cantidad), 0) AS dosis
+         FROM movimientos m
+         JOIN vacunas v ON v.id = m.vacuna_id
+        WHERE m.tipo = 'aplicacion'
+          AND m.fecha_mov >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        GROUP BY v.id, v.nombre
+        ORDER BY dosis DESC
+        LIMIT 3`
+    );
+    res.json({
+      aplicacionesSemana: {
+        movimientos: aplicaciones.movimientos,
+        dosis: Number(aplicaciones.dosis),
+      },
+      descartesMes: {
+        movimientos: descartes.movimientos,
+        dosis: Number(descartes.dosis),
+        dosisPorVencimiento: Number(descartes.dosis_por_vencimiento),
+        tasaVencimiento,
+      },
+      topVacunasMes: topVacunas.map(v => ({ nombre: v.nombre, dosis: Number(v.dosis) })),
+    });
+  } catch (err) {
+    console.error('dashboard/actividad:', err.message);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
 /* ===========================================================
  * ESCRITURA — solo enfermería (RF05)
  * ========================================================= */
@@ -1221,6 +1282,81 @@ app.get('/api/reportes/stock', requireAuth, async (req, res) => {
       paleta: ESTADO_STYLE,
     });
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
+});
+
+/**
+ * Reporte de reposición — enfocado para el rol de proveedora, que necesita saber
+ * qué pedir/reponer sin ver todo el detalle operativo. Solo trae las vacunas que
+ * están en alguno de estos estados: sin stock, stock bajo, por vencer. Agrupa
+ * por vacuna y suma las dosis disponibles totales (no se lista lote por lote,
+ * la proveedora piensa en unidades, no en partidas).
+ */
+app.get('/api/reportes/reposicion', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT v.nombre AS vacuna, v.dosis_por_frasco,
+              COALESCE(SUM(CASE WHEN DATEDIFF(l.vencimiento, CURDATE()) >= 0
+                                THEN l.disponible ELSE 0 END), 0) AS disponible_vigente,
+              COALESCE(SUM(CASE WHEN DATEDIFF(l.vencimiento, CURDATE()) BETWEEN 0 AND ?
+                                THEN l.disponible ELSE 0 END), 0) AS disponible_por_vencer
+         FROM vacunas v
+         LEFT JOIN lotes l ON l.vacuna_id = v.id AND l.disponible > 0
+        WHERE v.activa = 1
+        GROUP BY v.id, v.nombre, v.dosis_por_frasco
+        ORDER BY v.nombre`,
+      [DIAS_VENCIMIENTO]
+    );
+    // Filtramos solo las que necesitan reposición
+    const data = rows
+      .map(r => {
+        const disp = Number(r.disponible_vigente);
+        const porV = Number(r.disponible_por_vencer);
+        let situacion;
+        let prioridad;
+        if (disp === 0)               { situacion = 'Sin stock';       prioridad = 'URGENTE'; }
+        else if (disp <= UMBRAL_STOCK_BAJO) { situacion = 'Stock bajo';      prioridad = 'ALTA'; }
+        else if (porV === disp)       { situacion = 'Solo lotes por vencer'; prioridad = 'ALTA'; }
+        else if (porV > 0)            { situacion = 'Parcial por vencer';   prioridad = 'MEDIA'; }
+        else return null;             // Está OK, no necesita reposición
+        return {
+          'Vacuna': r.vacuna,
+          'Presentación': r.dosis_por_frasco > 1 ? `Frasco × ${r.dosis_por_frasco}` : 'Monodosis',
+          'Dosis vigentes': disp,
+          'De esas, por vencer pronto': porV,
+          'Situación': situacion,
+          'Prioridad': prioridad,
+        };
+      })
+      .filter(Boolean);
+
+    if (data.length === 0) {
+      // Placeholder para que el Excel no salga vacío y confunda
+      data.push({
+        'Vacuna': 'Ninguna vacuna requiere reposición en este momento.',
+        'Presentación': '',
+        'Dosis vigentes': '',
+        'De esas, por vencer pronto': '',
+        'Situación': '',
+        'Prioridad': '',
+      });
+    }
+
+    const fecha = new Date().toISOString().slice(0, 10);
+    // Paleta específica para "prioridad" (URGENTE rojo, ALTA amarillo, MEDIA teal)
+    const PRIORIDAD_STYLE = {
+      'URGENTE': { fill: 'FDE8E4', color: 'B42318' },
+      'ALTA':    { fill: 'FDF3D9', color: '795000' },
+      'MEDIA':   { fill: 'E4F4EA', color: '155F35' },
+    };
+    sendXlsx(res, `SGV_reposicion_${fecha}.xlsx`, 'Reposición', data, {
+      tituloReporte: 'SGV — Pedido de reposición · CAPS San José Obrero',
+      colorearCol: 'Prioridad',
+      paleta: PRIORIDAD_STYLE,
+    });
+  } catch (err) {
+    console.error('reportes/reposicion:', err.message);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
 });
 
 // Reporte 2: Stock de una vacuna específica

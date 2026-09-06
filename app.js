@@ -7,10 +7,10 @@ let USER = null;            // { id, correo, rol }
 let VACUNAS = [];          // catálogo cacheado
 
 const ROL_INFO = {
-  enfermeria:   { name:'Enfermería',   rol:'Administrador',       perm:'Lectura y escritura',                 tipo:'Cuenta compartida', write:true,  manageUsers:false, av:'EN' },
-  coordinadora: { name:'Coordinadora', rol:'Coordinadora',        perm:'Solo lectura + gestión de usuarios',  tipo:'Cuenta personal',   write:false, manageUsers:true,  av:'CO' },
-  jefa:         { name:'Jefa',         rol:'Jefa de enfermería',  perm:'Solo lectura',                        tipo:'Cuenta personal',   write:false, manageUsers:false, av:'JE' },
-  proveedora:   { name:'Proveedora',   rol:'Proveedora',          perm:'Solo lectura',                        tipo:'Cuenta personal',   write:false, manageUsers:false, av:'PR' },
+  enfermeria:   { name:'Enfermería',   rol:'Administrador',       perm:'Lectura y escritura',                 tipo:'Cuenta compartida', write:true,  manageUsers:false, viewMovimientos:true,  viewActividad:false, esProveedora:false, av:'EN' },
+  coordinadora: { name:'Coordinadora', rol:'Coordinadora',        perm:'Gestión de usuarios y catálogo',      tipo:'Cuenta personal',   write:false, manageUsers:true,  viewMovimientos:true,  viewActividad:false, esProveedora:false, av:'CO' },
+  jefa:         { name:'Jefa',         rol:'Jefa de enfermería',  perm:'Consulta y supervisión',              tipo:'Cuenta personal',   write:false, manageUsers:false, viewMovimientos:true,  viewActividad:true,  esProveedora:false, av:'JE' },
+  proveedora:   { name:'Proveedora',   rol:'Proveedora externa',  perm:'Consulta de stock y reposición',      tipo:'Cuenta personal',   write:false, manageUsers:false, viewMovimientos:false, viewActividad:false, esProveedora:true,  av:'PR' },
 };
 
 /* ---------- Helpers ---------- */
@@ -144,6 +144,23 @@ function applyRole(){
   }
   document.querySelectorAll('.enfermeria-only:not(.page)').forEach(e => e.style.display = info.write ? '' : 'none');
   document.querySelectorAll('.coordinadora-only:not(.page)').forEach(e => e.style.display = info.manageUsers ? '' : 'none');
+  // Vistas específicas por rol: solo se muestran a quienes corresponde
+  document.querySelectorAll('.jefa-only').forEach(e => e.style.display = info.viewActividad ? '' : 'none');
+  document.querySelectorAll('.proveedora-only').forEach(e => e.style.display = info.esProveedora ? '' : 'none');
+  // Elementos que se ocultan específicamente a la proveedora (link Movimientos, botón Excel de mov, etc.)
+  document.querySelectorAll('.hide-proveedora').forEach(e => e.style.display = info.esProveedora ? 'none' : '');
+  // Si es proveedora, activar por defecto el filtro "necesita reposición" en Stock
+  if (info.esProveedora) {
+    setTimeout(() => {
+      const chipRep = document.querySelector('#page-stock .chip-rango[data-est="reposicion"]');
+      const chipTodos = document.querySelector('#page-stock .chip-rango[data-est=""]');
+      if (chipRep && chipTodos) {
+        chipTodos.classList.remove('active');
+        chipRep.classList.add('active');
+        if (typeof stSetEstado === 'function') stSetEstado('reposicion');
+      }
+    }, 100);
+  }
   // El cartel de "solo lectura" se muestra solo a los roles que
   // efectivamente son solo consulta (jefa, proveedora). La coordinadora
   // no lo ve porque tiene funciones propias (usuarios y catálogo).
@@ -158,6 +175,7 @@ function go(page){
   const info = ROL_INFO[USER.rol];
   if (['aplicar','descarte','lote'].includes(page) && !info.write) page = 'inicio';
   if (page === 'usuarios' && !info.manageUsers) page = 'inicio';
+  if (page === 'mov' && !info.viewMovimientos) page = 'inicio';
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   $('page-'+page).classList.add('on');
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page===page));
@@ -255,6 +273,57 @@ async function loadDashboard(){
       banner.style.display = 'none';
     }
   }
+
+  // Si el usuario es jefa, cargar también el resumen de actividad de gestión.
+  // Solo se dispara para ella para no consultar de más en los otros roles.
+  if (USER && ROL_INFO[USER.rol]?.viewActividad) {
+    loadResumenActividad();
+  }
+}
+
+/**
+ * Carga el resumen de actividad para el panel de la jefa.
+ * Trae aplicaciones semanales, descartes mensuales, tasa de descarte por
+ * vencimiento y las 3 vacunas más aplicadas del mes.
+ */
+async function loadResumenActividad() {
+  try {
+    const d = await api('/dashboard/actividad');
+    const ap = d.aplicacionesSemana;
+    const de = d.descartesMes;
+    if ($('jefaApSem')) $('jefaApSem').textContent = ap.dosis;
+    if ($('jefaApSemDet')) $('jefaApSemDet').textContent =
+      `${ap.movimientos} ${ap.movimientos === 1 ? 'registro' : 'registros'} en 7 días`;
+
+    if ($('jefaDescMes')) $('jefaDescMes').textContent = de.dosis;
+    if ($('jefaDescMesDet')) $('jefaDescMesDet').textContent =
+      `${de.movimientos} ${de.movimientos === 1 ? 'registro' : 'registros'} en 30 días`;
+
+    if ($('jefaTasa')) {
+      $('jefaTasa').textContent = de.tasaVencimiento + '%';
+      // Coloreado: verde <15%, amarillo 15-30%, rojo >30%
+      $('jefaTasa').classList.remove('warn', 'crit');
+      if (de.tasaVencimiento > 30) $('jefaTasa').classList.add('crit');
+      else if (de.tasaVencimiento > 15) $('jefaTasa').classList.add('warn');
+    }
+    if ($('jefaTasaDet')) $('jefaTasaDet').textContent =
+      de.dosis > 0
+        ? `${de.dosisPorVencimiento} de ${de.dosis} dosis descartadas`
+        : 'sin descartes este mes';
+
+    const top = $('jefaTop');
+    if (top) {
+      if (d.topVacunasMes && d.topVacunasMes.length > 0) {
+        top.innerHTML = d.topVacunasMes
+          .map(v => `<li><b>${v.nombre}</b> — ${v.dosis} ${v.dosis === 1 ? 'dosis' : 'dosis'}</li>`)
+          .join('');
+      } else {
+        top.innerHTML = '<li class="jefa-top-empty">Sin aplicaciones registradas en el último mes.</li>';
+      }
+    }
+  } catch (err) {
+    console.error('loadResumenActividad:', err);
+  }
 }
 
 /**
@@ -341,8 +410,14 @@ function renderStock(){
   // Filtros
   const q = ($('stock-search')?.value || '').trim().toLowerCase();
   const est = $('stock-estado')?.value || '';
-  if (q)   rows = rows.filter(r => r.vacuna.toLowerCase().includes(q));
-  if (est) rows = rows.filter(r => r.estado === est);
+  if (q) rows = rows.filter(r => r.vacuna.toLowerCase().includes(q));
+  if (est === 'reposicion') {
+    // Filtro combinado para la proveedora: todo lo que hay que reponer
+    const necesitaReposicion = new Set(['nostock', 'low', 'exp']);
+    rows = rows.filter(r => necesitaReposicion.has(r.estado));
+  } else if (est) {
+    rows = rows.filter(r => r.estado === est);
+  }
 
   // Orden — para vacunas sin stock (dias_para_vencer null), tratamos como infinito
   const dias = r => (r.dias_para_vencer === null || r.dias_para_vencer === undefined) ? 999999 : Number(r.dias_para_vencer);
@@ -1025,6 +1100,16 @@ async function descargarArchivo(path, nombreSugerido) {
 
 function excelStockGeneral() {
   descargarArchivo('/reportes/stock', 'SGV_stock.xlsx');
+}
+
+/**
+ * Descarga el reporte de reposición — pensado para el rol de proveedora.
+ * Trae solo las vacunas que necesitan pedirse (sin stock, stock bajo, por vencer),
+ * agrupadas por vacuna en lugar de listar lote por lote.
+ */
+function descargarReposicion() {
+  const fecha = new Date().toISOString().slice(0, 10);
+  descargarArchivo('/reportes/reposicion', `SGV_reposicion_${fecha}.xlsx`);
 }
 
 /**
