@@ -76,7 +76,7 @@
       </div>
 
       <!-- Banner de alerta crítica: solo aparece si hay lotes vencidos -->
-      <div class="banner-vencidas" id="bannerVencidas" style="display:none">
+      <div class="banner-vencidas hide-proveedora" id="bannerVencidas" style="display:none">
         <div class="banner-vencidas-ic">⚠</div>
         <div class="banner-vencidas-txt">
           <div class="banner-vencidas-titulo" id="bannerVencidasTitulo"></div>
@@ -112,7 +112,7 @@
         <div class="kpi"><div class="lab">Unidades totales</div><div class="num">0</div><div class="delta">dosis disponibles</div></div>
         <div class="kpi warn"><div class="lab">Stock bajo</div><div class="num">0</div><div class="delta">requieren reposición</div></div>
         <div class="kpi red"><div class="lab">Por vencer</div><div class="num">0</div><div class="delta">próximos 15 días</div></div>
-        <div class="kpi red"><div class="lab">Vencidas</div><div class="num">0</div><div class="delta">descartar urgente</div></div>
+        <div class="kpi red hide-proveedora"><div class="lab">Vencidas</div><div class="num">0</div><div class="delta">descartar urgente</div></div>
       </div>
 
       <!-- Panel de resumen de actividad — solo lo ve la jefa de enfermería.
@@ -165,7 +165,7 @@
       <div class="page-head">
         <h1>Stock</h1>
       </div>
-      <div class="readonly-note readonly-only"><span class="ic">🔒</span><span>Estás en modo <b>solo lectura</b>: podés consultar el stock y descargar los Excel, pero no registrar movimientos.</span></div>
+      <div class="readonly-note readonly-only hide-proveedora"><span class="ic">🔒</span><span>Estás en modo <b>solo lectura</b>: podés consultar el stock y descargar los Excel, pero no registrar movimientos.</span></div>
       <div class="mov-layout">
         <aside class="mov-sidebar">
           <div class="mov-sidebar-head">
@@ -175,7 +175,7 @@
           <div class="mov-rango-rapido">
             <button type="button" class="chip-rango active" data-est="" onclick="stSetEstado('')">Todos</button>
             <button type="button" class="chip-rango proveedora-only" data-est="reposicion" onclick="stSetEstado('reposicion')">Necesita reposición</button>
-            <button type="button" class="chip-rango" data-est="vencida" onclick="stSetEstado('vencida')">Vencidas</button>
+            <button type="button" class="chip-rango hide-proveedora" data-est="vencida" onclick="stSetEstado('vencida')">Vencidas</button>
             <button type="button" class="chip-rango" data-est="exp" onclick="stSetEstado('exp')">Por vencer</button>
             <button type="button" class="chip-rango" data-est="low" onclick="stSetEstado('low')">Stock bajo</button>
             <button type="button" class="chip-rango" data-est="nostock" onclick="stSetEstado('nostock')">Sin stock</button>
@@ -188,7 +188,8 @@
             <label>Estado</label>
             <select id="stock-estado" onchange="stOnEstadoManual()">
               <option value="">Todos</option>
-              <option value="vencida">Vencidas</option>
+              <option value="reposicion" class="proveedora-only">Necesita reposición</option>
+              <option value="vencida" class="hide-proveedora">Vencidas</option>
               <option value="exp">Por vencer</option>
               <option value="low">Stock bajo</option>
               <option value="ok">OK</option>
@@ -228,7 +229,7 @@
       <div class="page-head">
         <h1>Movimientos</h1>
       </div>
-      <div class="readonly-note readonly-only"><span class="ic">🔒</span><span>Modo <b>solo lectura</b>: podés consultar y descargar el historial, pero no registrar movimientos.</span></div>
+      <div class="readonly-note readonly-only hide-proveedora"><span class="ic">🔒</span><span>Modo <b>solo lectura</b>: podés consultar y descargar el historial, pero no registrar movimientos.</span></div>
 
       <div class="mov-layout">
         <aside class="mov-sidebar">

@@ -230,19 +230,24 @@ async function loadDashboard(){
   // POR VENCER — lotes por vencer + frascos abiertos por vencer.
   // Los frascos se marcan con 💉 y texto "frasco abierto" para que sea
   // claro que es un caso distinto al lote normal.
+  // Excepción: la proveedora NO ve frascos abiertos (es info interna del CAPS).
+  const info = ROL_INFO[USER?.rol] || {};
+  const mostrarFrascos = !info.esProveedora;
   if (expUl) {
     const items = [];
     exp.forEach(a => items.push(
       `<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — vence <b>${fmtFecha(a.vencimiento)}</b> (${fmtDias(a.dias)})</li>`
     ));
-    frascosPorVencer.forEach(f => {
-      const causaTxt = f.causa_vencimiento === 'lote'
-        ? ' <span style="color:#795000;font-size:11px">(por venc. del lote)</span>'
-        : '';
-      items.push(
-        `<li class="frasco">${f.vacuna} <span class="frasco-tag">💉 frasco abierto</span> — vence en <b>${f.dias_restantes} ${f.dias_restantes === 1 ? 'día' : 'días'}</b> (${f.dosis_sobrantes} ${f.dosis_sobrantes === 1 ? 'dosis' : 'dosis'} sobrantes)${causaTxt}</li>`
-      );
-    });
+    if (mostrarFrascos) {
+      frascosPorVencer.forEach(f => {
+        const causaTxt = f.causa_vencimiento === 'lote'
+          ? ' <span style="color:#795000;font-size:11px">(por venc. del lote)</span>'
+          : '';
+        items.push(
+          `<li class="frasco">${f.vacuna} <span class="frasco-tag">💉 frasco abierto</span> — vence en <b>${f.dias_restantes} ${f.dias_restantes === 1 ? 'día' : 'días'}</b> (${f.dosis_sobrantes} ${f.dosis_sobrantes === 1 ? 'dosis' : 'dosis'} sobrantes)${causaTxt}</li>`
+        );
+      });
+    }
     expUl.innerHTML = items.length ? items.join('')
       : '<li class="alert-empty">Sin vacunas próximas a vencer.</li>';
   }
