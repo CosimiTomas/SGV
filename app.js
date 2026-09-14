@@ -788,42 +788,6 @@ function clearDescarte(){
   toggleDescarteMulti();
 }
 
-/* Reset completo de lotes y movimientos — solo fase de prueba. */
-async function limpiarTodo(){
-  const ok = confirm(
-    '⚠ Esto va a BORRAR todos los lotes y movimientos de la base de datos.\n\n' +
-    'No se puede deshacer. Los usuarios y el catálogo de vacunas no se tocan.\n\n' +
-    '¿Continuar?'
-  );
-  if (!ok) return;
-  try {
-    const r = await api('/admin/reset', { method: 'POST' });
-    toast('ok', r.mensaje);
-    await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
-    go('inicio');
-  } catch (err) {
-    toast('err', err.message);
-  }
-}
-
-/* Cargar lotes de prueba variados — solo fase de desarrollo.
-   No borra datos existentes: los agrega. */
-async function cargarPrueba(){
-  const ok = confirm(
-    'Se van a agregar ~11 lotes de prueba y varios movimientos para poder probar todos los estados (OK, stock bajo, por vencer, vencidas, multidosis) y los filtros de fecha.\n\n' +
-    'No borra nada de lo que ya está cargado. ¿Continuar?'
-  );
-  if (!ok) return;
-  try {
-    const r = await api('/admin/cargar-prueba', { method: 'POST' });
-    toast('ok', r.mensaje);
-    await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
-    go('inicio');
-  } catch (err) {
-    toast('err', err.message);
-  }
-}
-
 async function saveLote(){
   if(!checkFields(['lo-vac','lo-num','lo-venc','lo-cant'])) return msg('lo-msg','err','Completá todos los campos obligatorios.');
   if($('lo-venc').value < today()){ $('lo-venc').classList.add('bad'); return msg('lo-msg','err','La fecha de vencimiento no puede ser anterior a hoy.'); }
