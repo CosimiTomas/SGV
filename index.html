@@ -471,7 +471,7 @@
     <div class="modal-head"><h4>Editar lote</h4><button class="x" onclick="closeOv('ovEditLote')">×</button></div>
     <div class="modal-body">
       <p style="color:var(--muted);font-size:13px;margin-bottom:12px">
-        Corregí errores del número de lote o la fecha de vencimiento. La vacuna y las cantidades no se pueden modificar para preservar la trazabilidad.
+        Corregí errores de carga del lote. La vacuna no se puede modificar para preservar la trazabilidad.
       </p>
       <div style="margin-bottom:12px">
         <label>Vacuna</label>
@@ -481,9 +481,14 @@
         <label>Número de lote <span class="req">*</span></label>
         <input id="el-num" type="text" placeholder="Ej: L-2026-A">
       </div>
-      <div>
+      <div style="margin-bottom:12px">
         <label>Fecha de vencimiento <span class="req">*</span></label>
         <input id="el-venc" type="date">
+      </div>
+      <div>
+        <label id="el-cant-label">Cantidad de dosis <span class="req">*</span></label>
+        <input id="el-cant" type="number" min="1" placeholder="Ej: 10">
+        <div id="el-cant-hint" style="font-size:11.5px;color:var(--muted);margin-top:4px"></div>
       </div>
       <div id="el-msg" style="margin-top:10px"></div>
     </div>

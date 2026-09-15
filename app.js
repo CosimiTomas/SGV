@@ -495,7 +495,8 @@ function renderStockRow(r, ETIQ) {
     venceCell += `<div class="${cls}">${txt}</div>`;
   }
   const payload = encodeURIComponent(JSON.stringify({
-    id: r.id, vacuna: r.vacuna, numero_lote: r.numero_lote, vencimiento: r.vencimiento
+    id: r.id, vacuna: r.vacuna, numero_lote: r.numero_lote, vencimiento: r.vencimiento,
+    cantidad_inicial: r.cantidad_inicial, disponible: r.disponible, dosis_por_frasco: r.dosis_por_frasco
   }));
   return `<tr>
     <td data-label="Vacuna"><b>${r.vacuna}</b>${chipMulti(r.dosis_por_frasco)}</td>
@@ -503,8 +504,9 @@ function renderStockRow(r, ETIQ) {
     <td data-label="Vencimiento">${venceCell}</td>
     <td data-label="Dosis disponibles">${dispCell}</td>
     <td data-label="Estado"><span class="pill ${r.estado}">${ETIQ[r.estado]}</span></td>
-    <td class="enfermeria-only" style="text-align:right">
-      <button class="btn subtle sm" onclick="openEditLote('${payload}')" title="Corregir número de lote o fecha de vencimiento">Editar</button>
+    <td class="enfermeria-only" style="text-align:right;white-space:nowrap">
+      <button class="btn subtle sm" onclick="openEditLote('${payload}')" title="Corregir número de lote, vencimiento o cantidad">Editar</button>
+      <button class="btn subtle sm" style="color:var(--err);margin-left:6px" onclick="eliminarLote(${r.id}, '${(r.vacuna || '').replace(/'/g, '&apos;')}', '${(r.numero_lote || '').replace(/'/g, '&apos;')}')" title="Eliminar el lote (solo si no tiene aplicaciones ni descartes)">Eliminar</button>
     </td>
   </tr>`;
 }
@@ -1118,19 +1120,47 @@ function doExcelEsp() {
 
 /* ---------- Editar lote (corrección de errores de tipeo) ---------- */
 let _editandoLoteId = null;
+let _editandoLoteInfo = null;
 
 function openEditLote(payloadEncoded) {
   try {
     const data = JSON.parse(decodeURIComponent(payloadEncoded));
     _editandoLoteId = data.id;
+    _editandoLoteInfo = data;
     $('el-vacuna').value = data.vacuna;
     $('el-num').value = data.numero_lote;
     // vencimiento viene como "YYYY-MM-DD" desde el backend (ISO)
     $('el-venc').value = typeof data.vencimiento === 'string'
       ? data.vencimiento.slice(0, 10)
       : new Date(data.vencimiento).toISOString().slice(0, 10);
+
+    // Campo cantidad: si es multidosis, editamos en FRASCOS para que sea intuitivo.
+    // Si es monodosis, editamos en DOSIS directamente.
+    const dpf = Number(data.dosis_por_frasco) || 1;
+    const esMultidosis = dpf > 1;
+    const cantInicial = Number(data.cantidad_inicial) || 0;
+    if (esMultidosis) {
+      $('el-cant').value = cantInicial / dpf;
+      $('el-cant').step = 1;
+      $('el-cant-label').innerHTML = `Cantidad de frascos <span class="req">*</span>`;
+      $('el-cant-hint').textContent = `Cada frasco tiene ${dpf} dosis. Total actual: ${cantInicial} dosis.`;
+    } else {
+      $('el-cant').value = cantInicial;
+      $('el-cant').step = 1;
+      $('el-cant-label').innerHTML = `Cantidad de dosis <span class="req">*</span>`;
+      $('el-cant-hint').textContent = '';
+    }
+
+    // Aviso si el lote ya tuvo movimientos: no se puede bajar la cantidad por debajo de lo usado
+    const usadas = cantInicial - Number(data.disponible || 0);
+    if (usadas > 0) {
+      const unidad = esMultidosis ? Math.ceil(usadas / dpf) + ' frasco(s) equivalente(s)' : usadas + ' dosis';
+      $('el-cant-hint').textContent += ` Mínimo editable: ${unidad} (ya usadas).`;
+    }
+
     $('el-num').classList.remove('bad');
     $('el-venc').classList.remove('bad');
+    $('el-cant').classList.remove('bad');
     $('el-msg').innerHTML = '';
     $('ovEditLote').classList.add('on');
   } catch (err) {
@@ -1141,20 +1171,46 @@ function openEditLote(payloadEncoded) {
 async function saveEditLote() {
   const numero = $('el-num').value.trim();
   const venc = $('el-venc').value;
+  const cantRaw = $('el-cant').value;
   let bad = false;
   if (!numero) { $('el-num').classList.add('bad'); bad = true; } else $('el-num').classList.remove('bad');
   if (!venc)   { $('el-venc').classList.add('bad'); bad = true; } else $('el-venc').classList.remove('bad');
+  if (!cantRaw || Number(cantRaw) <= 0) { $('el-cant').classList.add('bad'); bad = true; } else $('el-cant').classList.remove('bad');
   if (bad) return msg('el-msg', 'err', 'Completá todos los campos.');
+
+  // Si es multidosis, el campo son frascos → traducir a dosis totales para el backend
+  const dpf = Number(_editandoLoteInfo?.dosis_por_frasco) || 1;
+  const cantidadDosis = dpf > 1 ? Number(cantRaw) * dpf : Number(cantRaw);
+
   try {
     const r = await api(`/lotes/${_editandoLoteId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ numero_lote: numero, vencimiento: venc }),
+      body: JSON.stringify({ numero_lote: numero, vencimiento: venc, cantidad: cantidadDosis }),
     });
     closeOv('ovEditLote');
     toast('ok', r.mensaje || 'Lote actualizado.');
     await Promise.all([loadStock(), loadDashboard()]);
   } catch (err) {
     msg('el-msg', 'err', err.message);
+  }
+}
+
+/**
+ * Elimina un lote del stock. Pensado para corregir cargas duplicadas o erróneas.
+ * El backend valida que el lote no tenga aplicaciones/descartes/frascos abiertos.
+ */
+async function eliminarLote(id, vacuna, numeroLote) {
+  const ok = confirm(
+    `¿Eliminar el lote ${numeroLote} de ${vacuna}?\n\n` +
+    `Esta acción no se puede deshacer. Solo se pueden eliminar lotes que no hayan tenido aplicaciones ni descartes registrados (útil para corregir cargas duplicadas).`
+  );
+  if (!ok) return;
+  try {
+    const r = await api(`/lotes/${id}`, { method: 'DELETE' });
+    toast('ok', r.mensaje || 'Lote eliminado.');
+    await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
+  } catch (err) {
+    toast('err', err.message);
   }
 }
 function closeOv(id){ $(id).classList.remove('on'); }

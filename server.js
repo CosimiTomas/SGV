@@ -605,22 +605,131 @@ app.post('/api/lotes', requireAuth, requireRole('enfermeria'), async (req, res) 
  * trazabilidad de los movimientos ya registrados.
  */
 app.patch('/api/lotes/:id', requireAuth, requireRole('enfermeria'), async (req, res) => {
-  const { numero_lote, vencimiento } = req.body;
+  const { numero_lote, vencimiento, cantidad } = req.body;
   if (!numero_lote || !vencimiento)
     return res.status(400).json({ error: 'Completá el número de lote y la fecha de vencimiento.' });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(vencimiento))
     return res.status(400).json({ error: 'Fecha de vencimiento inválida.' });
+
+  const conn = await pool.getConnection();
   try {
-    const [r] = await pool.query(
-      'UPDATE lotes SET numero_lote = ?, vencimiento = ? WHERE id = ?',
-      [numero_lote.trim(), vencimiento, req.params.id]
+    await conn.beginTransaction();
+
+    // Traemos el estado actual del lote y la vacuna para validar
+    const [[lote]] = await conn.query(
+      `SELECT l.id, l.cantidad_inicial, l.disponible, v.dosis_por_frasco, v.nombre
+         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
+        WHERE l.id = ? FOR UPDATE`,
+      [req.params.id]
     );
-    if (!r.affectedRows) return res.status(404).json({ error: 'El lote no existe.' });
+    if (!lote) { await conn.rollback(); return res.status(404).json({ error: 'El lote no existe.' }); }
+
+    // Si se manda una nueva cantidad, validamos y actualizamos.
+    // Regla: la nueva cantidad no puede ser menor que las dosis ya usadas
+    // (aplicadas + descartadas), porque eso rompería la trazabilidad.
+    let nuevaCantidad = lote.cantidad_inicial;
+    let nuevoDisponible = lote.disponible;
+    if (cantidad !== undefined && cantidad !== null) {
+      const nueva = Number(cantidad);
+      const usadas = lote.cantidad_inicial - lote.disponible;
+      if (!Number.isFinite(nueva) || nueva <= 0) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'La cantidad debe ser un número mayor a 0.' });
+      }
+      if (nueva < usadas) {
+        await conn.rollback();
+        return res.status(400).json({
+          error: `No podés bajar la cantidad a ${nueva}: ya se registraron ${usadas} dosis usadas en este lote.`,
+        });
+      }
+      // En multidosis la cantidad tiene que ser múltiplo del tamaño del frasco
+      if (lote.dosis_por_frasco > 1 && nueva % lote.dosis_por_frasco !== 0) {
+        await conn.rollback();
+        return res.status(400).json({
+          error: `Como es multidosis (${lote.dosis_por_frasco} por frasco), la cantidad debe ser múltiplo de ${lote.dosis_por_frasco}.`,
+        });
+      }
+      nuevaCantidad = nueva;
+      nuevoDisponible = nueva - usadas;
+    }
+
+    await conn.query(
+      'UPDATE lotes SET numero_lote = ?, vencimiento = ?, cantidad_inicial = ?, disponible = ? WHERE id = ?',
+      [numero_lote.trim(), vencimiento, nuevaCantidad, nuevoDisponible, req.params.id]
+    );
+
+    // Si cambió la cantidad, también actualizamos el movimiento de INGRESO
+    // asociado para que el historial quede coherente con el nuevo total.
+    if (nuevaCantidad !== lote.cantidad_inicial) {
+      await conn.query(
+        `UPDATE movimientos SET cantidad = ?
+          WHERE lote_id = ? AND tipo = 'ingreso'
+          ORDER BY id ASC LIMIT 1`,
+        [nuevaCantidad, req.params.id]
+      );
+    }
+
+    await conn.commit();
     res.json({ ok: true, mensaje: 'Lote actualizado.' });
   } catch (err) {
+    await conn.rollback();
     console.error('editar lote:', err.message);
     res.status(500).json({ error: 'Error del servidor.' });
-  }
+  } finally { conn.release(); }
+});
+
+/**
+ * Elimina un lote del stock. Pensado principalmente para corregir cargas
+ * duplicadas o erróneas. Por seguridad de trazabilidad, solo permite eliminar
+ * lotes que NO hayan tenido aplicaciones o descartes registrados; el movimiento
+ * de ingreso original se borra junto con el lote.
+ */
+app.delete('/api/lotes/:id', requireAuth, requireRole('enfermeria'), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[lote]] = await conn.query(
+      'SELECT id, numero_lote FROM lotes WHERE id = ? FOR UPDATE',
+      [req.params.id]
+    );
+    if (!lote) { await conn.rollback(); return res.status(404).json({ error: 'El lote no existe.' }); }
+
+    // Verificamos que no tenga aplicaciones ni descartes asociados
+    const [[uso]] = await conn.query(
+      `SELECT COUNT(*) AS n FROM movimientos
+        WHERE lote_id = ? AND tipo IN ('aplicacion','descarte')`,
+      [req.params.id]
+    );
+    if (uso.n > 0) {
+      await conn.rollback();
+      return res.status(400).json({
+        error: `No se puede eliminar: el lote tiene ${uso.n} movimiento(s) de aplicación/descarte registrados. Solo se pueden eliminar lotes sin uso.`,
+      });
+    }
+
+    // Verificamos que no tenga frascos abiertos (por multidosis)
+    const [[frascos]] = await conn.query(
+      'SELECT COUNT(*) AS n FROM frascos_abiertos WHERE lote_id = ?',
+      [req.params.id]
+    );
+    if (frascos.n > 0) {
+      await conn.rollback();
+      return res.status(400).json({
+        error: 'No se puede eliminar: el lote tiene frascos abiertos registrados.',
+      });
+    }
+
+    // Borramos el movimiento de ingreso y el lote
+    await conn.query(`DELETE FROM movimientos WHERE lote_id = ? AND tipo = 'ingreso'`, [req.params.id]);
+    await conn.query('DELETE FROM lotes WHERE id = ?', [req.params.id]);
+
+    await conn.commit();
+    res.json({ ok: true, mensaje: `Lote ${lote.numero_lote} eliminado.` });
+  } catch (err) {
+    await conn.rollback();
+    console.error('eliminar lote:', err.message);
+    res.status(500).json({ error: 'Error del servidor.' });
+  } finally { conn.release(); }
 });
 
 app.post('/api/aplicaciones', requireAuth, requireRole('enfermeria'), async (req, res) => {
