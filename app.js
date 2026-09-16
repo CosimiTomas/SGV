@@ -1343,26 +1343,46 @@ function enhanceSelect(select) {
   /**
    * Posiciona el menú con position:fixed respecto al botón trigger.
    * Como es fixed, "escapa" de contenedores con overflow (modales, cards)
-   * y siempre se ve entero. Si no cabe hacia abajo, lo abre hacia arriba.
+   * y siempre se ve entero. Elige la dirección (arriba o abajo del botón)
+   * que tenga más espacio libre en el viewport para mostrar más opciones.
    */
   function positionMenu() {
     const rect = btn.getBoundingClientRect();
     const gap = 5;
+    const margen = 8; // margen mínimo respecto al borde de la pantalla
     // Ancho: igualar al del botón
     menu.style.width = rect.width + 'px';
     menu.style.left = rect.left + 'px';
-    // Medir el alto real del menú (temporalmente lo hacemos visible para medir)
+    // Resetear max-height para medir el alto natural del menú
+    menu.style.maxHeight = 'none';
+    menu.style.overflowY = 'visible';
+    // Medir el alto real (temporalmente lo hacemos invisible para no parpadear)
     menu.style.visibility = 'hidden';
     menu.style.top = '0px';
     const menuH = menu.offsetHeight;
     menu.style.visibility = '';
-    const espacioAbajo = window.innerHeight - rect.bottom;
-    const espacioArriba = rect.top;
-    // Si no cabe abajo y sí cabe arriba, abrir hacia arriba
-    if (menuH + gap > espacioAbajo && espacioArriba > espacioAbajo) {
-      menu.style.top = (rect.top - menuH - gap) + 'px';
-    } else {
+
+    const espacioAbajo = window.innerHeight - rect.bottom - gap - margen;
+    const espacioArriba = rect.top - gap - margen;
+
+    // Si cabe entero abajo, priorizar abajo (comportamiento natural)
+    if (menuH <= espacioAbajo) {
       menu.style.top = (rect.bottom + gap) + 'px';
+    }
+    // Si cabe entero arriba, abrirlo hacia arriba
+    else if (menuH <= espacioArriba) {
+      menu.style.top = (rect.top - menuH - gap) + 'px';
+    }
+    // Si no cabe entero en ninguna dirección, usamos la que tenga más espacio
+    // y aplicamos scroll SOLO ahí. En pantallas normales esto casi no pasa.
+    else if (espacioAbajo >= espacioArriba) {
+      menu.style.maxHeight = espacioAbajo + 'px';
+      menu.style.overflowY = 'auto';
+      menu.style.top = (rect.bottom + gap) + 'px';
+    } else {
+      menu.style.maxHeight = espacioArriba + 'px';
+      menu.style.overflowY = 'auto';
+      menu.style.top = (margen) + 'px';
     }
   }
 
