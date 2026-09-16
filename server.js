@@ -955,6 +955,65 @@ app.get('/api/movimientos', requireAuth, async (req, res) => {
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
 });
 
+/**
+ * Elimina un movimiento (aplicación o descarte). Revierte el efecto en el stock:
+ * devuelve las dosis al lote correspondiente. Los movimientos de tipo INGRESO
+ * no se pueden eliminar por acá: para eso se debe eliminar el lote entero.
+ * En vacunas multidosis con frasco abierto, el borrado se rechaza por seguridad
+ * (revertir la lógica de frascos abiertos sería frágil y poco predecible).
+ */
+app.delete('/api/movimientos/:id', requireAuth, requireRole('enfermeria'), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[mov]] = await conn.query(
+      `SELECT m.id, m.tipo, m.lote_id, m.cantidad, v.dosis_por_frasco, v.nombre AS vacuna
+         FROM movimientos m
+         JOIN lotes l   ON l.id = m.lote_id
+         JOIN vacunas v ON v.id = l.vacuna_id
+        WHERE m.id = ? FOR UPDATE`,
+      [req.params.id]
+    );
+    if (!mov) { await conn.rollback(); return res.status(404).json({ error: 'El movimiento no existe.' }); }
+
+    if (mov.tipo === 'ingreso') {
+      await conn.rollback();
+      return res.status(400).json({
+        error: 'Los movimientos de ingreso no se pueden eliminar desde acá. Para eso eliminá el lote desde la pantalla de Stock.',
+      });
+    }
+
+    // Para multidosis, borrar aplicaciones rompería la contabilidad del frasco abierto.
+    // Se rechaza con mensaje claro.
+    if (mov.dosis_por_frasco > 1 && mov.tipo === 'aplicacion') {
+      const [[hayFrascos]] = await conn.query(
+        'SELECT COUNT(*) AS n FROM frascos_abiertos WHERE lote_id = ?',
+        [mov.lote_id]
+      );
+      if (hayFrascos.n > 0) {
+        await conn.rollback();
+        return res.status(400).json({
+          error: `No se puede eliminar esta aplicación: ${mov.vacuna} es multidosis y el lote tiene frascos abiertos. Contactá al administrador si necesitás corregirla.`,
+        });
+      }
+    }
+
+    // Devolvemos las dosis al lote (revertimos el descuento original)
+    await conn.query(
+      'UPDATE lotes SET disponible = disponible + ? WHERE id = ?',
+      [mov.cantidad, mov.lote_id]
+    );
+    await conn.query('DELETE FROM movimientos WHERE id = ?', [req.params.id]);
+
+    await conn.commit();
+    res.json({ ok: true, mensaje: `Movimiento eliminado. Se devolvieron ${mov.cantidad} dosis al stock.` });
+  } catch (err) {
+    await conn.rollback();
+    console.error('eliminar movimiento:', err.message);
+    res.status(500).json({ error: 'Error del servidor.' });
+  } finally { conn.release(); }
+});
+
 /* ===========================================================
  * REPORTES — descarga de Excel (.xlsx)
  * Todos requieren autenticación. Cualquier rol puede descargar.

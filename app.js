@@ -153,12 +153,9 @@ function applyRole(){
   // Si es proveedora, activar por defecto el filtro "necesita reposición" en Stock
   if (info.esProveedora) {
     setTimeout(() => {
-      const chipRep = document.querySelector('#page-stock .chip-rango[data-est="reposicion"]');
-      const chipTodos = document.querySelector('#page-stock .chip-rango[data-est=""]');
-      if (chipRep && chipTodos) {
-        chipTodos.classList.remove('active');
-        chipRep.classList.add('active');
-        if (typeof stSetEstado === 'function') stSetEstado('reposicion');
+      const select = document.getElementById('stock-estado');
+      if (select && typeof stSetEstado === 'function') {
+        stSetEstado('reposicion');
       }
     }, 100);
   }
@@ -511,19 +508,14 @@ function renderStockRow(r, ETIQ) {
   </tr>`;
 }
 
-// Los chips rápidos son atajo para el filtro de estado
+// Setea el estado desde código (por ejemplo la vista por defecto de proveedora)
 function stSetEstado(est){
   $('stock-estado').value = est;
-  document.querySelectorAll('#page-stock .chip-rango').forEach(c => c.classList.remove('active'));
-  document.querySelector(`#page-stock .chip-rango[data-est="${est}"]`)?.classList.add('active');
   renderStock();
 }
 
-// Si eligen el estado desde el dropdown, sincronizar los chips
+// Al elegir estado en el desplegable, solo re-renderiza
 function stOnEstadoManual(){
-  const est = $('stock-estado').value;
-  document.querySelectorAll('#page-stock .chip-rango').forEach(c => c.classList.remove('active'));
-  document.querySelector(`#page-stock .chip-rango[data-est="${est}"]`)?.classList.add('active');
   renderStock();
 }
 
@@ -531,8 +523,6 @@ function stClearFiltros(){
   $('stock-search').value = '';
   $('stock-estado').value = '';
   $('stock-orden').value = 'urgencia';
-  document.querySelectorAll('#page-stock .chip-rango').forEach(c => c.classList.remove('active'));
-  document.querySelector('#page-stock .chip-rango[data-est=""]')?.classList.add('active');
   renderStock();
 }
 
@@ -580,6 +570,12 @@ function renderMovimientos(){
   // Renderizar cuerpo
   $('movBody').innerHTML = rows.length ? rows.map(m=>{
     const [cls,lbl] = TIPO[m.tipo];
+    // Solo mostramos "Eliminar" en aplicaciones y descartes.
+    // Los ingresos se eliminan borrando el lote desde Stock.
+    const puedeEliminar = m.tipo !== 'ingreso';
+    const btnEliminar = puedeEliminar
+      ? `<button class="btn subtle sm" style="color:var(--err)" onclick="eliminarMovimiento(${m.id}, '${lbl}', '${(m.vacuna || '').replace(/'/g, '&apos;')}', ${m.cantidad})" title="Eliminar movimiento y devolver las dosis al stock">Eliminar</button>`
+      : '<span class="muted-dash">—</span>';
     return `<tr>
        <td data-label="Fecha mov.">${fmtFecha(m.fecha_mov)}</td>
        <td data-label="Fecha aplic.">${fmtFecha(m.fecha_aplicacion)}</td>
@@ -589,8 +585,9 @@ function renderMovimientos(){
        <td data-label="Motivo">${m.motivo || '<span class="muted-dash">—</span>'}</td>
        <td data-label="Cant.">${m.cantidad}</td>
        <td data-label="Resp.">${m.responsable}</td>
+       <td data-label="Acciones" class="enfermeria-only" style="text-align:right;white-space:nowrap">${btnEliminar}</td>
      </tr>`; }).join('')
-    : '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Sin movimientos que coincidan con los filtros.</td></tr>';
+    : '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">Sin movimientos que coincidan con los filtros.</td></tr>';
 
   // Contador y botón de limpiar
   const total = MOV_CACHE.length;
@@ -1209,6 +1206,26 @@ async function eliminarLote(id, vacuna, numeroLote) {
     const r = await api(`/lotes/${id}`, { method: 'DELETE' });
     toast('ok', r.mensaje || 'Lote eliminado.');
     await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
+  } catch (err) {
+    toast('err', err.message);
+  }
+}
+
+/**
+ * Elimina un movimiento (aplicación o descarte) y devuelve las dosis al stock del lote.
+ * Pensado para corregir cargas erróneas. Los ingresos se manejan borrando el lote.
+ */
+async function eliminarMovimiento(id, tipoLbl, vacuna, cantidad) {
+  const ok = confirm(
+    `¿Eliminar este movimiento?\n\n` +
+    `${tipoLbl} de ${cantidad} dosis · ${vacuna}\n\n` +
+    `Las ${cantidad} dosis van a volver al stock del lote. Esta acción no se puede deshacer.`
+  );
+  if (!ok) return;
+  try {
+    const r = await api(`/movimientos/${id}`, { method: 'DELETE' });
+    toast('ok', r.mensaje || 'Movimiento eliminado.');
+    await Promise.all([loadMovimientos(), loadStock(), loadDashboard()]);
   } catch (err) {
     toast('err', err.message);
   }

@@ -178,14 +178,6 @@
             <h4>Filtros</h4>
             <button type="button" id="st-limpiar" class="btn-limpiar" onclick="stClearFiltros()" style="display:none">Limpiar</button>
           </div>
-          <div class="mov-rango-rapido">
-            <button type="button" class="chip-rango active" data-est="" onclick="stSetEstado('')">Todos</button>
-            <button type="button" class="chip-rango proveedora-only" data-est="reposicion" onclick="stSetEstado('reposicion')">Necesita reposición</button>
-            <button type="button" class="chip-rango hide-proveedora" data-est="vencida" onclick="stSetEstado('vencida')">Vencidas</button>
-            <button type="button" class="chip-rango" data-est="exp" onclick="stSetEstado('exp')">Por vencer</button>
-            <button type="button" class="chip-rango" data-est="low" onclick="stSetEstado('low')">Stock bajo</button>
-            <button type="button" class="chip-rango" data-est="nostock" onclick="stSetEstado('nostock')">Sin stock</button>
-          </div>
           <div class="mov-campo">
             <label>Buscar vacuna</label>
             <input type="text" id="stock-search" placeholder="Nombre de vacuna…" oninput="renderStock()">
@@ -282,7 +274,7 @@
             <button class="btn subtle sm" onclick="excelMovimientosFiltrado()" title="Descarga los movimientos que se ven ahora en pantalla con los filtros aplicados">⬇ Excel</button>
           </div>
           <table>
-            <thead><tr><th>Fecha mov.</th><th>Fecha aplic.</th><th>Vacuna</th><th>Lote</th><th>Tipo</th><th>Motivo</th><th>Cant.</th><th>Resp.</th></tr></thead>
+            <thead><tr><th>Fecha mov.</th><th>Fecha aplic.</th><th>Vacuna</th><th>Lote</th><th>Tipo</th><th>Motivo</th><th>Cant.</th><th>Resp.</th><th class="enfermeria-only" style="text-align:right">Acciones</th></tr></thead>
             <tbody id="movBody"></tbody>
           </table>
         </div>
