@@ -188,7 +188,13 @@ function go(page){
 async function loadVacunas(){
   VACUNAS = await api('/vacunas');
   const opts = '<option value="">Seleccionar…</option>' + VACUNAS.map(v=>`<option value="${v.id}">${v.nombre}</option>`).join('');
-  ['ap-vac','de-vac','lo-vac','ex-vac'].forEach(id => { const el=$(id); if(el) el.innerHTML = opts; });
+  ['ap-vac','de-vac','lo-vac','ex-vac'].forEach(id => {
+    const el = $(id);
+    if (el) {
+      el.innerHTML = opts;
+      if (el._niceRefresh) el._niceRefresh();
+    }
+  });
   if ($('ap-fecha')) $('ap-fecha').value = today();
 }
 
@@ -679,6 +685,7 @@ async function loadLotes(pref){
         : '<option value="">Sin lotes disponibles</option>';
     }catch(err){ toast('err', err.message); }
   }
+  if (sel._niceRefresh) sel._niceRefresh();
   // Si es el descarte, también togglear el campo de dosis sueltas
   if (pref === 'de') toggleDescarteMulti();
 }
@@ -765,6 +772,11 @@ function clearAplicacion(pref){
   $(pref+'-fecha').value=today();
   $(pref+'-msg').innerHTML='';
   ['-vac','-lote','-cant','-fecha'].forEach(s=>$(pref+s).classList.remove('bad'));
+  // Refrescar los custom selects tras el reset
+  ['-vac','-lote'].forEach(s => {
+    const el = $(pref+s);
+    if (el && el._niceRefresh) el._niceRefresh();
+  });
 }
 
 async function saveDescarte(){
@@ -804,6 +816,11 @@ function clearDescarte(){
   $('de-lote').innerHTML='<option value="">Seleccionar vacuna primero…</option>';
   $('de-msg').innerHTML='';
   toggleDescarteMulti();
+  // Refrescar los custom selects tras el reset
+  ['de-vac','de-lote','de-motivo'].forEach(id => {
+    const e = $(id);
+    if (e && e._niceRefresh) e._niceRefresh();
+  });
 }
 
 async function saveLote(){

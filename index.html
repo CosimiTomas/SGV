@@ -291,8 +291,8 @@
         <div class="panel-head"><h4>Registrar aplicación de vacuna</h4></div>
         <div class="form-body">
           <div class="grid2">
-            <div><label>Vacuna <span class="req">*</span></label><select id="ap-vac" onchange="loadLotes('ap')"><option value="">Seleccionar…</option></select></div>
-            <div><label>Lote <span class="req">*</span></label><select id="ap-lote"><option value="">Seleccionar vacuna primero…</option></select></div>
+            <div><label>Vacuna <span class="req">*</span></label><select id="ap-vac" onchange="loadLotes('ap')" class="select-nice"><option value="">Seleccionar…</option></select></div>
+            <div><label>Lote <span class="req">*</span></label><select id="ap-lote" class="select-nice"><option value="">Seleccionar vacuna primero…</option></select></div>
             <div><label>Cantidad <span class="req">*</span></label><input id="ap-cant" type="number" placeholder="0" min="1"></div>
             <div><label>Fecha de aplicación <span class="req">*</span></label><input id="ap-fecha" type="date"></div>
           </div>
@@ -311,8 +311,8 @@
         <div class="panel-head"><h4>Registrar descarte</h4></div>
         <div class="form-body">
           <div class="grid2">
-            <div><label>Vacuna <span class="req">*</span></label><select id="de-vac" onchange="loadLotes('de')"><option value="">Seleccionar…</option></select></div>
-            <div><label>Lote <span class="req">*</span></label><select id="de-lote"><option value="">Seleccionar vacuna primero…</option></select></div>
+            <div><label>Vacuna <span class="req">*</span></label><select id="de-vac" onchange="loadLotes('de')" class="select-nice"><option value="">Seleccionar…</option></select></div>
+            <div><label>Lote <span class="req">*</span></label><select id="de-lote" class="select-nice"><option value="">Seleccionar vacuna primero…</option></select></div>
             <div>
               <label id="de-cant-lbl">Cantidad de dosis <span class="req">*</span></label>
               <input id="de-cant" type="number" placeholder="0" min="0" oninput="toggleDescarteMulti()">
@@ -321,7 +321,7 @@
                 <small id="de-total" style="display:block;color:var(--muted);margin-top:6px">Total: 0 dosis</small>
               </div>
             </div>
-            <div><label>Motivo <span class="req">*</span></label><select id="de-motivo"><option value="">Seleccionar…</option><option>Vencimiento</option><option>Cadena de frío</option><option>Rotura / derrame</option><option>Frasco abierto vencido</option><option>Otro</option></select></div>
+            <div><label>Motivo <span class="req">*</span></label><select id="de-motivo" class="select-nice"><option value="">Seleccionar…</option><option>Vencimiento</option><option>Cadena de frío</option><option>Rotura / derrame</option><option>Frasco abierto vencido</option><option>Otro</option></select></div>
           </div>
           <div id="de-msg"></div>
           <div style="display:flex;gap:10px;margin-top:22px">
@@ -338,7 +338,7 @@
         <div class="panel-head"><h4>Ingresar lote nuevo</h4></div>
         <div class="form-body">
           <div class="grid2">
-            <div><label>Vacuna <span class="req">*</span></label><select id="lo-vac" onchange="toggleLoteMulti()"><option value="">Seleccionar…</option></select></div>
+            <div><label>Vacuna <span class="req">*</span></label><select id="lo-vac" onchange="toggleLoteMulti()" class="select-nice"><option value="">Seleccionar…</option></select></div>
             <div><label>Número de lote <span class="req">*</span></label><input id="lo-num" placeholder="Ej: L-2026-A"></div>
             <div><label>Fecha de vencimiento <span class="req">*</span></label><input id="lo-venc" type="date"></div>
             <div>
@@ -372,14 +372,14 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             <input type="text" id="us-search" placeholder="Buscar por correo…" oninput="renderUsuarios()">
           </div>
-          <select id="us-rol" onchange="renderUsuarios()">
+          <select id="us-rol" onchange="renderUsuarios()" class="select-nice">
             <option value="">Todos los roles</option>
             <option value="enfermeria">Enfermería</option>
             <option value="coordinadora">Coordinadora</option>
             <option value="jefa">Jefa</option>
             <option value="proveedora">Proveedora</option>
           </select>
-          <select id="us-estado" onchange="renderUsuarios()">
+          <select id="us-estado" onchange="renderUsuarios()" class="select-nice">
             <option value="">Todos los estados</option>
             <option value="1">Activo</option>
             <option value="0">Inactivo</option>
@@ -408,7 +408,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             <input type="text" id="cat-search" placeholder="Buscar vacuna…" oninput="renderCatalogo()">
           </div>
-          <select id="cat-estado" onchange="renderCatalogo()">
+          <select id="cat-estado" onchange="renderCatalogo()" class="select-nice">
             <option value="">Todas</option>
             <option value="1">Activas</option>
             <option value="0">Dadas de baja</option>
@@ -450,7 +450,7 @@
     <div class="modal-head"><h4>Excel · Stock específico</h4><button class="x" onclick="closeOv('ovExcel')">×</button></div>
     <div class="modal-body">
       <label>Elegí la vacuna para descargar su stock</label>
-      <select id="ex-vac"><option value="">Seleccionar…</option></select>
+      <select id="ex-vac" class="select-nice"><option value="">Seleccionar…</option></select>
       <div id="ex-msg"></div>
     </div>
     <div class="modal-foot">
@@ -506,7 +506,7 @@
       </div>
       <div style="margin-bottom:12px">
         <label>Rol <span class="req">*</span></label>
-        <select id="us-nuevo-rol">
+        <select id="us-nuevo-rol" class="select-nice">
           <option value="enfermeria">Enfermería</option>
           <option value="coordinadora">Coordinadora</option>
           <option value="jefa">Jefa</option>
