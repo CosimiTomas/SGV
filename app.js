@@ -1408,9 +1408,12 @@ function enhanceSelect(select) {
   });
 
   // Como el menú es position:fixed, no sigue al scroll ni al resize.
-  // Lo cerramos para evitar que quede "flotando" en la posición vieja.
-  window.addEventListener('scroll', () => {
-    if (wrapper.classList.contains('open')) close();
+  // Lo cerramos si el usuario scrollea la PÁGINA (no si scrollea dentro
+  // del propio menú buscando opciones).
+  window.addEventListener('scroll', (e) => {
+    if (!wrapper.classList.contains('open')) return;
+    if (menu.contains(e.target)) return; // el scroll es adentro del menú
+    close();
   }, true);
   window.addEventListener('resize', () => {
     if (wrapper.classList.contains('open')) close();

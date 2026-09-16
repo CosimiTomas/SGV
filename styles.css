@@ -1247,6 +1247,26 @@
   padding: 5px;
   z-index: 1000;
   display: none;
+  /* Scrollbar teal cuando aparece (solo en casos extremos donde el menú
+     no cabe en el viewport ni arriba ni abajo del botón trigger). */
+  scrollbar-width: thin;
+  scrollbar-color: var(--teal, #0FA99E) transparent;
+}
+.nice-select-menu::-webkit-scrollbar {
+  width: 8px;
+}
+.nice-select-menu::-webkit-scrollbar-track {
+  background: var(--teal-tint, #E5F5F3);
+  border-radius: 8px;
+  margin: 4px 0;
+}
+.nice-select-menu::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--teal, #0FA99E) 0%, var(--teal-deep, #076862) 100%);
+  border-radius: 8px;
+  border: 1.5px solid #fff;
+}
+.nice-select-menu::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--teal-deep, #076862) 0%, var(--teal, #0FA99E) 100%);
 }
 .nice-select.open .nice-select-menu {
   display: block;
