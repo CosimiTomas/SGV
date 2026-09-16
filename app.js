@@ -1337,6 +1337,33 @@ function enhanceSelect(select) {
     renderOptions();
     wrapper.classList.add('open');
     btn.setAttribute('aria-expanded', 'true');
+    positionMenu();
+  }
+
+  /**
+   * Posiciona el menú con position:fixed respecto al botón trigger.
+   * Como es fixed, "escapa" de contenedores con overflow (modales, cards)
+   * y siempre se ve entero. Si no cabe hacia abajo, lo abre hacia arriba.
+   */
+  function positionMenu() {
+    const rect = btn.getBoundingClientRect();
+    const gap = 5;
+    // Ancho: igualar al del botón
+    menu.style.width = rect.width + 'px';
+    menu.style.left = rect.left + 'px';
+    // Medir el alto real del menú (temporalmente lo hacemos visible para medir)
+    menu.style.visibility = 'hidden';
+    menu.style.top = '0px';
+    const menuH = menu.offsetHeight;
+    menu.style.visibility = '';
+    const espacioAbajo = window.innerHeight - rect.bottom;
+    const espacioArriba = rect.top;
+    // Si no cabe abajo y sí cabe arriba, abrir hacia arriba
+    if (menuH + gap > espacioAbajo && espacioArriba > espacioAbajo) {
+      menu.style.top = (rect.top - menuH - gap) + 'px';
+    } else {
+      menu.style.top = (rect.bottom + gap) + 'px';
+    }
   }
 
   function close() {
@@ -1358,6 +1385,15 @@ function enhanceSelect(select) {
   // Cerrar con Escape
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && wrapper.classList.contains('open')) close();
+  });
+
+  // Como el menú es position:fixed, no sigue al scroll ni al resize.
+  // Lo cerramos para evitar que quede "flotando" en la posición vieja.
+  window.addEventListener('scroll', () => {
+    if (wrapper.classList.contains('open')) close();
+  }, true);
+  window.addEventListener('resize', () => {
+    if (wrapper.classList.contains('open')) close();
   });
 
   // Método público para refrescar el look cuando el value cambia por código
