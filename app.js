@@ -116,6 +116,9 @@ async function enterApp(){
     loadUsuarios();
     loadCatalogo();
   }
+  // Envolver los selects marcados con el componente custom (una vez que los
+  // datos dinámicos ya poblaron las opciones, ej. mv-vac).
+  enhanceAllSelects();
   go('inicio');
 }
 
@@ -511,6 +514,7 @@ function renderStockRow(r, ETIQ) {
 // Setea el estado desde código (por ejemplo la vista por defecto de proveedora)
 function stSetEstado(est){
   $('stock-estado').value = est;
+  if ($('stock-estado')._niceRefresh) $('stock-estado')._niceRefresh();
   renderStock();
 }
 
@@ -523,6 +527,10 @@ function stClearFiltros(){
   $('stock-search').value = '';
   $('stock-estado').value = '';
   $('stock-orden').value = 'urgencia';
+  ['stock-estado','stock-orden'].forEach(id => {
+    const el = $(id);
+    if (el && el._niceRefresh) el._niceRefresh();
+  });
   renderStock();
 }
 
@@ -541,6 +549,8 @@ async function loadMovimientos(){
       nombres.map(n => `<option value="${n}">${n}</option>`).join('');
     // Restaurar selección si sigue existiendo
     if (nombres.includes(anterior)) sel.value = anterior;
+    // Si el select ya fue enhanced, refrescar sus opciones
+    if (sel._niceRefresh) sel._niceRefresh();
   }
   renderMovimientos();
 }
@@ -603,10 +613,12 @@ function renderMovimientos(){
 }
 
 // Rangos rápidos: setean fechas y actualizan
-function mvSetRango(rango){
+function mvOnRangoChange(){
+  const rango = $('mv-rango').value;
   const hoy = new Date();
   const iso = d => d.toISOString().slice(0, 10);
   let desde = '', hasta = '';
+  const custom = rango === 'custom';
   if (rango === 'hoy') {
     desde = hasta = iso(hoy);
   } else if (rango === '7d') {
@@ -616,18 +628,19 @@ function mvSetRango(rango){
     desde = iso(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
     hasta = iso(hoy);
   }
-  // 'todo' deja desde y hasta vacíos
-  $('mv-desde').value = desde;
-  $('mv-hasta').value = hasta;
-  // Marcar el chip activo
-  document.querySelectorAll('.chip-rango').forEach(c => c.classList.remove('active'));
-  document.querySelector(`.chip-rango[data-rango="${rango}"]`)?.classList.add('active');
+  // En 'todo' y 'custom' se dejan los campos vacíos (o los que el usuario haya cargado)
+  if (!custom) {
+    $('mv-desde').value = desde;
+    $('mv-hasta').value = hasta;
+  }
+  // Mostrar/ocultar los campos de fecha manual
+  $('mv-desde-wrap').style.display = custom ? '' : 'none';
+  $('mv-hasta-wrap').style.display = custom ? '' : 'none';
   renderMovimientos();
 }
 
-// Si el usuario toca las fechas a mano, desactivar el chip de rango rápido
+// Si el usuario toca las fechas a mano estando en modo custom, solo re-render
 function mvOnFechaManual(){
-  document.querySelectorAll('.chip-rango').forEach(c => c.classList.remove('active'));
   renderMovimientos();
 }
 
@@ -636,8 +649,14 @@ function mvClearFiltros(){
   $('mv-vac').value = '';
   $('mv-desde').value = '';
   $('mv-hasta').value = '';
-  document.querySelectorAll('.chip-rango').forEach(c => c.classList.remove('active'));
-  document.querySelector('.chip-rango[data-rango="todo"]')?.classList.add('active');
+  $('mv-rango').value = 'todo';
+  $('mv-desde-wrap').style.display = 'none';
+  $('mv-hasta-wrap').style.display = 'none';
+  // Sincronizar componentes custom si están activos
+  ['mv-tipo','mv-vac','mv-rango'].forEach(id => {
+    const el = $(id);
+    if (el && el._niceRefresh) el._niceRefresh();
+  });
   renderMovimientos();
 }
 
@@ -1231,6 +1250,121 @@ async function eliminarMovimiento(id, tipoLbl, vacuna, cantidad) {
   }
 }
 function closeOv(id){ $(id).classList.remove('on'); }
+
+/* ============================================================
+ * Custom select — reemplaza el look nativo del navegador por un
+ * dropdown propio, consistente en todos los browsers y alineado
+ * con la paleta institucional. Se aplica a todo <select class="select-nice">.
+ * Mantiene el <select> nativo como fuente de la verdad (para valores,
+ * onchange y compatibilidad), solo lo oculta visualmente.
+ * ============================================================ */
+function enhanceSelect(select) {
+  if (!select || select._enhanced) return;
+  select._enhanced = true;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'nice-select';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'nice-select-btn';
+  btn.setAttribute('aria-haspopup', 'listbox');
+  btn.setAttribute('aria-expanded', 'false');
+  const labelEl = document.createElement('span');
+  labelEl.className = 'nice-select-label';
+  btn.appendChild(labelEl);
+  const arrow = document.createElement('span');
+  arrow.className = 'nice-select-arrow';
+  arrow.innerHTML = '<svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M2 4.5 L6 8.5 L10 4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  btn.appendChild(arrow);
+
+  const menu = document.createElement('div');
+  menu.className = 'nice-select-menu';
+  menu.setAttribute('role', 'listbox');
+
+  function renderLabel() {
+    const opt = select.options[select.selectedIndex];
+    labelEl.textContent = opt ? opt.textContent : '';
+  }
+
+  function renderOptions() {
+    menu.innerHTML = '';
+    Array.from(select.options).forEach((opt, idx) => {
+      const div = document.createElement('div');
+      div.className = 'nice-select-option';
+      div.textContent = opt.textContent;
+      div.dataset.value = opt.value;
+      div.setAttribute('role', 'option');
+      // Preservar clases de la option original (hide-proveedora, proveedora-only)
+      // para que el sistema de roles siga funcionando en el menú custom.
+      opt.classList.forEach(c => div.classList.add(c));
+      // Estilo de la opción seleccionada
+      if (idx === select.selectedIndex) div.classList.add('is-selected');
+      div.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (select.value !== opt.value) {
+          select.value = opt.value;
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        close();
+      });
+      menu.appendChild(div);
+    });
+  }
+
+  function open() {
+    // Cerrar cualquier otro select custom abierto
+    document.querySelectorAll('.nice-select.open').forEach(w => {
+      if (w !== wrapper) w.classList.remove('open');
+    });
+    renderOptions();
+    wrapper.classList.add('open');
+    btn.setAttribute('aria-expanded', 'true');
+  }
+
+  function close() {
+    wrapper.classList.remove('open');
+    btn.setAttribute('aria-expanded', 'false');
+  }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (wrapper.classList.contains('open')) close();
+    else open();
+  });
+
+  // Cerrar al hacer click en cualquier otro lado
+  document.addEventListener('click', (e) => {
+    if (!wrapper.contains(e.target)) close();
+  });
+
+  // Cerrar con Escape
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && wrapper.classList.contains('open')) close();
+  });
+
+  // Método público para refrescar el look cuando el value cambia por código
+  // o cuando cambian las options (ej. al repoblar mv-vac después de cargar movimientos).
+  select._niceRefresh = () => { renderLabel(); if (wrapper.classList.contains('open')) renderOptions(); };
+
+  renderLabel();
+
+  // Sincronizar label cuando cambia el valor por interacción normal del select
+  select.addEventListener('change', renderLabel);
+
+  // Insertar el wrapper después del select y ocultar el select nativo
+  select.classList.add('nice-select-hidden');
+  select.parentNode.insertBefore(wrapper, select.nextSibling);
+  wrapper.appendChild(btn);
+  wrapper.appendChild(menu);
+}
+
+/* Aplicar el enhance a todos los selects marcados. Se llama al login (para
+   los selects que están dentro de la app) y también podría llamarse después
+   de agregar selects dinámicamente. */
+function enhanceAllSelects() {
+  document.querySelectorAll('select.select-nice').forEach(enhanceSelect);
+}
 
 /* ---------- Init ---------- */
 $('p').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });

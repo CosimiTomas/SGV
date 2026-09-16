@@ -184,7 +184,7 @@
           </div>
           <div class="mov-campo">
             <label>Estado</label>
-            <select id="stock-estado" onchange="stOnEstadoManual()">
+            <select id="stock-estado" class="select-nice" onchange="stOnEstadoManual()">
               <option value="">Todos</option>
               <option value="reposicion" class="proveedora-only">Necesita reposición</option>
               <option value="vencida" class="hide-proveedora">Vencidas</option>
@@ -196,7 +196,7 @@
           </div>
           <div class="mov-campo">
             <label>Ordenar por</label>
-            <select id="stock-orden" onchange="renderStock()">
+            <select id="stock-orden" class="select-nice" onchange="renderStock()">
               <option value="urgencia">Urgencia</option>
               <option value="venc-asc">Vence más próximo</option>
               <option value="venc-desc">Vence más lejano</option>
@@ -235,15 +235,19 @@
             <h4>Filtros</h4>
             <button type="button" id="mv-limpiar" class="btn-limpiar" onclick="mvClearFiltros()" style="display:none">Limpiar</button>
           </div>
-          <div class="mov-rango-rapido">
-            <button type="button" class="chip-rango" data-rango="hoy" onclick="mvSetRango('hoy')">Hoy</button>
-            <button type="button" class="chip-rango" data-rango="7d" onclick="mvSetRango('7d')">Últimos 7 días</button>
-            <button type="button" class="chip-rango" data-rango="mes" onclick="mvSetRango('mes')">Este mes</button>
-            <button type="button" class="chip-rango active" data-rango="todo" onclick="mvSetRango('todo')">Todo</button>
+          <div class="mov-campo">
+            <label>Rango</label>
+            <select id="mv-rango" class="select-nice" onchange="mvOnRangoChange()">
+              <option value="todo">Todo el historial</option>
+              <option value="hoy">Hoy</option>
+              <option value="7d">Últimos 7 días</option>
+              <option value="mes">Este mes</option>
+              <option value="custom">Personalizado…</option>
+            </select>
           </div>
           <div class="mov-campo">
             <label>Tipo</label>
-            <select id="mv-tipo" onchange="renderMovimientos()">
+            <select id="mv-tipo" class="select-nice" onchange="renderMovimientos()">
               <option value="">Todos</option>
               <option value="ingreso">Ingreso</option>
               <option value="aplicacion">Aplicación</option>
@@ -252,15 +256,15 @@
           </div>
           <div class="mov-campo">
             <label>Vacuna</label>
-            <select id="mv-vac" onchange="renderMovimientos()">
+            <select id="mv-vac" class="select-nice" onchange="renderMovimientos()">
               <option value="">Todas</option>
             </select>
           </div>
-          <div class="mov-campo">
+          <div class="mov-campo" id="mv-desde-wrap" style="display:none">
             <label>Desde</label>
             <input type="date" id="mv-desde" onchange="mvOnFechaManual()">
           </div>
-          <div class="mov-campo">
+          <div class="mov-campo" id="mv-hasta-wrap" style="display:none">
             <label>Hasta</label>
             <input type="date" id="mv-hasta" onchange="mvOnFechaManual()">
           </div>

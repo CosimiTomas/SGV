@@ -1161,3 +1161,156 @@
 .chip-rango.proveedora-only:not(.role-hidden) {
   display: inline-flex;
 }
+
+/* ============================================================
+   Custom Select — dropdown propio con look consistente.
+   El <select> nativo queda oculto pero funciona como fuente de la
+   verdad. El wrapper .nice-select se posiciona a su lado.
+   ============================================================ */
+.nice-select-hidden {
+  position: absolute !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  height: 0 !important;
+  width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+}
+.nice-select {
+  position: relative;
+  width: 100%;
+  font-family: var(--font-ui, inherit);
+}
+.nice-select-btn {
+  width: 100%;
+  padding: 9px 34px 9px 12px;
+  background: #fff;
+  border: 1px solid var(--line, #D8E1DF);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13.5px;
+  color: var(--ink, #1A1A1A);
+  text-align: left;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  position: relative;
+  font-weight: 500;
+  line-height: 1.3;
+  min-height: 38px;
+}
+.nice-select-btn:hover {
+  border-color: var(--teal, #0FA99E);
+  background: linear-gradient(180deg, #FFFFFF 0%, #FAFDFC 100%);
+}
+.nice-select.open .nice-select-btn {
+  border-color: var(--teal, #0FA99E);
+  box-shadow: 0 0 0 3px rgba(15, 169, 158, 0.14);
+  background: #fff;
+}
+.nice-select-btn:focus-visible {
+  outline: none;
+  border-color: var(--teal, #0FA99E);
+  box-shadow: 0 0 0 3px rgba(15, 169, 158, 0.14);
+}
+.nice-select-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nice-select-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted, #5B6664);
+  transition: transform .2s ease, color .2s ease;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+.nice-select.open .nice-select-arrow {
+  transform: rotate(180deg);
+  color: var(--teal, #0FA99E);
+}
+.nice-select-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid #E8EDEC;
+  border-radius: 10px;
+  box-shadow:
+    0 10px 24px -6px rgba(7, 104, 98, 0.14),
+    0 4px 10px -2px rgba(0, 0, 0, 0.06),
+    0 0 0 1px rgba(255, 255, 255, 0.4) inset;
+  padding: 5px;
+  z-index: 100;
+  display: none;
+  max-height: 260px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--teal, #0FA99E) transparent;
+}
+.nice-select-menu::-webkit-scrollbar { width: 6px; }
+.nice-select-menu::-webkit-scrollbar-thumb {
+  background: rgba(15, 169, 158, 0.3);
+  border-radius: 4px;
+}
+.nice-select-menu::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 169, 158, 0.5);
+}
+.nice-select.open .nice-select-menu {
+  display: block;
+  animation: nice-select-in .14s ease-out;
+}
+@keyframes nice-select-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.nice-select-option {
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13.5px;
+  color: var(--ink, #1A1A1A);
+  transition: background .1s ease, color .1s ease;
+  font-weight: 500;
+  line-height: 1.3;
+  user-select: none;
+  position: relative;
+}
+.nice-select-option + .nice-select-option {
+  margin-top: 1px;
+}
+.nice-select-option:hover {
+  background: var(--teal-tint, #E5F5F3);
+  color: var(--teal-deep, #076862);
+}
+.nice-select-option.is-selected {
+  background: linear-gradient(90deg, var(--teal-tint, #E5F5F3) 0%, #F0F9F7 100%);
+  color: var(--teal-deep, #076862);
+  font-weight: 600;
+}
+.nice-select-option.is-selected::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 60%;
+  background: var(--teal, #0FA99E);
+  border-radius: 2px;
+}
+.nice-select-option.is-selected {
+  padding-left: 14px;
+}
+/* Cuando una option del select nativo tiene role-hidden (aplicado por applyRole),
+   la option custom correspondiente hereda esa clase y se oculta también. */
+.nice-select-option.role-hidden {
+  display: none !important;
+}
