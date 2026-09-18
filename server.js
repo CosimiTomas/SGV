@@ -617,7 +617,8 @@ app.patch('/api/lotes/:id', requireAuth, requireRole('enfermeria'), async (req, 
 
     // Traemos el estado actual del lote y la vacuna para validar
     const [[lote]] = await conn.query(
-      `SELECT l.id, l.cantidad_inicial, l.disponible, v.dosis_por_frasco, v.nombre
+      `SELECT l.id, l.vacuna_id, l.numero_lote, l.vencimiento, l.cantidad_inicial, l.disponible,
+              v.dosis_por_frasco, v.nombre
          FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
         WHERE l.id = ? FOR UPDATE`,
       [req.params.id]
@@ -669,6 +670,26 @@ app.patch('/api/lotes/:id', requireAuth, requireRole('enfermeria'), async (req, 
       );
     }
 
+    // Registrar un movimiento de tipo 'edicion' con el detalle de qué cambió,
+    // para que quede reflejado en el historial de Movimientos.
+    const cambios = [];
+    const numNuevo = numero_lote.trim();
+    const vencOrig = lote.vencimiento instanceof Date
+      ? lote.vencimiento.toISOString().slice(0, 10)
+      : String(lote.vencimiento).slice(0, 10);
+    if (lote.numero_lote !== numNuevo) cambios.push(`N° lote: ${lote.numero_lote} → ${numNuevo}`);
+    if (vencOrig !== vencimiento) cambios.push(`Venc: ${vencOrig} → ${vencimiento}`);
+    if (nuevaCantidad !== lote.cantidad_inicial) cambios.push(`Cant: ${lote.cantidad_inicial} → ${nuevaCantidad}`);
+
+    if (cambios.length > 0) {
+      const motivoTxt = cambios.join(' · ').slice(0, 200);
+      await conn.query(
+        `INSERT INTO movimientos (tipo, vacuna_id, lote_id, numero_lote_snap, cantidad, motivo, usuario_id)
+         VALUES ('edicion', ?, ?, ?, ?, ?, ?)`,
+        [lote.vacuna_id, req.params.id, numNuevo, nuevaCantidad, motivoTxt, req.user.id]
+      );
+    }
+
     await conn.commit();
     res.json({ ok: true, mensaje: 'Lote actualizado.' });
   } catch (err) {
@@ -689,7 +710,7 @@ app.delete('/api/lotes/:id', requireAuth, requireRole('enfermeria'), async (req,
   try {
     await conn.beginTransaction();
     const [[lote]] = await conn.query(
-      'SELECT id, numero_lote FROM lotes WHERE id = ? FOR UPDATE',
+      'SELECT id, vacuna_id, numero_lote, cantidad_inicial FROM lotes WHERE id = ? FOR UPDATE',
       [req.params.id]
     );
     if (!lote) { await conn.rollback(); return res.status(404).json({ error: 'El lote no existe.' }); }
@@ -719,8 +740,18 @@ app.delete('/api/lotes/:id', requireAuth, requireRole('enfermeria'), async (req,
       });
     }
 
-    // Borramos el movimiento de ingreso y el lote
+    // Antes de eliminar, registramos un movimiento de tipo 'eliminacion' que
+    // sobreviva al DELETE del lote (por eso guardamos numero_lote_snap).
+    // También borramos el movimiento de ingreso original para no dejar entradas
+    // "fantasma" del lote borrado.
     await conn.query(`DELETE FROM movimientos WHERE lote_id = ? AND tipo = 'ingreso'`, [req.params.id]);
+    await conn.query(
+      `INSERT INTO movimientos (tipo, vacuna_id, lote_id, numero_lote_snap, cantidad, motivo, usuario_id)
+       VALUES ('eliminacion', ?, ?, ?, ?, ?, ?)`,
+      [lote.vacuna_id, req.params.id, lote.numero_lote, lote.cantidad_inicial,
+       `Lote eliminado del stock`, req.user.id]
+    );
+    // ON DELETE SET NULL en la FK deja el lote_id del movimiento en NULL.
     await conn.query('DELETE FROM lotes WHERE id = ?', [req.params.id]);
 
     await conn.commit();
@@ -940,15 +971,22 @@ app.post('/api/descartes/frasco/:id', requireAuth, requireRole('enfermeria'), as
 app.get('/api/movimientos', requireAuth, async (req, res) => {
   try {
     const { tipo } = req.query;
+    // LEFT JOIN a lotes: si el lote fue eliminado (movimientos con lote_id NULL
+    // por ON DELETE SET NULL), usamos numero_lote_snap. COALESCE prioriza el
+    // número actual del lote (más confiable), y cae al snapshot si el lote ya no existe.
     let sql =
-      `SELECT m.id, m.tipo, v.nombre AS vacuna, l.numero_lote, m.cantidad, m.motivo,
+      `SELECT m.id, m.tipo, v.nombre AS vacuna,
+              COALESCE(l.numero_lote, m.numero_lote_snap) AS numero_lote,
+              m.cantidad, m.motivo,
               m.fecha_aplicacion, m.fecha_mov, u.rol AS responsable
          FROM movimientos m
          JOIN vacunas v  ON v.id = m.vacuna_id
-         JOIN lotes l    ON l.id = m.lote_id
+         LEFT JOIN lotes l ON l.id = m.lote_id
          JOIN usuarios u ON u.id = m.usuario_id`;
     const params = [];
-    if (tipo && ['aplicacion', 'descarte', 'ingreso'].includes(tipo)) { sql += ' WHERE m.tipo = ?'; params.push(tipo); }
+    if (tipo && ['aplicacion', 'descarte', 'ingreso', 'edicion', 'eliminacion'].includes(tipo)) {
+      sql += ' WHERE m.tipo = ?'; params.push(tipo);
+    }
     sql += ' ORDER BY m.fecha_mov DESC LIMIT 200';
     const [rows] = await pool.query(sql, params);
     res.json(rows);
@@ -969,8 +1007,7 @@ app.delete('/api/movimientos/:id', requireAuth, requireRole('enfermeria'), async
     const [[mov]] = await conn.query(
       `SELECT m.id, m.tipo, m.lote_id, m.cantidad, v.dosis_por_frasco, v.nombre AS vacuna
          FROM movimientos m
-         JOIN lotes l   ON l.id = m.lote_id
-         JOIN vacunas v ON v.id = l.vacuna_id
+         JOIN vacunas v ON v.id = m.vacuna_id
         WHERE m.id = ? FOR UPDATE`,
       [req.params.id]
     );
@@ -980,6 +1017,12 @@ app.delete('/api/movimientos/:id', requireAuth, requireRole('enfermeria'), async
       await conn.rollback();
       return res.status(400).json({
         error: 'Los movimientos de ingreso no se pueden eliminar desde acá. Para eso eliminá el lote desde la pantalla de Stock.',
+      });
+    }
+    if (mov.tipo === 'edicion' || mov.tipo === 'eliminacion') {
+      await conn.rollback();
+      return res.status(400).json({
+        error: 'Los movimientos de edición y eliminación son registros de auditoría y no se pueden borrar.',
       });
     }
 
@@ -1324,15 +1367,17 @@ app.get('/api/reportes/movimientos', requireAuth, async (req, res) => {
   try {
     const { tipo, vacuna, desde, hasta } = req.query;
     let sql =
-      `SELECT m.tipo, v.nombre AS vacuna, l.numero_lote, m.cantidad, m.motivo,
+      `SELECT m.tipo, v.nombre AS vacuna,
+              COALESCE(l.numero_lote, m.numero_lote_snap) AS numero_lote,
+              m.cantidad, m.motivo,
               m.fecha_aplicacion, m.fecha_mov, u.rol AS responsable
          FROM movimientos m
          JOIN vacunas v  ON v.id = m.vacuna_id
-         JOIN lotes l    ON l.id = m.lote_id
+         LEFT JOIN lotes l ON l.id = m.lote_id
          JOIN usuarios u ON u.id = m.usuario_id
         WHERE 1=1`;
     const params = [];
-    if (tipo && ['aplicacion', 'descarte', 'ingreso'].includes(tipo)) {
+    if (tipo && ['aplicacion', 'descarte', 'ingreso', 'edicion', 'eliminacion'].includes(tipo)) {
       sql += ' AND m.tipo = ?'; params.push(tipo);
     }
     if (vacuna) {
@@ -1346,11 +1391,11 @@ app.get('/api/reportes/movimientos', requireAuth, async (req, res) => {
     }
     sql += ' ORDER BY m.fecha_mov DESC';
     const [rows] = await pool.query(sql, params);
-    const TIPO_LBL = { ingreso: 'Ingreso', aplicacion: 'Aplicación', descarte: 'Descarte' };
+    const TIPO_LBL = { ingreso: 'Ingreso', aplicacion: 'Aplicación', descarte: 'Descarte', edicion: 'Edición', eliminacion: 'Eliminación' };
     const data = rows.map(r => ({
       'Tipo': TIPO_LBL[r.tipo] || r.tipo,
       'Vacuna': r.vacuna,
-      'N° de lote': r.numero_lote,
+      'N° de lote': r.numero_lote || '—',
       'Cantidad (dosis)': r.cantidad,
       'Motivo': r.motivo || '',
       'Fecha aplicación': fmtFechaAR(r.fecha_aplicacion),

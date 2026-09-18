@@ -569,7 +569,13 @@ function toISODate(v){
 }
 
 function renderMovimientos(){
-  const TIPO = { aplicacion:['apl','Aplicación'], descarte:['des','Descarte'], ingreso:['ing','Ingreso lote'] };
+  const TIPO = {
+    aplicacion: ['apl','Aplicación'],
+    descarte:   ['des','Descarte'],
+    ingreso:    ['ing','Ingreso lote'],
+    edicion:    ['edi','Edición'],
+    eliminacion:['eli','Eliminación'],
+  };
   let rows = [...MOV_CACHE];
 
   // Aplicar filtros
@@ -588,7 +594,8 @@ function renderMovimientos(){
     const [cls,lbl] = TIPO[m.tipo];
     // Solo mostramos "Eliminar" en aplicaciones y descartes.
     // Los ingresos se eliminan borrando el lote desde Stock.
-    const puedeEliminar = m.tipo !== 'ingreso';
+    // Edición y eliminación son registros de auditoría, no se pueden borrar.
+    const puedeEliminar = m.tipo === 'aplicacion' || m.tipo === 'descarte';
     const btnEliminar = puedeEliminar
       ? `<button class="btn subtle sm" style="color:var(--err)" onclick="eliminarMovimiento(${m.id}, '${lbl}', '${(m.vacuna || '').replace(/'/g, '&apos;')}', ${m.cantidad})" title="Eliminar movimiento y devolver las dosis al stock">Eliminar</button>`
       : '<span class="muted-dash">—</span>';
@@ -596,7 +603,7 @@ function renderMovimientos(){
        <td data-label="Fecha mov.">${fmtFecha(m.fecha_mov)}</td>
        <td data-label="Fecha aplic.">${fmtFecha(m.fecha_aplicacion)}</td>
        <td data-label="Vacuna"><b>${m.vacuna}</b></td>
-       <td data-label="Lote">${m.numero_lote}</td>
+       <td data-label="Lote">${m.numero_lote || '<span class="muted-dash">—</span>'}</td>
        <td data-label="Tipo"><span class="pill ${cls}">${lbl}</span></td>
        <td data-label="Motivo">${m.motivo || '<span class="muted-dash">—</span>'}</td>
        <td data-label="Cant.">${m.cantidad}</td>

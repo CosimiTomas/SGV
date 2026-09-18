@@ -59,16 +59,17 @@ CREATE TABLE lotes (
 -- ------------------------------------------------------------
 CREATE TABLE movimientos (
   id              INT AUTO_INCREMENT PRIMARY KEY,
-  tipo            ENUM('aplicacion','descarte','ingreso') NOT NULL,
+  tipo            ENUM('aplicacion','descarte','ingreso','edicion','eliminacion') NOT NULL,
   vacuna_id       INT NOT NULL,
-  lote_id         INT NOT NULL,
+  lote_id         INT NULL,                   -- nullable: si se elimina un lote, sus movimientos quedan huérfanos pero con numero_lote_snap
+  numero_lote_snap VARCHAR(60) NULL,          -- copia del número de lote (para preservar el dato si el lote se elimina)
   cantidad        INT NOT NULL,
-  motivo          VARCHAR(120) NULL,          -- solo descartes
+  motivo          VARCHAR(200) NULL,          -- descartes / detalles de edición / motivo de eliminación
   fecha_aplicacion DATE NULL,                 -- solo aplicaciones
   fecha_mov       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   usuario_id      INT NOT NULL,
   CONSTRAINT fk_mov_vacuna  FOREIGN KEY (vacuna_id)  REFERENCES vacunas(id),
-  CONSTRAINT fk_mov_lote    FOREIGN KEY (lote_id)    REFERENCES lotes(id),
+  CONSTRAINT fk_mov_lote    FOREIGN KEY (lote_id)    REFERENCES lotes(id) ON DELETE SET NULL,
   CONSTRAINT fk_mov_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
   CONSTRAINT chk_mov_cantidad CHECK (cantidad > 0)
 );

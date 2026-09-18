@@ -511,6 +511,10 @@
   .pill.apl{background:var(--info-tint);color:var(--info);border-color:#BFD4F0}
   .pill.des{background:var(--err-tint);color:var(--err);border-color:#EFC0B9}
   .pill.ing{background:var(--ok-tint);color:var(--ok);border-color:#BFE3CF}
+  /* Edición: gris/violeta neutro para diferenciarse de los operativos */
+  .pill.edi{background:#EEEAF7;color:#5B3D9E;border-color:#D3C8EE}
+  /* Eliminación: rojo apagado (auditoría, no urgencia) */
+  .pill.eli{background:#F5E4E2;color:#8C2E27;border-color:#E3B5AF}
   .pill.act{background:var(--ok-tint);color:var(--ok);border-color:#BFE3CF}
   .pill.ina{background:#EFF2F1;color:var(--muted);border-color:var(--line)}
 
