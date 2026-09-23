@@ -391,7 +391,12 @@
      a la izquierda que identifica el tipo de alerta por su color. */
   .alerts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
   .alert{
-    background:var(--card);
+    background:
+      linear-gradient(180deg,
+        var(--card) 0%,
+        var(--card) 55%,
+        rgba(15,169,158,0.04) 85%,
+        rgba(166,206,57,0.05) 100%);
     border-radius:var(--r-lg);
     padding:22px 26px 22px 30px;
     display:flex; gap:16px; align-items:flex-start;
@@ -788,7 +793,12 @@
    intenso: barra lateral roja más gruesa y saturada, ícono con fondo
    pleno rojo. Es la única de las tres que requiere acción inmediata. */
 .alert.vencida{
-  background:var(--card);
+  background:
+    linear-gradient(180deg,
+      var(--card) 0%,
+      var(--card) 55%,
+      rgba(15,169,158,0.04) 85%,
+      rgba(166,206,57,0.05) 100%);
   border-color:#EFC0B9;
   border-width:1px;
   grid-column: 1 / -1;
