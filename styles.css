@@ -386,37 +386,72 @@
     font-size:14px; color:var(--muted);
   }
 
-  /* Alertas */
+  /* Alertas — diseño a tono con la paleta general de la página.
+     Fondo blanco como los KPIs, con una barra vertical de acento
+     a la izquierda que identifica el tipo de alerta por su color. */
   .alerts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
   .alert{
+    background:var(--card);
     border-radius:var(--r-lg);
-    padding:24px 26px;
+    padding:22px 26px 22px 30px;
     display:flex; gap:16px; align-items:flex-start;
-    border:1px solid;
+    border:1px solid var(--line);
+    box-shadow:var(--shadow-1);
     position:relative; overflow:hidden;
     min-height:120px;
+    transition:box-shadow .2s ease, transform .2s ease;
   }
-  .alert.low{background:var(--warn-tint);border-color:#F0D5A2}
-  .alert.exp{background:#FDECEA;border-color:#F3C7C0}
+  .alert:hover{
+    box-shadow:var(--shadow-2);
+    transform:translateY(-1px);
+  }
+  /* Barra vertical de acento a la izquierda — identifica el tipo */
+  .alert::after{
+    content:""; position:absolute; left:0; top:0; bottom:0;
+    width:4px;
+  }
+  .alert.low::after{background:linear-gradient(180deg, var(--warn) 0%, var(--warn-strong,#B8791C) 100%)}
+  .alert.exp::after{background:linear-gradient(180deg, #C8362A 0%, #9A2820 100%)}
+  /* Círculo decorativo tenue en el fondo */
   .alert::before{
-    content:""; position:absolute; right:-30px; top:-30px;
-    width:140px; height:140px; border-radius:50%;
-    opacity:.5;
+    content:""; position:absolute; right:-40px; top:-40px;
+    width:160px; height:160px; border-radius:50%;
+    opacity:.35;
+    pointer-events:none;
   }
-  .alert.low::before{background:radial-gradient(circle,#F8E0A8,transparent 70%)}
-  .alert.exp::before{background:radial-gradient(circle,#F5C8C2,transparent 70%)}
+  .alert.low::before{background:radial-gradient(circle, rgba(166,106,15,0.10), transparent 70%)}
+  .alert.exp::before{background:radial-gradient(circle, rgba(200,54,42,0.09), transparent 70%)}
+  /* Ícono en tarjeta con tinte suave del color de la alerta */
   .alert .ic{
-    font-size:24px; flex:none; line-height:1;
+    font-size:22px; flex:none; line-height:1;
     width:44px;height:44px;border-radius:12px;
     display:grid;place-items:center;
+    border:1px solid;
   }
-  .alert.low .ic{background:#F4DBA8;color:var(--warn)}
-  .alert.exp .ic{background:#F5C8C2;color:#C8362A}
-  .alert h4{font-size:14px;margin-bottom:10px;font-weight:700;letter-spacing:.02em;text-transform:uppercase}
-  .alert.low h4{color:var(--warn)} .alert.exp h4{color:#C8362A}
-  .alert ul{list-style:none;font-size:14.5px;display:flex;flex-direction:column;gap:6px;line-height:1.4}
-  .alert.low ul{color:#704506} .alert.exp ul{color:#7A1F18}
-  .alert ul b{font-weight:700}
+  .alert.low .ic{
+    background:var(--warn-tint);
+    color:var(--warn);
+    border-color:rgba(166,106,15,0.20);
+  }
+  .alert.exp .ic{
+    background:#FDECEA;
+    color:#C8362A;
+    border-color:rgba(200,54,42,0.18);
+  }
+  /* Título mantiene el color de acento para identificar de un vistazo */
+  .alert h4{
+    font-size:13px;margin-bottom:10px;font-weight:700;
+    letter-spacing:.06em;text-transform:uppercase;
+  }
+  .alert.low h4{color:var(--warn)}
+  .alert.exp h4{color:#C8362A}
+  /* Texto principal en el color de tinta normal — mejor legibilidad */
+  .alert ul{
+    list-style:none;font-size:14.5px;
+    display:flex;flex-direction:column;gap:6px;line-height:1.45;
+    color:var(--ink);
+  }
+  .alert ul b{font-weight:700;color:var(--ink)}
   .alert-empty{color:var(--muted);font-size:14px;font-style:italic}
 
   /* KPIs */
@@ -749,18 +784,32 @@
   border-color:#5C140C;
   font-weight:700;
 }
+/* Alerta de VENCIDAS — mantiene el diseño a tono pero con acento más
+   intenso: barra lateral roja más gruesa y saturada, ícono con fondo
+   pleno rojo. Es la única de las tres que requiere acción inmediata. */
 .alert.vencida{
-  background:#F8D2CB;          /* rojo más saturado que .exp */
-  border-color:#C8362A;
-  border-width:2px;
+  background:var(--card);
+  border-color:#EFC0B9;
+  border-width:1px;
   grid-column: 1 / -1;
   max-width: 700px;
   margin: 0 auto;
   justify-content: center;
 }
-.alert.vencida::before{background:radial-gradient(circle,#F0B5AC,transparent 70%)}
-.alert.vencida .ic{background:#C8362A;color:#fff}
+.alert.vencida::after{
+  background:linear-gradient(180deg, #C8362A 0%, #7E1C12 100%);
+  width:5px;
+}
+.alert.vencida::before{
+  background:radial-gradient(circle, rgba(200,54,42,0.12), transparent 70%);
+}
+.alert.vencida .ic{
+  background:#C8362A;
+  color:#fff;
+  border-color:#7E1C12;
+}
 .alert.vencida h4{color:#7E1C12}
+.alert.vencida ul{color:var(--ink)}
 
 /* KPI naranja para "Por vencer" — diferencia del rojo (Vencidas) */
 .kpi.orange::after{background:#C25E1A}
