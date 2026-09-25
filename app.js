@@ -30,7 +30,12 @@ async function api(path, opts = {}){
   if (TOKEN) headers.Authorization = 'Bearer ' + TOKEN;
   const res = await fetch(API + path, { ...opts, headers });
   const data = await res.json().catch(()=> ({}));
-  if (!res.ok) throw new Error(data.error || 'Error del servidor.');
+  if (!res.ok) {
+    const err = new Error(data.error || 'Error del servidor.');
+    err.status = res.status;
+    err.data = data;   // el body completo va acá para casos como confirmación requerida
+    throw err;
+  }
   return data;
 }
 
@@ -1053,18 +1058,39 @@ async function saveVacuna(){
   if (!Number.isInteger(dpf) || dpf < 1) { $('cat-dpf').classList.add('bad'); bad = true; } else $('cat-dpf').classList.remove('bad');
   if (bad) return msg('cat-modal-msg', 'err', 'Revisá los campos marcados.');
 
-  try {
+  const guardar = async (confirmarCambio) => {
     if (_editandoVacunaId === null) {
-      const r = await api('/catalogo/vacunas', { method:'POST', body: JSON.stringify({ nombre, dosis_por_frasco: dpf }) });
-      toast('ok', r.mensaje);
-    } else {
-      const r = await api(`/catalogo/vacunas/${_editandoVacunaId}`, { method:'PATCH', body: JSON.stringify({ nombre, dosis_por_frasco: dpf }) });
-      toast('ok', r.mensaje);
+      return api('/catalogo/vacunas', { method:'POST', body: JSON.stringify({ nombre, dosis_por_frasco: dpf }) });
     }
+    const body = { nombre, dosis_por_frasco: dpf };
+    if (confirmarCambio) body.confirmar_cambio_dosis = true;
+    return api(`/catalogo/vacunas/${_editandoVacunaId}`, { method:'PATCH', body: JSON.stringify(body) });
+  };
+
+  try {
+    const r = await guardar(false);
+    toast('ok', r.mensaje);
     closeOv('ovVacuna');
-    // Actualizar el catálogo cacheado global también, porque afecta a los otros selectores
     await Promise.all([loadCatalogo(), loadVacunas()]);
-  } catch(err) { msg('cat-modal-msg', 'err', err.message); }
+  } catch(err) {
+    // El backend pide confirmación cuando el cambio de dosis_por_frasco afecta
+    // lotes con stock o frascos abiertos. Mostramos el mensaje detallado y
+    // reenviamos con la confirmación si el usuario acepta.
+    if (err.data && err.data.requiere_confirmacion) {
+      if (confirm(err.data.mensaje)) {
+        try {
+          const r2 = await guardar(true);
+          toast('ok', r2.mensaje);
+          closeOv('ovVacuna');
+          await Promise.all([loadCatalogo(), loadVacunas(), loadStock(), loadDashboard()]);
+        } catch(err2) { msg('cat-modal-msg', 'err', err2.message); }
+      } else {
+        msg('cat-modal-msg', 'err', 'Cambio cancelado. La vacuna queda como estaba.');
+      }
+    } else {
+      msg('cat-modal-msg', 'err', err.message);
+    }
+  }
 }
 
 async function toggleVacuna(id){

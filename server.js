@@ -1566,30 +1566,111 @@ app.post('/api/catalogo/vacunas', soloCoord, async (req, res) => {
 
 // Editar / dar de baja / reactivar vacuna. Todos los campos son opcionales.
 app.patch('/api/catalogo/vacunas/:id', soloCoord, async (req, res) => {
-  const { nombre, dosis_por_frasco, activa } = req.body;
-  const campos = [], vals = [];
-  if (nombre !== undefined) {
-    if (!nombre.trim()) return res.status(400).json({ error: 'El nombre no puede estar vacío.' });
-    campos.push('nombre = ?'); vals.push(nombre.trim());
-  }
-  if (dosis_por_frasco !== undefined) {
-    const dpf = Number(dosis_por_frasco);
-    if (!Number.isInteger(dpf) || dpf < 1) return res.status(400).json({ error: 'Dosis por frasco debe ser entero ≥ 1.' });
-    campos.push('dosis_por_frasco = ?'); vals.push(dpf);
-  }
-  if (activa !== undefined) {
-    campos.push('activa = ?'); vals.push(activa ? 1 : 0);
-  }
-  if (campos.length === 0) return res.status(400).json({ error: 'Nada para actualizar.' });
-  vals.push(req.params.id);
+  const { nombre, dosis_por_frasco, activa, confirmar_cambio_dosis } = req.body;
+  const conn = await pool.getConnection();
   try {
-    const [r] = await pool.query(`UPDATE vacunas SET ${campos.join(', ')} WHERE id = ?`, vals);
-    if (!r.affectedRows) return res.status(404).json({ error: 'Vacuna no encontrada.' });
-    res.json({ ok: true, mensaje: 'Catálogo actualizado.' });
+    await conn.beginTransaction();
+
+    // Traemos el estado actual de la vacuna
+    const [[vacunaActual]] = await conn.query(
+      'SELECT id, nombre, dosis_por_frasco FROM vacunas WHERE id = ? FOR UPDATE',
+      [req.params.id]
+    );
+    if (!vacunaActual) { await conn.rollback(); return res.status(404).json({ error: 'Vacuna no encontrada.' }); }
+
+    const campos = [], vals = [];
+    let dpfNuevo = null;
+
+    if (nombre !== undefined) {
+      if (!nombre.trim()) { await conn.rollback(); return res.status(400).json({ error: 'El nombre no puede estar vacío.' }); }
+      campos.push('nombre = ?'); vals.push(nombre.trim());
+    }
+
+    // Cambio de dosis_por_frasco: validación especial si hay stock afectado
+    if (dosis_por_frasco !== undefined) {
+      const dpf = Number(dosis_por_frasco);
+      if (!Number.isInteger(dpf) || dpf < 1) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'Dosis por frasco debe ser entero ≥ 1.' });
+      }
+
+      if (dpf !== vacunaActual.dosis_por_frasco) {
+        dpfNuevo = dpf;
+        // Buscamos frascos abiertos activos de esta vacuna
+        const [[frascos]] = await conn.query(
+          `SELECT COUNT(*) AS n FROM frascos_abiertos fa
+             JOIN lotes l ON l.id = fa.lote_id
+            WHERE l.vacuna_id = ? AND fa.estado = 'activo'`,
+          [req.params.id]
+        );
+        // Buscamos lotes con stock disponible
+        const [[lotesConStock]] = await conn.query(
+          `SELECT COUNT(*) AS n FROM lotes WHERE vacuna_id = ? AND disponible > 0`,
+          [req.params.id]
+        );
+
+        // Si hay frascos abiertos o stock y no vino la confirmación, avisamos al frontend
+        if ((frascos.n > 0 || lotesConStock.n > 0) && !confirmar_cambio_dosis) {
+          await conn.rollback();
+          const paso = vacunaActual.dosis_por_frasco > 1 && dpf === 1
+            ? 'multidosis a monodosis'
+            : dpf > 1 && vacunaActual.dosis_por_frasco === 1
+              ? 'monodosis a multidosis'
+              : `${vacunaActual.dosis_por_frasco} a ${dpf} dosis por frasco`;
+          return res.status(409).json({
+            error: 'CONFIRMAR_CAMBIO_DOSIS',
+            requiere_confirmacion: true,
+            detalle: {
+              vacuna: vacunaActual.nombre,
+              cambio: paso,
+              dpf_anterior: vacunaActual.dosis_por_frasco,
+              dpf_nuevo: dpf,
+              lotes_con_stock: lotesConStock.n,
+              frascos_abiertos: frascos.n,
+            },
+            mensaje: `Esta vacuna tiene ${lotesConStock.n} lote(s) con stock y ${frascos.n} frasco(s) abierto(s). ` +
+                     `Cambiar de ${paso} va a cerrar los frascos abiertos actuales para que dejen de generar alertas. ¿Continuar?`,
+          });
+        }
+
+        // Si el usuario confirmó, cerramos todos los frascos abiertos activos de la vacuna
+        if (frascos.n > 0) {
+          await conn.query(
+            `UPDATE frascos_abiertos fa
+               JOIN lotes l ON l.id = fa.lote_id
+                SET fa.estado = 'agotado',
+                    fa.fecha_cierre = CURDATE(),
+                    fa.motivo_cierre = 'Cerrado por cambio de presentación de la vacuna'
+              WHERE l.vacuna_id = ? AND fa.estado = 'activo'`,
+            [req.params.id]
+          );
+        }
+      }
+
+      campos.push('dosis_por_frasco = ?'); vals.push(dpf);
+    }
+
+    if (activa !== undefined) {
+      campos.push('activa = ?'); vals.push(activa ? 1 : 0);
+    }
+
+    if (campos.length === 0) { await conn.rollback(); return res.status(400).json({ error: 'Nada para actualizar.' }); }
+    vals.push(req.params.id);
+    const [r] = await conn.query(`UPDATE vacunas SET ${campos.join(', ')} WHERE id = ?`, vals);
+    if (!r.affectedRows) { await conn.rollback(); return res.status(404).json({ error: 'Vacuna no encontrada.' }); }
+
+    await conn.commit();
+    let msg = 'Catálogo actualizado.';
+    if (dpfNuevo !== null) {
+      msg += ' Se cerraron los frascos abiertos previos para evitar alertas incorrectas.';
+    }
+    res.json({ ok: true, mensaje: msg });
   } catch (err) {
+    await conn.rollback();
     if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Ya existe otra vacuna con ese nombre.' });
-    console.error(err.message); res.status(500).json({ error: 'Error del servidor.' });
-  }
+    console.error('editar vacuna:', err.message);
+    res.status(500).json({ error: 'Error del servidor.' });
+  } finally { conn.release(); }
 });
 
 /* ------------------------------------------------------------
