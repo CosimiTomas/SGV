@@ -520,7 +520,10 @@ function renderStockRow(r, ETIQ) {
       <button class="btn subtle sm" style="color:var(--err);margin-left:6px" onclick="eliminarLote(${r.id}, '${(r.vacuna || '').replace(/'/g, '&apos;')}', '${(r.numero_lote || '').replace(/'/g, '&apos;')}')" title="Eliminar el lote (solo si no tiene aplicaciones ni descartes)">Eliminar</button>
     </td>
     <td class="coordinadora-only" style="text-align:right;white-space:nowrap">
-      <button class="btn subtle sm" onclick="verTrazabilidad(${r.id})" title="Ver información completa del lote y datos del laboratorio">🔍 +info</button>
+      <button class="btn-traz" onclick="verTrazabilidad(${r.id})" title="Ver información completa del lote y datos del laboratorio">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10zM11 11l3 3M7 5v4M5 7h4"/></svg>
+        <span>Detalles</span>
+      </button>
     </td>
   </tr>`;
 }
@@ -1313,18 +1316,18 @@ function renderTrazabilidad(d) {
 
   // Labels de tipo para el timeline
   const TIPO_LBL = {
-    ingreso: ['🟢', 'Ingreso al stock', 'ing'],
-    aplicacion: ['💉', 'Aplicación', 'apl'],
-    descarte: ['🗑️', 'Descarte', 'des'],
-    edicion: ['✏️', 'Edición del lote', 'edi'],
-    eliminacion: ['❌', 'Eliminación del lote', 'eli'],
+    ingreso:     ['Ingreso al stock',     'ing'],
+    aplicacion:  ['Aplicación',           'apl'],
+    descarte:    ['Descarte',             'des'],
+    edicion:     ['Edición del lote',     'edi'],
+    eliminacion: ['Eliminación del lote', 'eli'],
   };
 
   const timelineHtml = historial.length ? historial.map(m => {
-    const [ic, lbl, cls] = TIPO_LBL[m.tipo] || ['•', m.tipo, ''];
+    const [lbl, cls] = TIPO_LBL[m.tipo] || [m.tipo, ''];
     return `
       <div class="traz-timeline-item">
-        <div class="traz-timeline-icon"><span class="pill ${cls}">${ic} ${lbl}</span></div>
+        <div class="traz-timeline-icon"><span class="pill ${cls}">${lbl}</span></div>
         <div class="traz-timeline-body">
           <div class="traz-timeline-line">
             <b>${m.cantidad} ${m.cantidad === 1 ? 'dosis' : 'dosis'}</b>
@@ -1357,12 +1360,6 @@ function renderTrazabilidad(d) {
     </div>` : '';
 
   return `
-    <!-- Banner de aclaración sobre datos simulados -->
-    <div class="traz-banner">
-      <span class="traz-banner-icon">ⓘ</span>
-      <span><b>Datos de origen simulados.</b> En producción esta información se obtendría consultando la API del Ministerio de Salud o ANMAT.</span>
-    </div>
-
     <!-- Header: identificación del lote -->
     <div class="traz-header">
       <div>

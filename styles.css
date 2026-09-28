@@ -1384,45 +1384,65 @@
 }
 
 /* ============================================================
-   TRAZABILIDAD DEL LOTE — modal completo con datos del laboratorio,
-   estadísticas visuales y timeline de movimientos.
+   TRAZABILIDAD DEL LOTE — modal completo a tono con la paleta SGV.
+   Solo usa neutros + teal + lima. Nada de azul o rojo saturado.
    ============================================================ */
 .modal.modal-lg {
-  max-width: 800px;
-  width: 90vw;
+  max-width: 820px;
+  width: 92vw;
 }
 
-/* Banner de aclaración sobre datos simulados */
-.traz-banner {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  background: linear-gradient(90deg, var(--info-tint) 0%, var(--tealTint2, #F0F9F7) 100%);
-  border-left: 4px solid var(--info);
+/* Botón "Detalles" — versión propia con estilo de la paleta SGV,
+   con ícono SVG en lugar de emoji para verse profesional. */
+.btn-traz {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: linear-gradient(180deg, #FFFFFF 0%, var(--teal-ghost, #F2FAF9) 100%);
+  color: var(--teal-deep);
+  border: 1px solid rgba(15,169,158,0.25);
   border-radius: 8px;
-  padding: 12px 14px;
-  margin-bottom: 18px;
-  font-size: 13px;
-  color: var(--ink);
-  line-height: 1.4;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .15s ease;
+  font-family: inherit;
+  letter-spacing: .01em;
 }
-.traz-banner-icon {
-  color: var(--info);
-  font-weight: 700;
-  font-size: 15px;
-  flex: none;
+.btn-traz svg { color: var(--teal); flex: none; transition: transform .15s ease; }
+.btn-traz:hover {
+  background: linear-gradient(180deg, var(--teal-ghost, #F2FAF9) 0%, var(--teal-tint) 100%);
+  border-color: var(--teal);
+  color: var(--teal-deep);
+  box-shadow: 0 2px 6px rgba(15,169,158,0.12);
 }
+.btn-traz:hover svg { transform: scale(1.08); }
 
-/* Header del lote */
+/* Header del lote — degradé teal → lima muy sutil */
 .traz-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding: 16px 18px;
-  background: linear-gradient(135deg, var(--teal-tint) 0%, #F0F9F7 100%);
-  border: 1px solid rgba(15,169,158,0.20);
-  border-radius: 10px;
+  padding: 18px 20px;
+  background:
+    linear-gradient(135deg,
+      var(--teal-tint) 0%,
+      rgba(240,249,247,1) 60%,
+      rgba(239,246,218,0.55) 100%);
+  border: 1px solid rgba(15,169,158,0.22);
+  border-radius: 12px;
   margin-bottom: 18px;
+  position: relative;
+  overflow: hidden;
+}
+/* Franja decorativa lateral izquierda con degradé teal + lima */
+.traz-header::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: linear-gradient(180deg, var(--teal-deep) 0%, var(--teal) 60%, var(--lime) 100%);
 }
 .traz-vacuna {
   font-size: 18px;
@@ -1463,11 +1483,17 @@
   .traz-grid { grid-template-columns: 1fr; }
 }
 .traz-section {
-  background: #fff;
+  background:
+    linear-gradient(180deg,
+      #FFFFFF 0%,
+      #FFFFFF 65%,
+      rgba(15,169,158,0.025) 90%,
+      rgba(166,206,57,0.03) 100%);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 14px 16px;
   margin-bottom: 18px;
+  box-shadow: 0 1px 2px rgba(20,40,38,.03);
 }
 .traz-grid .traz-section { margin-bottom: 0; }
 .traz-section-title {
@@ -1533,22 +1559,29 @@
   letter-spacing: .04em;
   margin-top: 4px;
 }
-.traz-stat-apl .traz-stat-num { color: var(--info); }
-.traz-stat-des .traz-stat-num { color: var(--err); }
-.traz-stat-dsp .traz-stat-num { color: var(--ok); }
+/* Estadísticas — colores de la paleta SGV.
+   Aplicadas = teal (color marca), Descartadas = warn (naranja neutro),
+   Disponibles = lime (color secundario institucional). */
+.traz-stat-apl { border-color: rgba(15,169,158,0.20); background: var(--teal-tint); }
+.traz-stat-apl .traz-stat-num { color: var(--teal-deep); }
+.traz-stat-des { border-color: rgba(166,106,15,0.18); background: var(--warn-tint); }
+.traz-stat-des .traz-stat-num { color: var(--warn); }
+.traz-stat-dsp { border-color: rgba(166,206,57,0.30); background: var(--lime-tint); }
+.traz-stat-dsp .traz-stat-num { color: var(--lime-deep); }
 
-/* Barra de progreso multicolor */
+/* Barra de progreso — misma paleta SGV */
 .traz-progress {
   display: flex;
   height: 10px;
   border-radius: 6px;
   overflow: hidden;
   background: var(--line-soft, #EEF2F1);
+  border: 1px solid var(--line);
 }
 .traz-progress-bar { height: 100%; transition: width .3s ease; }
-.traz-progress-apl { background: var(--info); }
-.traz-progress-des { background: var(--err); }
-.traz-progress-dsp { background: var(--ok); }
+.traz-progress-apl { background: linear-gradient(180deg, var(--teal) 0%, var(--teal-deep) 100%); }
+.traz-progress-des { background: linear-gradient(180deg, #C48824 0%, var(--warn) 100%); }
+.traz-progress-dsp { background: linear-gradient(180deg, var(--lime) 0%, var(--lime-deep) 100%); }
 
 /* Frascos abiertos */
 .traz-frascos {
