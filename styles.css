@@ -1382,3 +1382,233 @@
 .nice-select-option.role-hidden {
   display: none !important;
 }
+
+/* ============================================================
+   TRAZABILIDAD DEL LOTE — modal completo con datos del laboratorio,
+   estadísticas visuales y timeline de movimientos.
+   ============================================================ */
+.modal.modal-lg {
+  max-width: 800px;
+  width: 90vw;
+}
+
+/* Banner de aclaración sobre datos simulados */
+.traz-banner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: linear-gradient(90deg, var(--info-tint) 0%, var(--tealTint2, #F0F9F7) 100%);
+  border-left: 4px solid var(--info);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  font-size: 13px;
+  color: var(--ink);
+  line-height: 1.4;
+}
+.traz-banner-icon {
+  color: var(--info);
+  font-weight: 700;
+  font-size: 15px;
+  flex: none;
+}
+
+/* Header del lote */
+.traz-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 16px 18px;
+  background: linear-gradient(135deg, var(--teal-tint) 0%, #F0F9F7 100%);
+  border: 1px solid rgba(15,169,158,0.20);
+  border-radius: 10px;
+  margin-bottom: 18px;
+}
+.traz-vacuna {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+.traz-lote {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.traz-header-right {
+  text-align: right;
+}
+.traz-venc-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.traz-venc-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--teal-deep);
+}
+
+/* Grid de secciones */
+.traz-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+@media (max-width: 700px) {
+  .traz-grid { grid-template-columns: 1fr; }
+}
+.traz-section {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+.traz-grid .traz-section { margin-bottom: 0; }
+.traz-section-title {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  font-weight: 700;
+  margin: 0 0 10px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line-soft, #EEF2F1);
+}
+
+/* Lista de datos de origen (etiqueta + valor) */
+.traz-data-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.traz-data-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  padding: 2px 0;
+}
+.traz-data-row span {
+  color: var(--muted);
+  flex: none;
+}
+.traz-data-row b {
+  color: var(--ink);
+  text-align: right;
+  font-weight: 600;
+}
+
+/* Estadísticas del lote */
+.traz-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.traz-stat {
+  text-align: center;
+  padding: 8px 4px;
+  background: var(--surface, #FBFBFB);
+  border-radius: 8px;
+  border: 1px solid var(--line-soft, #EEF2F1);
+}
+.traz-stat-num {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.traz-stat-lbl {
+  font-size: 10.5px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-top: 4px;
+}
+.traz-stat-apl .traz-stat-num { color: var(--info); }
+.traz-stat-des .traz-stat-num { color: var(--err); }
+.traz-stat-dsp .traz-stat-num { color: var(--ok); }
+
+/* Barra de progreso multicolor */
+.traz-progress {
+  display: flex;
+  height: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--line-soft, #EEF2F1);
+}
+.traz-progress-bar { height: 100%; transition: width .3s ease; }
+.traz-progress-apl { background: var(--info); }
+.traz-progress-des { background: var(--err); }
+.traz-progress-dsp { background: var(--ok); }
+
+/* Frascos abiertos */
+.traz-frascos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+.traz-frasco {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 13px;
+}
+.traz-frasco-head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+.traz-frasco-head b {
+  color: var(--teal-deep);
+  letter-spacing: .05em;
+}
+.traz-frasco-head span { color: var(--muted); }
+.traz-frasco-body { color: var(--ink); }
+.traz-frasco-body small { color: var(--muted); font-size: 11px; }
+.traz-frasco-vencido { border-color: rgba(200,54,42,0.30); background: #FDF5F4; }
+.traz-frasco-agotado { border-color: rgba(15,169,158,0.20); background: var(--teal-tint); }
+
+/* Timeline de movimientos */
+.traz-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  padding-left: 4px;
+}
+.traz-timeline-item {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft, #EEF2F1);
+}
+.traz-timeline-item:last-child { border-bottom: none; }
+.traz-timeline-icon {
+  flex: none;
+  min-width: 130px;
+}
+.traz-timeline-icon .pill {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.traz-timeline-body { flex: 1; font-size: 13px; }
+.traz-timeline-line { color: var(--ink); margin-bottom: 2px; }
+.traz-timeline-meta { color: var(--muted); font-size: 11.5px; }
+.traz-empty {
+  color: var(--muted);
+  font-style: italic;
+  text-align: center;
+  padding: 20px;
+  font-size: 13px;
+}

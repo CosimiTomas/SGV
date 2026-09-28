@@ -519,6 +519,9 @@ function renderStockRow(r, ETIQ) {
       <button class="btn subtle sm" onclick="openEditLote('${payload}')" title="Corregir número de lote, vencimiento o cantidad">Editar</button>
       <button class="btn subtle sm" style="color:var(--err);margin-left:6px" onclick="eliminarLote(${r.id}, '${(r.vacuna || '').replace(/'/g, '&apos;')}', '${(r.numero_lote || '').replace(/'/g, '&apos;')}')" title="Eliminar el lote (solo si no tiene aplicaciones ni descartes)">Eliminar</button>
     </td>
+    <td class="coordinadora-only" style="text-align:right;white-space:nowrap">
+      <button class="btn subtle sm" onclick="verTrazabilidad(${r.id})" title="Ver información completa del lote y datos del laboratorio">🔍 +info</button>
+    </td>
   </tr>`;
 }
 
@@ -1278,6 +1281,152 @@ async function eliminarLote(id, vacuna, numeroLote) {
   } catch (err) {
     toast('err', err.message);
   }
+}
+
+/* ============================================================
+ * Trazabilidad del lote — solo visible para coordinadora.
+ * Consulta el endpoint /api/lotes/:id/trazabilidad y arma un modal
+ * con toda la info: datos internos, laboratorio de origen (mock)
+ * y timeline completo de movimientos.
+ * ========================================================== */
+async function verTrazabilidad(loteId) {
+  $('ovTrazabilidad').classList.add('on');
+  $('trazContent').innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">Cargando información…</div>';
+  try {
+    const d = await api(`/lotes/${loteId}/trazabilidad`);
+    $('trazContent').innerHTML = renderTrazabilidad(d);
+  } catch (err) {
+    $('trazContent').innerHTML = `<div style="text-align:center;padding:40px;color:var(--err)">No se pudo cargar la trazabilidad: ${err.message}</div>`;
+  }
+}
+
+function renderTrazabilidad(d) {
+  const { lote, estadisticas, origen, historial, frascos_abiertos } = d;
+  const dpf = Number(lote.dosis_por_frasco) || 1;
+  const esMulti = dpf > 1;
+
+  // Barra de progreso: aplicadas vs. descartadas vs. disponibles
+  const total = estadisticas.total || 1;
+  const pctApl = (estadisticas.aplicadas / total * 100).toFixed(1);
+  const pctDes = (estadisticas.descartadas / total * 100).toFixed(1);
+  const pctDsp = (estadisticas.disponibles / total * 100).toFixed(1);
+
+  // Labels de tipo para el timeline
+  const TIPO_LBL = {
+    ingreso: ['🟢', 'Ingreso al stock', 'ing'],
+    aplicacion: ['💉', 'Aplicación', 'apl'],
+    descarte: ['🗑️', 'Descarte', 'des'],
+    edicion: ['✏️', 'Edición del lote', 'edi'],
+    eliminacion: ['❌', 'Eliminación del lote', 'eli'],
+  };
+
+  const timelineHtml = historial.length ? historial.map(m => {
+    const [ic, lbl, cls] = TIPO_LBL[m.tipo] || ['•', m.tipo, ''];
+    return `
+      <div class="traz-timeline-item">
+        <div class="traz-timeline-icon"><span class="pill ${cls}">${ic} ${lbl}</span></div>
+        <div class="traz-timeline-body">
+          <div class="traz-timeline-line">
+            <b>${m.cantidad} ${m.cantidad === 1 ? 'dosis' : 'dosis'}</b>
+            ${m.motivo ? ` · ${m.motivo}` : ''}
+          </div>
+          <div class="traz-timeline-meta">
+            ${fmtFechaHora(m.fecha_mov)} · Registrado por ${m.responsable}
+          </div>
+        </div>
+      </div>`;
+  }).join('') : '<div class="traz-empty">Sin movimientos registrados aún.</div>';
+
+  const frascosHtml = esMulti && frascos_abiertos.length ? `
+    <div class="traz-section">
+      <h5 class="traz-section-title">Frascos abiertos</h5>
+      <div class="traz-frascos">
+        ${frascos_abiertos.map(f => `
+          <div class="traz-frasco traz-frasco-${f.estado}">
+            <div class="traz-frasco-head">
+              <b>${f.estado.toUpperCase()}</b>
+              <span>Abierto el ${fmtFecha(f.fecha_apertura)}</span>
+            </div>
+            <div class="traz-frasco-body">
+              ${f.dosis_usadas} / ${f.dosis_totales} dosis usadas
+              ${f.motivo_cierre ? `<br><small>${f.motivo_cierre}</small>` : ''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>` : '';
+
+  return `
+    <!-- Banner de aclaración sobre datos simulados -->
+    <div class="traz-banner">
+      <span class="traz-banner-icon">ⓘ</span>
+      <span><b>Datos de origen simulados.</b> En producción esta información se obtendría consultando la API del Ministerio de Salud o ANMAT.</span>
+    </div>
+
+    <!-- Header: identificación del lote -->
+    <div class="traz-header">
+      <div>
+        <div class="traz-vacuna">${lote.vacuna}</div>
+        <div class="traz-lote">Lote ${lote.numero_lote} · ${esMulti ? `Multidosis (frasco × ${dpf})` : 'Monodosis'}</div>
+      </div>
+      <div class="traz-header-right">
+        <div class="traz-venc-label">Vencimiento</div>
+        <div class="traz-venc-value">${fmtFecha(lote.vencimiento)}</div>
+      </div>
+    </div>
+
+    <!-- Grid de datos: origen + estadísticas -->
+    <div class="traz-grid">
+      <!-- Bloque de origen (datos de laboratorio, mock) -->
+      <div class="traz-section">
+        <h5 class="traz-section-title">Origen del lote</h5>
+        <div class="traz-data-list">
+          <div class="traz-data-row"><span>Laboratorio</span><b>${origen.laboratorio}</b></div>
+          <div class="traz-data-row"><span>País de origen</span><b>${origen.pais_origen}</b></div>
+          <div class="traz-data-row"><span>Fecha de fabricación</span><b>${fmtFecha(origen.fecha_fabricacion)}</b></div>
+          <div class="traz-data-row"><span>Código ANMAT</span><b>N° ${origen.codigo_anmat}</b></div>
+          <div class="traz-data-row"><span>Distribuidor</span><b>${origen.distribuidor}</b></div>
+          <div class="traz-data-row"><span>Recibido por</span><b>${origen.recibido_por}</b></div>
+          <div class="traz-data-row"><span>Cadena de frío</span><b>${origen.temperatura_almacenamiento}</b></div>
+        </div>
+      </div>
+
+      <!-- Bloque de estadísticas -->
+      <div class="traz-section">
+        <h5 class="traz-section-title">Estado del lote</h5>
+        <div class="traz-stats">
+          <div class="traz-stat"><div class="traz-stat-num">${estadisticas.total}</div><div class="traz-stat-lbl">Total inicial</div></div>
+          <div class="traz-stat traz-stat-apl"><div class="traz-stat-num">${estadisticas.aplicadas}</div><div class="traz-stat-lbl">Aplicadas</div></div>
+          <div class="traz-stat traz-stat-des"><div class="traz-stat-num">${estadisticas.descartadas}</div><div class="traz-stat-lbl">Descartadas</div></div>
+          <div class="traz-stat traz-stat-dsp"><div class="traz-stat-num">${estadisticas.disponibles}</div><div class="traz-stat-lbl">Disponibles</div></div>
+        </div>
+        <div class="traz-progress">
+          <div class="traz-progress-bar traz-progress-apl" style="width:${pctApl}%" title="${pctApl}% aplicadas"></div>
+          <div class="traz-progress-bar traz-progress-des" style="width:${pctDes}%" title="${pctDes}% descartadas"></div>
+          <div class="traz-progress-bar traz-progress-dsp" style="width:${pctDsp}%" title="${pctDsp}% disponibles"></div>
+        </div>
+      </div>
+    </div>
+
+    ${frascosHtml}
+
+    <!-- Historial completo -->
+    <div class="traz-section">
+      <h5 class="traz-section-title">Historial completo (${historial.length} ${historial.length === 1 ? 'movimiento' : 'movimientos'})</h5>
+      <div class="traz-timeline">
+        ${timelineHtml}
+      </div>
+    </div>
+  `;
+}
+
+// Helper para mostrar fecha + hora
+function fmtFechaHora(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('es-AR') + ' · ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  } catch { return String(iso); }
 }
 
 /**

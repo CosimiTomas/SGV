@@ -215,7 +215,7 @@
             <button class="btn subtle sm" onclick="openExcelEsp()">⬇ Excel · específico</button>
           </div>
           <table>
-            <thead><tr><th>Vacuna</th><th>Lote</th><th>Vencimiento</th><th>Dosis disponibles</th><th>Estado</th><th></th></tr></thead>
+            <thead><tr><th>Vacuna</th><th>Lote</th><th>Vencimiento</th><th>Dosis disponibles</th><th>Estado</th><th class="enfermeria-only"></th><th class="coordinadora-only"></th></tr></thead>
             <tbody id="stockBody"></tbody>
           </table>
         </div>
@@ -493,6 +493,23 @@
     <div class="modal-foot">
       <button class="btn ghost" onclick="closeOv('ovEditLote')">Cancelar</button>
       <button class="btn" onclick="saveEditLote()">Guardar cambios</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL Trazabilidad del lote (solo coordinadora) -->
+<div class="overlay" id="ovTrazabilidad">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h4>Trazabilidad del lote</h4>
+      <button class="x" onclick="closeOv('ovTrazabilidad')">×</button>
+    </div>
+    <div class="modal-body" id="trazContent">
+      <!-- Contenido dinámico se inyecta desde JS -->
+      <div style="text-align:center;padding:40px;color:var(--muted)">Cargando…</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="closeOv('ovTrazabilidad')">Cerrar</button>
     </div>
   </div>
 </div>

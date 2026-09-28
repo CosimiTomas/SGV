@@ -1546,6 +1546,144 @@ app.get('/api/catalogo/vacunas', soloCoord, async (req, res) => {
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
 });
 
+/* ============================================================
+ * TRAZABILIDAD DEL LOTE — solo coordinadora
+ * Devuelve toda la información disponible del lote:
+ *  - Datos internos (BD): vacuna, cantidades, vencimientos, historial
+ *  - Datos "de laboratorio" simulados (mock que representa la respuesta
+ *    que en producción vendría de una API del Ministerio o de ANMAT)
+ *
+ * En el frontend se muestra dentro de un modal con banner aclarando
+ * que los datos de origen son simulados. Está preparado para reemplazar
+ * el mock por una llamada HTTP real sin cambiar la estructura de la respuesta.
+ * ========================================================== */
+
+// Mock de datos de laboratorio por vacuna. Representa lo que en producción
+// vendría de una consulta a un servicio externo (por número de lote).
+// Los datos son realistas pero simulados.
+const LABORATORIOS_MOCK = {
+  'Antigripal adyuvantada':                    { laboratorio: 'Seqirus (CSL)',              pais: 'Reino Unido', temp: '2 – 8 °C', anmat: '52.123' },
+  'Antigripal trivalente adultos':             { laboratorio: 'Sinergium Biotech',          pais: 'Argentina',   temp: '2 – 8 °C', anmat: '55.789' },
+  'Antigripal trivalente pediátrica':          { laboratorio: 'Sinergium Biotech',          pais: 'Argentina',   temp: '2 – 8 °C', anmat: '55.790' },
+  'Antimeningocócica tetravalente conjugada':  { laboratorio: 'GlaxoSmithKline (GSK)',      pais: 'Bélgica',     temp: '2 – 8 °C', anmat: '57.234' },
+  'Doble bacteriana (dT)':                     { laboratorio: 'Instituto Butantan',         pais: 'Brasil',      temp: '2 – 8 °C', anmat: '54.001' },
+  'Doble viral (SR)':                          { laboratorio: 'Serum Institute of India',   pais: 'India',       temp: '2 – 8 °C', anmat: '56.412' },
+  'Hepatitis A':                               { laboratorio: 'GlaxoSmithKline (GSK)',      pais: 'Bélgica',     temp: '2 – 8 °C', anmat: '54.987' },
+  'Hepatitis B':                               { laboratorio: 'Instituto Finlay',           pais: 'Cuba',        temp: '2 – 8 °C', anmat: '54.331' },
+  'Neumococo conjugada VCN 20':                { laboratorio: 'Pfizer',                     pais: 'Estados Unidos', temp: '2 – 8 °C', anmat: '58.601' },
+  'Quíntuple':                                 { laboratorio: 'Sanofi Pasteur',             pais: 'Francia',     temp: '2 – 8 °C', anmat: '54.550' },
+  'Rotavirus monovalente':                     { laboratorio: 'GlaxoSmithKline (GSK)',      pais: 'Bélgica',     temp: '2 – 8 °C', anmat: '55.101' },
+  'Salk':                                      { laboratorio: 'Sanofi Pasteur',             pais: 'Francia',     temp: '2 – 8 °C', anmat: '54.220' },
+  'Tetravalente contra el Dengue':             { laboratorio: 'Takeda',                     pais: 'Japón',       temp: '2 – 8 °C', anmat: '59.780' },
+  'Triple bacteriana acelular (dTpa)':         { laboratorio: 'GlaxoSmithKline (GSK)',      pais: 'Bélgica',     temp: '2 – 8 °C', anmat: '54.412' },
+  'Triple bacteriana celular (DPT)':           { laboratorio: 'Instituto Butantan',         pais: 'Brasil',      temp: '2 – 8 °C', anmat: '54.005' },
+  'Triple viral (SRP)':                        { laboratorio: 'Serum Institute of India',   pais: 'India',       temp: '2 – 8 °C', anmat: '56.415' },
+  'VPH nonavalente':                           { laboratorio: 'Merck Sharp & Dohme (MSD)',  pais: 'Países Bajos', temp: '2 – 8 °C', anmat: '58.902' },
+  'Varicela':                                  { laboratorio: 'GlaxoSmithKline (GSK)',      pais: 'Bélgica',     temp: '2 – 8 °C', anmat: '55.678' },
+  'Virus Sincicial Respiratorio':              { laboratorio: 'Pfizer',                     pais: 'Estados Unidos', temp: '2 – 8 °C', anmat: '59.955' },
+};
+
+app.get('/api/lotes/:id/trazabilidad', soloCoord, async (req, res) => {
+  try {
+    // 1) Datos internos del lote
+    const [[lote]] = await pool.query(
+      `SELECT l.id, l.numero_lote, l.vencimiento, l.cantidad_inicial, l.disponible, l.creado_en,
+              v.id AS vacuna_id, v.nombre AS vacuna, v.dosis_por_frasco
+         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
+        WHERE l.id = ?`, [req.params.id]
+    );
+    if (!lote) return res.status(404).json({ error: 'Lote no encontrado.' });
+
+    // 2) Historial de movimientos del lote (ordenado cronológicamente)
+    const [movs] = await pool.query(
+      `SELECT m.id, m.tipo, m.cantidad, m.motivo,
+              m.fecha_aplicacion, m.fecha_mov, u.rol AS responsable
+         FROM movimientos m
+         JOIN usuarios u ON u.id = m.usuario_id
+        WHERE m.lote_id = ?
+        ORDER BY m.fecha_mov ASC`,
+      [req.params.id]
+    );
+
+    // 3) Frascos abiertos del lote (para multidosis)
+    const [frascos] = await pool.query(
+      `SELECT id, fecha_apertura, dosis_totales, dosis_usadas, estado,
+              fecha_cierre, motivo_cierre
+         FROM frascos_abiertos WHERE lote_id = ? ORDER BY fecha_apertura DESC`,
+      [req.params.id]
+    );
+
+    // 4) Estadísticas calculadas
+    const [[stats]] = await pool.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN tipo='aplicacion' THEN cantidad ELSE 0 END), 0) AS aplicadas,
+         COALESCE(SUM(CASE WHEN tipo='descarte'   THEN cantidad ELSE 0 END), 0) AS descartadas
+       FROM movimientos WHERE lote_id = ?`,
+      [req.params.id]
+    );
+
+    // 5) Datos de laboratorio (mock — en producción vendría de API externa)
+    const infoLab = LABORATORIOS_MOCK[lote.vacuna] || {
+      laboratorio: 'No disponible',
+      pais: 'No disponible',
+      temp: '2 – 8 °C',
+      anmat: 'N/D',
+    };
+
+    // Fecha de fabricación estimada: 12-18 meses antes del vencimiento
+    // (rango típico de las vacunas). Determinística usando el número de lote como seed.
+    const fabDelta = 12 + (Math.abs(hashCode(lote.numero_lote)) % 7); // 12-18 meses
+    const fechaVenc = new Date(lote.vencimiento);
+    const fechaFab = new Date(fechaVenc);
+    fechaFab.setMonth(fechaFab.getMonth() - fabDelta);
+
+    res.json({
+      lote: {
+        id: lote.id,
+        vacuna: lote.vacuna,
+        vacuna_id: lote.vacuna_id,
+        dosis_por_frasco: lote.dosis_por_frasco,
+        numero_lote: lote.numero_lote,
+        vencimiento: lote.vencimiento,
+        cantidad_inicial: lote.cantidad_inicial,
+        disponible: lote.disponible,
+        creado_en: lote.creado_en,
+      },
+      estadisticas: {
+        aplicadas: Number(stats.aplicadas),
+        descartadas: Number(stats.descartadas),
+        disponibles: Number(lote.disponible),
+        total: Number(lote.cantidad_inicial),
+      },
+      // Bloque "externo": lo que vendría de una API del Ministerio / ANMAT
+      origen: {
+        _fuente: 'mock',   // marca que estos datos son simulados
+        _nota: 'En producción estos datos se obtendrían consultando la API de ANMAT o del Ministerio de Salud usando el número de lote.',
+        laboratorio: infoLab.laboratorio,
+        pais_origen: infoLab.pais,
+        fecha_fabricacion: fechaFab.toISOString().slice(0, 10),
+        temperatura_almacenamiento: infoLab.temp,
+        codigo_anmat: infoLab.anmat,
+        distribuidor: 'Ministerio de Salud de la Nación',
+        recibido_por: 'Municipio de Hurlingham',
+      },
+      historial: movs,
+      frascos_abiertos: frascos,
+    });
+  } catch (err) {
+    console.error('trazabilidad:', err.message);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
+// Helper: hash simple determinístico para elegir un valor pseudoaleatorio
+// pero consistente para el mismo string (usado en fecha_fabricacion mock).
+function hashCode(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return h;
+}
+
 // Alta de vacuna nueva
 app.post('/api/catalogo/vacunas', soloCoord, async (req, res) => {
   const { nombre, dosis_por_frasco } = req.body;
