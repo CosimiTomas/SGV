@@ -167,11 +167,12 @@ function applyRole(){
       }
     }, 100);
   }
-  // El cartel de "solo lectura" se muestra solo a los roles que
-  // efectivamente son solo consulta (jefa, proveedora). La coordinadora
-  // no lo ve porque tiene funciones propias (usuarios y catálogo).
-  const soloLectura = !info.write && !info.manageUsers;
-  document.querySelectorAll('.readonly-only').forEach(e => e.style.display = soloLectura ? 'flex' : 'none');
+  // El cartel de "solo lectura" se oculta a jefa y proveedora.
+  // La jefa tiene su propio panel de indicadores que ya identifica
+  // su rol, y la proveedora tiene un panel de reposición. La coordinadora
+  // tampoco lo ve porque gestiona usuarios y catálogo.
+  // En la práctica solo aparece a usuarios inesperados sin permisos definidos.
+  document.querySelectorAll('.readonly-only').forEach(e => e.style.display = 'none');
 }
 
 /* ---------- Navegación ---------- */

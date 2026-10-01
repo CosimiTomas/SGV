@@ -1075,56 +1075,97 @@
    ============================================================ */
 .jefa-panel{
   margin-top:24px;
-  background:#fff;
+  background:
+    linear-gradient(180deg,
+      #FFFFFF 0%,
+      #FFFFFF 60%,
+      rgba(15,169,158,0.025) 90%,
+      rgba(166,206,57,0.03) 100%);
   border:1px solid var(--line);
-  border-radius:12px;
-  padding:20px 24px;
+  border-radius:14px;
+  padding:22px 26px;
   box-shadow:var(--shadow-1);
+  position:relative;
+  overflow:hidden;
+}
+/* Franja de acento vertical a la izquierda (identidad SGV) */
+.jefa-panel::before{
+  content:"";
+  position:absolute;
+  left:0; top:0; bottom:0;
+  width:4px;
+  background:linear-gradient(180deg,
+    var(--teal-deep) 0%,
+    var(--teal) 50%,
+    var(--lime) 100%);
 }
 .jefa-panel-head{
   display:flex;
-  align-items:baseline;
+  align-items:center;
   gap:12px;
-  margin-bottom:14px;
-  padding-bottom:12px;
-  border-bottom:1px solid var(--line);
+  margin-bottom:18px;
+  padding-bottom:14px;
+  border-bottom:1px solid var(--line-soft, #EEF2F1);
 }
 .jefa-panel-head h3{
-  font-size:15px;
+  font-size:13px;
   font-weight:700;
-  color:var(--ink);
+  color:var(--teal-deep);
   margin:0;
   text-transform:uppercase;
-  letter-spacing:.03em;
+  letter-spacing:.07em;
 }
 .jefa-panel-sub{
   font-size:12px;
   color:var(--muted);
   font-weight:500;
+  padding-left:10px;
+  border-left:1px solid var(--line);
 }
 .jefa-panel-grid{
   display:grid;
   grid-template-columns:repeat(3, 1fr);
-  gap:16px;
-  margin-bottom:16px;
+  gap:14px;
+  margin-bottom:18px;
 }
+/* Cada tarjeta con tinte teal muy suave, borde teal, sombra interna sutil */
 .jefa-card{
-  background:#F9FBFA;
-  border-radius:8px;
+  background:
+    linear-gradient(135deg,
+      #FFFFFF 0%,
+      var(--teal-ghost, #F2FAF9) 100%);
+  border:1px solid rgba(15,169,158,0.15);
+  border-radius:10px;
   padding:16px 18px;
+  position:relative;
+  overflow:hidden;
+  transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.jefa-card::after{
+  content:"";
+  position:absolute;
+  right:-20px; top:-20px;
+  width:80px; height:80px;
+  background:radial-gradient(circle, rgba(15,169,158,0.08), transparent 70%);
+  pointer-events:none;
+}
+.jefa-card:hover{
+  transform:translateY(-1px);
+  box-shadow:0 4px 14px rgba(15,169,158,0.10);
+  border-color:rgba(15,169,158,0.28);
 }
 .jefa-lab{
-  font-size:11.5px;
+  font-size:11px;
   color:var(--muted);
-  font-weight:600;
-  letter-spacing:.03em;
+  font-weight:700;
+  letter-spacing:.06em;
   text-transform:uppercase;
-  margin-bottom:6px;
+  margin-bottom:8px;
 }
 .jefa-num{
-  font-size:26px;
+  font-size:28px;
   font-weight:700;
-  color:var(--ink);
+  color:var(--teal-deep);
   line-height:1;
   font-variant-numeric:tabular-nums;
 }
@@ -1133,38 +1174,80 @@
   color:var(--muted);
   margin-top:6px;
 }
+
+/* Bloque "Top 3 vacunas" */
 .jefa-top{
-  margin-top:8px;
-  padding-top:12px;
-  border-top:1px solid var(--line);
+  margin-top:6px;
+  padding:16px 18px;
+  background:
+    linear-gradient(135deg,
+      var(--teal-tint) 0%,
+      rgba(239,246,218,0.4) 100%);
+  border:1px solid rgba(15,169,158,0.18);
+  border-radius:10px;
 }
 .jefa-top h4{
-  font-size:12.5px;
-  font-weight:600;
-  color:var(--muted);
+  font-size:11px;
+  font-weight:700;
+  color:var(--teal-deep);
   text-transform:uppercase;
-  letter-spacing:.03em;
-  margin:0 0 10px 0;
+  letter-spacing:.07em;
+  margin:0 0 12px 0;
+  display:flex;
+  align-items:center;
+  gap:8px;
 }
-.jefa-top h4 span{ color:var(--muted); font-weight:400; text-transform:none; }
+.jefa-top h4 span{
+  color:var(--muted);
+  font-weight:500;
+  text-transform:none;
+  letter-spacing:0;
+  font-size:11px;
+}
 .jefa-top ol{
-  list-style:decimal;
-  padding-left:24px;
+  list-style:none;
+  padding-left:0;
   margin:0;
   display:flex;
   flex-direction:column;
-  gap:6px;
+  gap:8px;
+  counter-reset:top3;
 }
 .jefa-top li{
   font-size:14px;
-  color:var(--text);
+  color:var(--ink);
   line-height:1.4;
+  display:flex;
+  align-items:center;
+  gap:12px;
+  counter-increment:top3;
 }
-.jefa-top li b{ color:var(--ink); font-weight:600; }
-.jefa-top li.jefa-top-empty{ color:var(--muted); font-style:italic; list-style:none; margin-left:-24px; }
-/* Coloreado semántico de la tasa de descarte */
-.jefa-num.warn{ color:#B25E00; }
-.jefa-num.crit{ color:#B42318; }
+/* Numeración con círculo teal (en vez del decimal plano) */
+.jefa-top li::before{
+  content:counter(top3);
+  flex:none;
+  width:22px; height:22px;
+  background:linear-gradient(135deg, var(--teal) 0%, var(--teal-deep) 100%);
+  color:#fff;
+  border-radius:50%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:12px;
+  font-weight:700;
+  box-shadow:0 2px 4px rgba(15,169,158,0.20);
+}
+.jefa-top li b{ color:var(--ink); font-weight:700; }
+.jefa-top li.jefa-top-empty{
+  color:var(--muted);
+  font-style:italic;
+  justify-content:center;
+}
+.jefa-top li.jefa-top-empty::before{ display:none; }
+
+/* Coloreado semántico de la tasa de descarte (mantiene jerarquía de alerta) */
+.jefa-num.warn{ color:var(--warn); }
+.jefa-num.crit{ color:var(--err); }
 
 @media (max-width: 800px){
   .jefa-panel-grid{ grid-template-columns:1fr; }
