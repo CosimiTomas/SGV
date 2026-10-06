@@ -64,13 +64,15 @@ function fmtDisp(dosis, dosisPorFrasco){
   return parts.join(' · ');
 }
 // Chip "Frasco x N" para marcar visualmente las multidosis al lado del nombre.
-function chipMulti(dosisPorFrasco){
-  const d = Number(dosisPorFrasco) || 1;
-  return d > 1 ? ` <span class="chip-multi">Frasco × ${d}</span>` : '';
-}
-// Ícono de frasco (SVG) — reemplaza al emoji en todo lo referido a frascos abiertos.
+// Ícono de frasco (SVG) — reemplaza al emoji en todo lo referido a frascos.
 // Usa currentColor para tomar el color del cartel que lo contiene.
 const ICON_FRASCO = '<svg class="ic-frasco" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M5.5 1.5h5M6.5 1.5V4L5 6v7.5a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V6L9.5 4V1.5M5 9.5h6"/></svg>';
+// Chip de presentación multidosis ("Frasco × N"). Comparte estilo con el
+// chip "Frasco abierto" de la alerta Por vencer (clase .chip-frasco).
+function chipMulti(dosisPorFrasco){
+  const d = Number(dosisPorFrasco) || 1;
+  return d > 1 ? ` <span class="chip-multi chip-frasco">${ICON_FRASCO}Frasco × ${d}</span>` : '';
+}
 // Formatea los días para vencer en texto humano.
 //   dias > 0  → "en 5 días" / "en 1 día"
 //   dias = 0  → "hoy"
@@ -259,7 +261,7 @@ async function loadDashboard(){
           ? ' <span class="frasco-causa">por vencimiento del lote</span>'
           : '';
         items.push(
-          `<li class="frasco">${f.vacuna} <span class="frasco-tag">${ICON_FRASCO}Frasco abierto</span> — vence en <b>${f.dias_restantes} ${f.dias_restantes === 1 ? 'día' : 'días'}</b> · ${f.dosis_sobrantes} ${f.dosis_sobrantes === 1 ? 'dosis restante' : 'dosis restantes'}${causaTxt}</li>`
+          `<li class="frasco">${f.vacuna} <span class="frasco-tag chip-frasco">${ICON_FRASCO}Frasco abierto</span> — vence en <b>${f.dias_restantes} ${f.dias_restantes === 1 ? 'día' : 'días'}</b> · ${f.dosis_sobrantes} ${f.dosis_sobrantes === 1 ? 'dosis restante' : 'dosis restantes'}${causaTxt}</li>`
         );
       });
     }

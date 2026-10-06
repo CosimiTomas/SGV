@@ -763,19 +763,30 @@
 /* ============================================================
    Chip "Frasco × N" para marcar vacunas multidosis
    ============================================================ */
-.chip-multi{
-  display:inline-block;
+/* Chip de frasco — un único estilo suave compartido por
+   "Frasco × N" (presentación multidosis) y "Frasco abierto". */
+.chip-frasco{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
   margin-left:6px;
-  padding:1px 8px;
+  padding:1px 8px 1px 6px;
   font-size:11px;
   font-weight:600;
-  letter-spacing:.02em;
+  line-height:1.55;
+  letter-spacing:.01em;
   color:var(--teal-deep);
-  background:var(--teal-tint);
-  border:1px solid var(--teal);
+  background:var(--teal-ghost);
+  border:1px solid rgba(15,169,158,.25);
   border-radius:999px;
   vertical-align:middle;
   white-space:nowrap;
+}
+.chip-frasco .ic-frasco{
+  width:11px;
+  height:11px;
+  color:var(--teal);
+  vertical-align:0;
 }
 
 /* ============================================================
@@ -1036,24 +1047,7 @@
 .ic-frasco{ flex:none; display:inline-block; vertical-align:-2px; }
 
 /* Item de "frasco abierto" dentro de la lista de "Por vencer".
-   Se distingue de un lote normal por el chip, con el mismo lenguaje
-   visual que el chip "Frasco × N" de las multidosis. */
-.alert.exp ul li.frasco .frasco-tag{
-  display:inline-flex;
-  align-items:center;
-  gap:4px;
-  margin-left:6px;
-  padding:1px 9px 1px 7px;
-  font-size:11px;
-  font-weight:600;
-  letter-spacing:.02em;
-  color:#fff;
-  background:linear-gradient(135deg, var(--teal) 0%, var(--teal-deep) 100%);
-  border-radius:999px;
-  vertical-align:middle;
-  white-space:nowrap;
-  box-shadow:0 1px 2px rgba(7,104,98,.18);
-}
+   El chip usa el estilo compartido .chip-frasco (definido arriba). */
 .alert.exp ul li.frasco .frasco-causa{
   display:inline-block;
   margin-left:6px;
