@@ -777,7 +777,8 @@
   letter-spacing:.01em;
   color:var(--teal-deep);
   background:#fff;
-  border:1px solid rgba(15,169,158,.4);
+  border:none;
+  box-shadow:0 1px 3px rgba(7,104,98,.14), 0 0 0 1px rgba(7,104,98,.04);
   border-radius:999px;
   vertical-align:middle;
   white-space:nowrap;
