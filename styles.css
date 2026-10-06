@@ -776,8 +776,8 @@
   line-height:1.55;
   letter-spacing:.01em;
   color:var(--teal-deep);
-  background:var(--teal-ghost);
-  border:1px solid rgba(15,169,158,.25);
+  background:#fff;
+  border:1px solid rgba(15,169,158,.4);
   border-radius:999px;
   vertical-align:middle;
   white-space:nowrap;
