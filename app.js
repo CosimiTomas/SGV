@@ -68,6 +68,9 @@ function chipMulti(dosisPorFrasco){
   const d = Number(dosisPorFrasco) || 1;
   return d > 1 ? ` <span class="chip-multi">Frasco × ${d}</span>` : '';
 }
+// Ícono de frasco (SVG) — reemplaza al emoji en todo lo referido a frascos abiertos.
+// Usa currentColor para tomar el color del cartel que lo contiene.
+const ICON_FRASCO = '<svg class="ic-frasco" viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M5.5 1.5h5M6.5 1.5V4L5 6v7.5a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V6L9.5 4V1.5M5 9.5h6"/></svg>';
 // Formatea los días para vencer en texto humano.
 //   dias > 0  → "en 5 días" / "en 1 día"
 //   dias = 0  → "hoy"
@@ -240,8 +243,8 @@ async function loadDashboard(){
     : '<li class="alert-empty">Sin vacunas con stock bajo.</li>';
 
   // POR VENCER — lotes por vencer + frascos abiertos por vencer.
-  // Los frascos se marcan con 💉 y texto "frasco abierto" para que sea
-  // claro que es un caso distinto al lote normal.
+  // Los frascos se marcan con un chip "Frasco abierto" (ícono SVG) para que
+  // sea claro que es un caso distinto al lote normal.
   // Excepción: la proveedora NO ve frascos abiertos (es info interna del CAPS).
   const info = ROL_INFO[USER?.rol] || {};
   const mostrarFrascos = !info.esProveedora;
@@ -253,10 +256,10 @@ async function loadDashboard(){
     if (mostrarFrascos) {
       frascosPorVencer.forEach(f => {
         const causaTxt = f.causa_vencimiento === 'lote'
-          ? ' <span style="color:#795000;font-size:11px">(por venc. del lote)</span>'
+          ? ' <span class="frasco-causa">por vencimiento del lote</span>'
           : '';
         items.push(
-          `<li class="frasco">${f.vacuna} <span class="frasco-tag">💉 frasco abierto</span> — vence en <b>${f.dias_restantes} ${f.dias_restantes === 1 ? 'día' : 'días'}</b> (${f.dosis_sobrantes} ${f.dosis_sobrantes === 1 ? 'dosis' : 'dosis'} sobrantes)${causaTxt}</li>`
+          `<li class="frasco">${f.vacuna} <span class="frasco-tag">${ICON_FRASCO}Frasco abierto</span> — vence en <b>${f.dias_restantes} ${f.dias_restantes === 1 ? 'día' : 'días'}</b> · ${f.dosis_sobrantes} ${f.dosis_sobrantes === 1 ? 'dosis restante' : 'dosis restantes'}${causaTxt}</li>`
         );
       });
     }
@@ -284,7 +287,7 @@ async function loadDashboard(){
       const partes = [];
       const nombresLotes = [...new Set(vencidas.map(v => v.vacuna))];
       nombresLotes.forEach(n => partes.push(n));
-      frascosVencidos.forEach(f => partes.push(`${f.vacuna} 💉 (frasco)`));
+      frascosVencidos.forEach(f => partes.push(`${f.vacuna} (frasco abierto)`));
       $('bannerVencidasLista').textContent = partes.join(' · ');
       banner.style.display = 'flex';
     } else {
@@ -499,12 +502,15 @@ function renderStockRow(r, ETIQ) {
   if (r.frasco_id) {
     const dr = Number(r.frasco_dias_restantes);
     const sob = Number(r.frasco_dosis_sobrantes);
-    const causaTxt = r.frasco_causa_vencimiento === 'lote' ? ' (por venc. del lote)' : '';
-    const cls = dr < 0 ? 'frasco-info venc' : (dr <= 5 ? 'frasco-info porv' : 'frasco-info');
-    const txt = dr < 0
-      ? `💉 Frasco abierto vencido hace ${Math.abs(dr)} ${Math.abs(dr) === 1 ? 'día' : 'días'} (${sob} dosis)${causaTxt}`
-      : `💉 Frasco abierto vence en ${dr} ${dr === 1 ? 'día' : 'días'} (${sob} ${sob === 1 ? 'dosis' : 'dosis'})${causaTxt}`;
-    venceCell += `<div class="${cls}">${txt}</div>`;
+    const causaTxt = r.frasco_causa_vencimiento === 'lote'
+      ? '<span class="frasco-info-causa">por vencimiento del lote</span>' : '';
+    // Mismo umbral que el dashboard (15 días) para que los colores coincidan en ambas pantallas
+    const cls = dr < 0 ? 'frasco-info venc' : (dr <= 15 ? 'frasco-info porv' : 'frasco-info');
+    const titulo = dr < 0 ? 'Frasco vencido' : 'Frasco abierto';
+    const detalle = dr < 0
+      ? `Hace ${Math.abs(dr)} ${Math.abs(dr) === 1 ? 'día' : 'días'} · ${sob} dosis`
+      : `Vence en ${dr} ${dr === 1 ? 'día' : 'días'} · ${sob} dosis`;
+    venceCell += `<div class="${cls}">${ICON_FRASCO}<div><span class="frasco-info-tit">${titulo}</span><span class="frasco-info-det">${detalle}</span>${causaTxt}</div></div>`;
   }
   const payload = encodeURIComponent(JSON.stringify({
     id: r.id, vacuna: r.vacuna, numero_lote: r.numero_lote, vencimiento: r.vencimiento,
