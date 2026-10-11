@@ -712,18 +712,28 @@
     padding-bottom:0;
   }
   #ovTrazabilidad .modal-body > *{ flex:none; }
-  #trazContent{
+  #ovTrazabilidad .modal-body > #trazContent{
     display:flex; flex-direction:column;
     min-height:0; flex:1 1 auto;
+    height:100%;
   }
-  #trazContent > *{ flex:none; }
-  .traz-section-historial{
-    flex:1 1 auto;
+  #trazContent > *:not(.traz-section-historial){ flex:none; }
+  #trazContent > .traz-section-historial{
+    flex:1 1 0%;
     display:flex; flex-direction:column;
     min-height:0;
     margin-bottom:0;
-    padding-bottom:16px;
+    padding-bottom:14px;
+    overflow:hidden;
   }
+  #ovTrazabilidad .traz-timeline-scroll{ min-height:0; }
+  /* Dentro de la ventana de Detalles los bloques de arriba van más
+     compactos, así la lista de movimientos tiene más espacio. */
+  #ovTrazabilidad .traz-header{ padding:12px 16px; margin-bottom:12px; }
+  #ovTrazabilidad .traz-grid{ gap:12px; margin-bottom:12px; }
+  #ovTrazabilidad .traz-section{ padding:12px 14px; margin-bottom:12px; }
+  #ovTrazabilidad .traz-section-title{ margin-bottom:8px; }
+  #ovTrazabilidad .traz-section-historial{ padding:14px 14px 10px; }
   .traz-timeline-scroll{
     flex:1 1 auto;
     overflow-y:auto;
