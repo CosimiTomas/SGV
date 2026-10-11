@@ -1261,6 +1261,57 @@ app.get('/api/reportes/stock', requireAuth, async (req, res) => {
  * por vacuna y suma las dosis disponibles totales (no se lista lote por lote,
  * la proveedora piensa en unidades, no en partidas).
  */
+// Datos del reporte de reposición en formato JSON — alimentan el panel
+// de la proveedora en el dashboard (sin generar Excel). Devuelve totales
+// por prioridad y la lista agrupada por vacuna.
+async function datosReposicion() {
+  const [rows] = await pool.query(
+    `SELECT v.nombre AS vacuna, v.dosis_por_frasco,
+            COALESCE(SUM(CASE WHEN DATEDIFF(l.vencimiento, CURDATE()) >= 0
+                              THEN l.disponible ELSE 0 END), 0) AS disponible_vigente,
+            COALESCE(SUM(CASE WHEN DATEDIFF(l.vencimiento, CURDATE()) BETWEEN 0 AND ?
+                              THEN l.disponible ELSE 0 END), 0) AS disponible_por_vencer
+       FROM vacunas v
+       LEFT JOIN lotes l ON l.vacuna_id = v.id AND l.disponible > 0
+      WHERE v.activa = 1
+      GROUP BY v.id, v.nombre, v.dosis_por_frasco
+      ORDER BY v.nombre`,
+    [DIAS_VENCIMIENTO]
+  );
+  const PRIO_ORDEN = { URGENTE: 0, ALTA: 1, MEDIA: 2 };
+  return rows
+    .map(r => {
+      const disp = Number(r.disponible_vigente);
+      const porV = Number(r.disponible_por_vencer);
+      let situacion, prioridad;
+      if (disp === 0)                      { situacion = 'Sin stock';            prioridad = 'URGENTE'; }
+      else if (disp <= UMBRAL_STOCK_BAJO)  { situacion = 'Stock bajo';           prioridad = 'ALTA'; }
+      else if (porV === disp)              { situacion = 'Solo lotes por vencer'; prioridad = 'ALTA'; }
+      else if (porV > 0)                   { situacion = 'Parcial por vencer';    prioridad = 'MEDIA'; }
+      else return null;
+      return { vacuna: r.vacuna, dosis_por_frasco: Number(r.dosis_por_frasco),
+               disponible: disp, por_vencer: porV, situacion, prioridad };
+    })
+    .filter(Boolean)
+    .sort((a, b) => PRIO_ORDEN[a.prioridad] - PRIO_ORDEN[b.prioridad] || a.disponible - b.disponible);
+}
+
+app.get('/api/dashboard/reposicion', requireAuth, async (req, res) => {
+  try {
+    const items = await datosReposicion();
+    const conteo = { URGENTE: 0, ALTA: 0, MEDIA: 0 };
+    items.forEach(i => { conteo[i.prioridad]++; });
+    res.json({
+      total: items.length,
+      conteo,
+      items,                              // completo, el front filtra lo que muestra
+    });
+  } catch (err) {
+    console.error('dashboard/reposicion:', err.message);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
 app.get('/api/reportes/reposicion', requireAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(

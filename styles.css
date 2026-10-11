@@ -1379,28 +1379,85 @@ body.rol-sin-traz .traz-only{ display:none !important; }
    ============================================================ */
 .proveedora-panel{
   margin-top:24px;
-  background:linear-gradient(135deg, #F0F7F5 0%, var(--teal-tint) 100%);
-  border:1px solid #C7E5D9;
+  background:#fff;
+  border:1px solid var(--line);
   border-radius:12px;
-  padding:20px 24px;
+  padding:18px 20px 20px;
   display:flex;
-  align-items:center;
-  gap:24px;
-  justify-content:space-between;
+  flex-direction:column;
+  gap:16px;
+  box-shadow:0 1px 2px rgba(20,40,38,.04);
+  position:relative;
+  overflow:hidden;
+}
+.proveedora-panel::before{
+  content:''; position:absolute; left:0; top:0; bottom:0; width:4px;
+  background:linear-gradient(180deg, var(--teal) 0%, var(--lime) 100%);
+}
+.prov-head{
+  display:flex; align-items:flex-start; justify-content:space-between; gap:16px;
   flex-wrap:wrap;
+  padding-left:8px;
 }
-.proveedora-panel-txt h3{
-  margin:0 0 4px 0;
-  font-size:16px;
-  color:var(--teal-deep);
-  font-weight:700;
+.prov-head h3{ margin:0 0 2px 0; font-size:16px; color:var(--teal-deep); font-weight:700; }
+.prov-sub{ margin:0; color:var(--muted); font-size:13px; }
+
+.prov-conteo{
+  display:grid; grid-template-columns:repeat(3, 1fr); gap:12px;
+  padding-left:8px;
 }
-.proveedora-panel-txt p{
-  margin:0;
-  color:var(--text);
-  font-size:14px;
-  line-height:1.45;
-  max-width:520px;
+.prov-ct{
+  display:flex; flex-direction:column; gap:2px;
+  padding:14px 16px; border-radius:10px;
+  border:1px solid var(--line);
+  background:#fff;
+  border-left-width:3px;
+}
+.prov-ct-urg{ border-left-color:var(--err); background:linear-gradient(180deg,#fff 0%, var(--err-tint,#FDE8E4) 180%); }
+.prov-ct-alta{ border-left-color:var(--warn); background:linear-gradient(180deg,#fff 0%, var(--warn-tint) 180%); }
+.prov-ct-med{ border-left-color:var(--teal); background:linear-gradient(180deg,#fff 0%, var(--teal-ghost) 180%); }
+.prov-ct-num{ font-size:28px; font-weight:700; line-height:1; color:var(--ink); font-family:var(--font-display, inherit); }
+.prov-ct-urg .prov-ct-num{ color:var(--err); }
+.prov-ct-alta .prov-ct-num{ color:var(--warn); }
+.prov-ct-med .prov-ct-num{ color:var(--teal-deep); }
+.prov-ct-lbl{ font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--ink); margin-top:6px; }
+.prov-ct-det{ font-size:11.5px; color:var(--muted); }
+
+.prov-lista-head{
+  display:flex; align-items:baseline; justify-content:space-between; gap:12px;
+  padding:4px 0 0 8px;
+}
+.prov-lista-head h4{ margin:0; font-size:13px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+.prov-lista-nota{ font-size:12px; color:var(--muted); }
+.prov-lista{
+  list-style:none; margin:0; padding:0 0 0 8px;
+  display:flex; flex-direction:column; gap:6px;
+}
+.prov-item{
+  display:flex; gap:12px; align-items:center;
+  padding:10px 12px; border-radius:8px;
+  border:1px solid var(--line);
+  background:#fff;
+}
+.prov-item-body{ flex:1; min-width:0; }
+.prov-item-nom{ font-size:14px; color:var(--ink); }
+.prov-item-det{ font-size:12.5px; color:var(--muted); margin-top:2px; }
+.prov-prio-tag{
+  flex:none;
+  font-size:10.5px; font-weight:700; letter-spacing:.05em;
+  padding:3px 8px; border-radius:12px;
+  text-transform:uppercase;
+  min-width:68px; text-align:center;
+}
+.prov-prio-urgente .prov-prio-tag{ background:var(--err-tint,#FDE8E4); color:var(--err); }
+.prov-prio-alta    .prov-prio-tag{ background:var(--warn-tint); color:var(--warn); }
+.prov-prio-media   .prov-prio-tag{ background:var(--teal-ghost); color:var(--teal-deep); }
+.prov-lista-vacia{
+  padding:14px; border-radius:8px; background:var(--teal-ghost);
+  color:var(--teal-deep); font-size:13px; text-align:center;
+}
+@media (max-width: 720px){
+  .prov-conteo{ grid-template-columns:1fr; }
 }
 
 /* Toggle robusto por rol — se aplica desde applyRole() en app.js.
@@ -1426,6 +1483,16 @@ body.rol-sin-traz .traz-only{ display:none !important; }
 .jefa-panel:not(.role-hidden) { flex-direction: column; }
 .chip-rango.proveedora-only:not(.role-hidden) {
   display: inline-flex;
+}
+/* Opciones del desplegable custom: cuando la option es solo para proveedora
+   y la proveedora SÍ la puede ver (no tiene role-hidden), vuelve al display
+   normal. Sin esta regla, el `display:none` general dejaba la opción
+   "Necesita reposición" fuera del menú y, si la cambiabas, no podías volver. */
+.nice-select-option.proveedora-only:not(.role-hidden) {
+  display: block;
+}
+.nice-select-option.jefa-only:not(.role-hidden) {
+  display: block;
 }
 
 /* ============================================================

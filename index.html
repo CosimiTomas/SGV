@@ -154,14 +154,27 @@
         </div>
       </div>
 
-      <!-- Botón exclusivo para proveedora: descarga el reporte de reposición
-           (solo las vacunas que necesitan pedirse, sin lote por lote). -->
-      <div class="proveedora-panel proveedora-only">
-        <div class="proveedora-panel-txt">
-          <h3>Reporte de reposición</h3>
-          <p>Descargá el listado de vacunas que necesitan reponerse: sin stock, stock bajo o solo con lotes por vencer.</p>
+      <!-- Panel exclusivo para proveedora: resumen de lo que hay que pedir,
+           con el total por prioridad y las primeras vacunas urgentes a la vista.
+           El Excel pasa a ser una acción secundaria en el encabezado. -->
+      <div class="proveedora-panel proveedora-only" id="proveedora-panel">
+        <div class="prov-head">
+          <div>
+            <h3>Pedido de reposición</h3>
+            <p class="prov-sub">Resumen de lo que necesita reponerse hoy en el CAPS.</p>
+          </div>
+          <button class="btn ghost sm" onclick="descargarReposicion()" title="Descargar el listado completo en Excel">⬇ Excel</button>
         </div>
-        <button class="btn primary" onclick="descargarReposicion()">⬇ Descargar Excel</button>
+        <div class="prov-conteo">
+          <div class="prov-ct prov-ct-urg"><span class="prov-ct-num" id="prov-urg">—</span><span class="prov-ct-lbl">Urgentes</span><span class="prov-ct-det">sin stock</span></div>
+          <div class="prov-ct prov-ct-alta"><span class="prov-ct-num" id="prov-alta">—</span><span class="prov-ct-lbl">Prioridad alta</span><span class="prov-ct-det">stock bajo o solo lotes por vencer</span></div>
+          <div class="prov-ct prov-ct-med"><span class="prov-ct-num" id="prov-med">—</span><span class="prov-ct-lbl">Prioridad media</span><span class="prov-ct-det">parcial por vencer</span></div>
+        </div>
+        <div class="prov-lista-head">
+          <h4>Primeras a reponer</h4>
+          <span class="prov-lista-nota" id="prov-lista-nota"></span>
+        </div>
+        <ul class="prov-lista" id="prov-lista"><li class="prov-lista-vacia">Cargando…</li></ul>
       </div>
 
     </section>

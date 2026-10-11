@@ -307,6 +307,56 @@ async function loadDashboard(){
   if (USER && ROL_INFO[USER.rol]?.viewActividad) {
     loadResumenActividad();
   }
+  // Panel de reposición de la proveedora: resumen por prioridad y
+  // primeras vacunas urgentes. Solo se consulta para ella.
+  if (USER && ROL_INFO[USER.rol]?.esProveedora) {
+    loadResumenReposicion();
+  }
+}
+
+/**
+ * Carga el panel de reposición del dashboard de proveedora: cuántas vacunas
+ * hay en cada prioridad y una lista corta con las primeras a pedir.
+ */
+async function loadResumenReposicion() {
+  try {
+    const d = await api('/dashboard/reposicion');
+    if ($('prov-urg'))  $('prov-urg').textContent  = d.conteo.URGENTE;
+    if ($('prov-alta')) $('prov-alta').textContent = d.conteo.ALTA;
+    if ($('prov-med'))  $('prov-med').textContent  = d.conteo.MEDIA;
+    const lista = $('prov-lista');
+    const nota = $('prov-lista-nota');
+    if (!lista) return;
+    if (d.total === 0) {
+      lista.innerHTML = '<li class="prov-lista-vacia">No hay vacunas que necesiten reposición. Todo el stock está al día.</li>';
+      if (nota) nota.textContent = '';
+      return;
+    }
+    const TOP = 5;
+    const top = d.items.slice(0, TOP);
+    lista.innerHTML = top.map(it => {
+      const multi = Number(it.dosis_por_frasco) > 1 ? ` <span class="chip-multi chip-frasco">Frasco × ${it.dosis_por_frasco}</span>` : '';
+      const dosis = it.disponible === 0 ? 'sin stock' :
+                    `${it.disponible} ${it.disponible === 1 ? 'dosis disponibles' : 'dosis disponibles'}`;
+      const extra = it.por_vencer > 0 ? ` · ${it.por_vencer} por vencer` : '';
+      return `<li class="prov-item prov-prio-${it.prioridad.toLowerCase()}">
+        <span class="prov-prio-tag">${it.prioridad}</span>
+        <div class="prov-item-body">
+          <div class="prov-item-nom"><b>${it.vacuna}</b>${multi}</div>
+          <div class="prov-item-det">${it.situacion} · ${dosis}${extra}</div>
+        </div>
+      </li>`;
+    }).join('');
+    if (nota) {
+      nota.textContent = d.total > TOP
+        ? `Mostrando las ${TOP} más urgentes de ${d.total}. Descargá el Excel para ver todas.`
+        : `${d.total} ${d.total === 1 ? 'vacuna requiere' : 'vacunas requieren'} reposición.`;
+    }
+  } catch (err) {
+    console.error('loadResumenReposicion:', err);
+    const lista = $('prov-lista');
+    if (lista) lista.innerHTML = '<li class="prov-lista-vacia">No se pudo cargar el resumen.</li>';
+  }
 }
 
 /**
