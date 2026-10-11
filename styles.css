@@ -702,6 +702,38 @@
   .modal-body::-webkit-scrollbar{width:8px}
   .modal-body::-webkit-scrollbar-thumb{background:var(--teal);border-radius:4px}
   .modal-head, .modal-foot{flex:none}
+
+  /* Trazabilidad: la ventana no se desplaza como un bloque. Solo la lista
+     de movimientos tiene su propia barra de scroll, así los datos del lote
+     y los frascos abiertos se quedan siempre a la vista. */
+  #ovTrazabilidad .modal-body{
+    overflow:hidden;
+    display:flex; flex-direction:column;
+    padding-bottom:0;
+  }
+  #ovTrazabilidad .modal-body > *{ flex:none; }
+  #trazContent{
+    display:flex; flex-direction:column;
+    min-height:0; flex:1 1 auto;
+  }
+  #trazContent > *{ flex:none; }
+  .traz-section-historial{
+    flex:1 1 auto;
+    display:flex; flex-direction:column;
+    min-height:0;
+    margin-bottom:0;
+    padding-bottom:16px;
+  }
+  .traz-timeline-scroll{
+    flex:1 1 auto;
+    overflow-y:auto;
+    min-height:120px;
+    padding-right:6px;
+    scrollbar-width:thin;
+    scrollbar-color:var(--teal) transparent;
+  }
+  .traz-timeline-scroll::-webkit-scrollbar{width:8px}
+  .traz-timeline-scroll::-webkit-scrollbar-thumb{background:var(--teal);border-radius:4px}
   .modal-foot{
     padding:14px 22px;
     border-top:1px solid var(--line-soft);

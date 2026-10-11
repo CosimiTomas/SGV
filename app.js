@@ -1423,11 +1423,14 @@ function renderTrazabilidad(d) {
 
     ${frascosHtml}
 
-    <!-- Historial completo (no se muestra a la proveedora) -->
+    <!-- Historial completo (no se muestra a la proveedora).
+         La sección es un bloque flex: el título queda fijo arriba
+         y la timeline se desplaza sola, para no tener que mover
+         toda la ventana cuando hay muchos movimientos. -->
     ${conHistorial ? `
-    <div class="traz-section">
+    <div class="traz-section traz-section-historial">
       <h5 class="traz-section-title">Historial completo (${historial.length} ${historial.length === 1 ? 'movimiento' : 'movimientos'})</h5>
-      <div class="traz-timeline">
+      <div class="traz-timeline traz-timeline-scroll">
         ${timelineHtml}
       </div>
     </div>` : ''}
