@@ -1583,7 +1583,11 @@ const LABORATORIOS_MOCK = {
   'Virus Sincicial Respiratorio':              { laboratorio: 'Pfizer',                     pais: 'Estados Unidos', temp: '2 – 8 °C', anmat: '59.955' },
 };
 
-app.get('/api/lotes/:id/trazabilidad', soloCoord, async (req, res) => {
+// Trazabilidad: la ven todos los perfiles de consulta (coordinadora, jefa y
+// proveedora). Enfermería no la usa. A la proveedora no se le manda el
+// historial de movimientos, igual que no tiene acceso a la pestaña Movimientos.
+const verTraz = [requireAuth, requireRole('coordinadora', 'jefa', 'proveedora')];
+app.get('/api/lotes/:id/trazabilidad', verTraz, async (req, res) => {
   try {
     // 1) Datos internos del lote
     const [[lote]] = await pool.query(
@@ -1667,7 +1671,7 @@ app.get('/api/lotes/:id/trazabilidad', soloCoord, async (req, res) => {
         distribuidor: 'Ministerio de Salud de la Nación',
         recibido_por: 'Municipio de Hurlingham',
       },
-      historial: movs,
+      historial: req.user.rol === 'proveedora' ? null : movs,
       frascos_abiertos: frascos,
     });
   } catch (err) {

@@ -214,10 +214,12 @@
             <button class="btn subtle sm" onclick="excelStockGeneral()">⬇ Excel · general</button>
             <button class="btn subtle sm" onclick="openExcelEsp()">⬇ Excel · específico</button>
           </div>
+          <div class="tabla-scroll">
           <table>
-            <thead><tr><th>Vacuna</th><th>Lote</th><th>Vencimiento</th><th>Dosis disponibles</th><th>Estado</th><th class="enfermeria-only"></th><th class="coordinadora-only"></th></tr></thead>
+            <thead><tr><th>Vacuna</th><th>Lote</th><th>Vencimiento</th><th>Dosis disponibles</th><th>Estado</th><th class="enfermeria-only"></th><th class="traz-only"></th></tr></thead>
             <tbody id="stockBody"></tbody>
           </table>
+          </div>
         </div>
       </div>
     </section>
@@ -279,10 +281,12 @@
             <div class="spacer"></div>
             <button class="btn subtle sm" onclick="excelMovimientosFiltrado()" title="Descarga los movimientos que se ven ahora en pantalla con los filtros aplicados">⬇ Excel</button>
           </div>
+          <div class="tabla-scroll">
           <table>
             <thead><tr><th>Fecha mov.</th><th>Fecha aplic.</th><th>Vacuna</th><th>Lote</th><th>Tipo</th><th>Motivo</th><th>Cant.</th><th>Resp.</th><th class="enfermeria-only" style="text-align:right">Acciones</th></tr></thead>
             <tbody id="movBody"></tbody>
           </table>
+          </div>
         </div>
       </div>
     </section>
@@ -497,7 +501,7 @@
   </div>
 </div>
 
-<!-- MODAL Trazabilidad del lote (solo coordinadora) -->
+<!-- MODAL Trazabilidad del lote (coordinadora, jefa y proveedora) -->
 <div class="overlay" id="ovTrazabilidad">
   <div class="modal modal-lg">
     <div class="modal-head">

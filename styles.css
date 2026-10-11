@@ -938,8 +938,15 @@
 .mov-main{ min-width:0; /* evita que la tabla desborde el grid */ }
 /* Si en pantallas chicas la tabla es más ancha que el panel, permitimos
    scroll horizontal en lugar de cortar contenido. */
-.mov-main > .panel{ overflow-x:auto; }
+.tabla-scroll{ overflow-x:auto; scrollbar-width:thin; scrollbar-color:var(--teal) transparent; }
+.tabla-scroll::-webkit-scrollbar{ height:6px; }
+.tabla-scroll::-webkit-scrollbar-thumb{ background:var(--teal); border-radius:3px; }
 .mov-main table{ min-width:640px; }
+
+/* Botones por rol en filas que se dibujan después de applyRole() */
+body.rol-sin-escritura .enfermeria-only:not(.page){ display:none !important; }
+body.rol-sin-gestion .coordinadora-only:not(.page){ display:none !important; }
+body.rol-sin-traz .traz-only{ display:none !important; }
 .mov-contador{
   color:var(--muted);
   font-size:13px;
@@ -948,14 +955,30 @@
 }
 .mov-contador b{ color:var(--text); }
 
+/* Notebooks y pantallas medianas: tabla más compacta para que entren
+   todas las columnas (incluido el botón Detalles) sin cortarse. */
+@media (max-width: 1240px){
+  .mov-layout{ grid-template-columns: 200px 1fr; gap:16px; }
+}
+@media (min-width: 761px) and (max-width: 1240px){
+  .mov-main thead th, .mov-main tbody td{ padding-left:12px; padding-right:12px; }
+  .mov-main thead th:first-child, .mov-main tbody td:first-child{ padding-left:18px; }
+  .mov-main thead th:last-child, .mov-main tbody td:last-child{ padding-right:18px; }
+}
+
 /* Responsive: en pantallas chicas, filtros arriba en horizontal */
-@media (max-width: 900px){
+@media (max-width: 1140px){
   .mov-layout{
     grid-template-columns: 1fr;
   }
   .mov-sidebar{
     position:static;
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(190px, 1fr));
+    gap:12px 14px;
+    align-items:end;
   }
+  .mov-sidebar-head{ grid-column:1 / -1; }
   .mov-rango-rapido{
     flex-direction:row;
     flex-wrap:wrap;

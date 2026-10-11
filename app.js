@@ -7,10 +7,10 @@ let USER = null;            // { id, correo, rol }
 let VACUNAS = [];          // catálogo cacheado
 
 const ROL_INFO = {
-  enfermeria:   { name:'Enfermería',   rol:'Administrador',       perm:'Lectura y escritura',                 tipo:'Cuenta compartida', write:true,  manageUsers:false, viewMovimientos:true,  viewActividad:false, esProveedora:false, av:'EN' },
-  coordinadora: { name:'Coordinadora', rol:'Coordinadora',        perm:'Gestión de usuarios y catálogo',      tipo:'Cuenta personal',   write:false, manageUsers:true,  viewMovimientos:true,  viewActividad:false, esProveedora:false, av:'CO' },
-  jefa:         { name:'Jefa',         rol:'Jefa de enfermería',  perm:'Consulta y supervisión',              tipo:'Cuenta personal',   write:false, manageUsers:false, viewMovimientos:true,  viewActividad:true,  esProveedora:false, av:'JE' },
-  proveedora:   { name:'Proveedora',   rol:'Proveedora externa',  perm:'Consulta de stock y reposición',      tipo:'Cuenta personal',   write:false, manageUsers:false, viewMovimientos:false, viewActividad:false, esProveedora:true,  av:'PR' },
+  enfermeria:   { name:'Enfermería',   rol:'Administrador',       perm:'Lectura y escritura',                 tipo:'Cuenta compartida', write:true,  manageUsers:false, viewMovimientos:true,  viewActividad:false, esProveedora:false, viewTrazabilidad:false, av:'EN' },
+  coordinadora: { name:'Coordinadora', rol:'Coordinadora',        perm:'Gestión de usuarios y catálogo',      tipo:'Cuenta personal',   write:false, manageUsers:true,  viewMovimientos:true,  viewActividad:false, esProveedora:false, viewTrazabilidad:true,  av:'CO' },
+  jefa:         { name:'Jefa',         rol:'Jefa de enfermería',  perm:'Consulta y supervisión',              tipo:'Cuenta personal',   write:false, manageUsers:false, viewMovimientos:true,  viewActividad:true,  esProveedora:false, viewTrazabilidad:true,  av:'JE' },
+  proveedora:   { name:'Proveedora',   rol:'Proveedora externa',  perm:'Consulta de stock y reposición',      tipo:'Cuenta personal',   write:false, manageUsers:false, viewMovimientos:false, viewActividad:false, esProveedora:true,  viewTrazabilidad:true,  av:'PR' },
 };
 
 /* ---------- Helpers ---------- */
@@ -157,6 +157,11 @@ function applyRole(){
   }
   document.querySelectorAll('.enfermeria-only:not(.page)').forEach(e => e.style.display = info.write ? '' : 'none');
   document.querySelectorAll('.coordinadora-only:not(.page)').forEach(e => e.style.display = info.manageUsers ? '' : 'none');
+  // Clases en <body> para que también se oculten los elementos que se dibujan
+  // después (filas de Stock y Movimientos con botones por rol).
+  document.body.classList.toggle('rol-sin-escritura', !info.write);
+  document.body.classList.toggle('rol-sin-gestion', !info.manageUsers);
+  document.body.classList.toggle('rol-sin-traz', !info.viewTrazabilidad);
   // Vistas específicas por rol — se usa la clase 'role-hidden' con !important
   // en CSS para garantizar que el toggle siempre se aplique bien y no dependa
   // del display default del elemento (que puede ser flex, block o inline-flex).
@@ -490,7 +495,8 @@ function renderStockRow(r, ETIQ) {
       <td data-label="Vencimiento">${dash}</td>
       <td data-label="Dosis disponibles"><span style="color:var(--muted)">0 dosis</span></td>
       <td data-label="Estado"><span class="pill nostock">${ETIQ.nostock}</span></td>
-      <td></td>
+      <td class="enfermeria-only"></td>
+      <td class="traz-only"></td>
     </tr>`;
   }
   // Fila normal con lote
@@ -528,7 +534,7 @@ function renderStockRow(r, ETIQ) {
       <button class="btn subtle sm" onclick="openEditLote('${payload}')" title="Corregir número de lote, vencimiento o cantidad">Editar</button>
       <button class="btn subtle sm" style="color:var(--err);margin-left:6px" onclick="eliminarLote(${r.id}, '${(r.vacuna || '').replace(/'/g, '&apos;')}', '${(r.numero_lote || '').replace(/'/g, '&apos;')}')" title="Eliminar el lote (solo si no tiene aplicaciones ni descartes)">Eliminar</button>
     </td>
-    <td class="coordinadora-only" style="text-align:right;white-space:nowrap">
+    <td class="traz-only" style="text-align:right;white-space:nowrap">
       <button class="btn-traz" onclick="verTrazabilidad(${r.id})" title="Ver información completa del lote y datos del laboratorio">
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10zM11 11l3 3M7 5v4M5 7h4"/></svg>
         <span>Detalles</span>
@@ -1332,7 +1338,8 @@ function renderTrazabilidad(d) {
     eliminacion: ['Eliminación del lote', 'eli'],
   };
 
-  const timelineHtml = historial.length ? historial.map(m => {
+  const conHistorial = Array.isArray(historial);
+  const timelineHtml = !conHistorial ? '' : historial.length ? historial.map(m => {
     const [lbl, cls] = TIPO_LBL[m.tipo] || [m.tipo, ''];
     return `
       <div class="traz-timeline-item">
@@ -1416,13 +1423,14 @@ function renderTrazabilidad(d) {
 
     ${frascosHtml}
 
-    <!-- Historial completo -->
+    <!-- Historial completo (no se muestra a la proveedora) -->
+    ${conHistorial ? `
     <div class="traz-section">
       <h5 class="traz-section-title">Historial completo (${historial.length} ${historial.length === 1 ? 'movimiento' : 'movimientos'})</h5>
       <div class="traz-timeline">
         ${timelineHtml}
       </div>
-    </div>
+    </div>` : ''}
   `;
 }
 
