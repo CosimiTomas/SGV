@@ -182,6 +182,7 @@ async function bootstrapDatabase() {
       'Salk',
       'Tetravalente contra el Dengue',
       'Triple bacteriana acelular (dTpa)',
+      'Triple bacteriana celular (DPT)',
       'Triple viral (SRP)',
       'VPH nonavalente',
       'Varicela',
@@ -201,15 +202,33 @@ async function bootstrapDatabase() {
 
     // Vacunas multidosis (confirmadas con la clienta).
     // El UPDATE es idempotente: si ya tienen el valor correcto no hace nada.
+    // dTpa es MONODOSIS. DPT es la que viene multidosis (10). Son dos
+    // vacunas distintas y en deploys previos se habían confundido.
+    const monodosis = [
+      ['Triple bacteriana acelular (dTpa)',  1],
+    ];
     const multidosis = [
       ['Hepatitis B',                        10],
       ['Doble bacteriana (dT)',              10],
-      ['Triple bacteriana acelular (dTpa)',  10],
+      ['Triple bacteriana celular (DPT)',    10],
       ['Salk',                                5],
     ];
-    for (const [nombre, dpf] of multidosis) {
+    for (const [nombre, dpf] of [...monodosis, ...multidosis]) {
       await conn.query('UPDATE vacunas SET dosis_por_frasco = ? WHERE nombre = ?', [dpf, nombre]);
     }
+    // Si la dTpa quedó mal en una base vieja y tiene frascos abiertos,
+    // los cerramos para que no sigan apareciendo alertas inválidas.
+    await conn.query(
+      `UPDATE frascos_abiertos f
+         JOIN lotes l ON l.id = f.lote_id
+         JOIN vacunas v ON v.id = l.vacuna_id
+          SET f.estado = 'agotado',
+              f.fecha_cierre = CURDATE(),
+              f.motivo_cierre = 'Cerrado por cambio a monodosis'
+        WHERE v.nombre = 'Triple bacteriana acelular (dTpa)'
+          AND v.dosis_por_frasco = 1
+          AND f.estado = 'activo'`
+    );
 
     // Auto-seed de usuarios si la tabla está vacía y SEED_ON_BOOT=true
     if (process.env.SEED_ON_BOOT === 'true') {
@@ -582,13 +601,58 @@ app.post('/api/lotes', requireAuth, requireRole('enfermeria'), async (req, res) 
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
+    const numLote = numero_lote.trim();
+    const cant = Number(cantidad);
+
+    // ¿Ya hay un lote con mismo número y vacuna? Entonces es más stock del
+    // mismo lote, no uno nuevo. Sumamos al existente para que no queden
+    // dos filas duplicadas en Stock (pedido de la clienta: dos cargas
+    // del mismo lote deben acumularse).
+    const [[existente]] = await conn.query(
+      `SELECT id, cantidad_inicial, disponible, vencimiento
+         FROM lotes
+        WHERE vacuna_id = ? AND numero_lote = ?
+        LIMIT 1 FOR UPDATE`,
+      [vacuna_id, numLote]
+    );
+
+    if (existente) {
+      // Si cargaron un vencimiento distinto para el mismo número de lote,
+      // avisamos: puede ser un typo o puede que no sea el mismo lote.
+      // Nos quedamos con el ya cargado y no mezclamos silenciosamente.
+      if (String(existente.vencimiento).slice(0, 10) !== vencimiento) {
+        await conn.rollback();
+        return res.status(409).json({
+          error: `Ya existe un lote con el número "${numLote}" para esta vacuna, pero con otro vencimiento (${String(existente.vencimiento).slice(0, 10)}). Revisá los datos antes de cargarlo.`
+        });
+      }
+      await conn.query(
+        `UPDATE lotes
+            SET cantidad_inicial = cantidad_inicial + ?,
+                disponible       = disponible + ?
+          WHERE id = ?`,
+        [cant, cant, existente.id]
+      );
+      await conn.query(
+        `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, usuario_id, motivo)
+         VALUES ('ingreso',?,?,?,?,?)`,
+        [vacuna_id, existente.id, cant, req.user.id, 'Suma al lote existente']
+      );
+      await conn.commit();
+      return res.status(200).json({
+        ok: true, lote_id: existente.id, acumulado: true,
+        total_disponible: Number(existente.disponible) + cant,
+        mensaje: `Se sumaron ${cant} dosis al lote existente (ahora quedan ${Number(existente.disponible) + cant}).`
+      });
+    }
+
     const [r] = await conn.query(
       `INSERT INTO lotes (vacuna_id, numero_lote, vencimiento, cantidad_inicial, disponible) VALUES (?,?,?,?,?)`,
-      [vacuna_id, numero_lote.trim(), vencimiento, cantidad, cantidad]
+      [vacuna_id, numLote, vencimiento, cant, cant]
     );
     await conn.query(
       `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, usuario_id) VALUES ('ingreso',?,?,?,?)`,
-      [vacuna_id, r.insertId, cantidad, req.user.id]
+      [vacuna_id, r.insertId, cant, req.user.id]
     );
     await conn.commit();
     res.status(201).json({ ok: true, lote_id: r.insertId, mensaje: 'Lote ingresado con éxito.' });
