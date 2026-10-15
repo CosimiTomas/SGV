@@ -230,6 +230,44 @@ async function bootstrapDatabase() {
           AND f.estado = 'activo'`
     );
 
+    // Migración idempotente: fusionar lotes duplicados (misma vacuna +
+    // mismo número de lote + mismo vencimiento). El pedido original de
+    // la clienta: dos cargas del mismo lote tienen que acumularse.
+    // Para cada grupo duplicado, nos quedamos con el id más chico,
+    // sumamos cantidades, movemos movimientos y frascos al "superviviente"
+    // y borramos los demás. Si no hay duplicados no hace nada.
+    const [duplicados] = await conn.query(
+      `SELECT vacuna_id, numero_lote, vencimiento,
+              MIN(id) AS keeper_id,
+              GROUP_CONCAT(id) AS ids,
+              SUM(cantidad_inicial) AS suma_inicial,
+              SUM(disponible) AS suma_disponible
+         FROM lotes
+        GROUP BY vacuna_id, numero_lote, vencimiento
+       HAVING COUNT(*) > 1`
+    );
+    for (const g of duplicados) {
+      const todos = g.ids.split(',').map(Number);
+      const perdedores = todos.filter(id => id !== g.keeper_id);
+      // Mover movimientos y frascos al lote que sobrevive
+      await conn.query(
+        `UPDATE movimientos SET lote_id = ? WHERE lote_id IN (?)`,
+        [g.keeper_id, perdedores]
+      );
+      await conn.query(
+        `UPDATE frascos_abiertos SET lote_id = ? WHERE lote_id IN (?)`,
+        [g.keeper_id, perdedores]
+      );
+      // Sumar cantidades al superviviente (reemplazamos con la suma total)
+      await conn.query(
+        `UPDATE lotes SET cantidad_inicial = ?, disponible = ? WHERE id = ?`,
+        [Number(g.suma_inicial), Number(g.suma_disponible), g.keeper_id]
+      );
+      // Borrar los duplicados
+      await conn.query(`DELETE FROM lotes WHERE id IN (?)`, [perdedores]);
+      console.log(`[migracion] Fusionados ${perdedores.length} lote(s) duplicado(s) en id ${g.keeper_id} (${g.numero_lote})`);
+    }
+
     // Auto-seed de usuarios si la tabla está vacía y SEED_ON_BOOT=true
     if (process.env.SEED_ON_BOOT === 'true') {
       const [[{ n }]] = await conn.query('SELECT COUNT(*) AS n FROM usuarios');
