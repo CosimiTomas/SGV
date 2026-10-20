@@ -185,48 +185,69 @@
   .app{display:none;min-height:100vh;flex-direction:column}
   .app.on{display:flex}
 
-  /* Header limpio: fondo blanco plano, una sola línea abajo, sin
-     degradés, patrones ni franjas decorativas. La paleta SGV aparece
-     solo en el acento del tab activo. */
+  /* Header: fondo blanco con un detalle institucional discreto —
+     un degradé fino abajo (teal → lima) que acompaña, pero no invade. */
   .topbar{
     background:#fff;
-    border-bottom:1px solid var(--line);
-    padding:10px 24px;
-    display:flex; align-items:center; gap:14px;
+    padding:11px 24px;
+    display:flex; align-items:center; gap:16px;
     position:sticky; top:0; z-index:50; flex-wrap:wrap;
+    border-bottom:1px solid var(--line);
+    box-shadow:0 1px 2px rgba(20,40,38,0.03);
   }
+  .topbar::after{
+    content:"";
+    position:absolute; left:0; right:0; bottom:-1px; height:2px;
+    background:linear-gradient(90deg,
+      var(--teal) 0%,
+      var(--teal) 18%,
+      var(--lime) 32%,
+      rgba(166,206,57,0.35) 48%,
+      transparent 72%);
+    pointer-events:none;
+  }
+  .topbar > *{ position:relative; z-index:1; }
 
   .topbar-logo{
-    height:36px; width:auto; display:block;
+    height:38px; width:auto; display:block;
+    padding:3px;
+    border-radius:8px;
+    background:var(--teal-ghost);
+    transition:background .15s ease;
   }
+  .topbar-logo:hover{ background:var(--teal-tint); }
 
   .topbar-brand{
     display:flex; flex-direction:column;
-    line-height:1.1;
+    line-height:1.15;
   }
   .topbar-title-main{
     font-family:var(--font-display);
-    font-size:18px;
+    font-size:19px;
     font-weight:700;
-    letter-spacing:-0.01em;
+    letter-spacing:-0.015em;
     color:var(--teal-deep);
   }
   .topbar-title-sub{
-    font-size:11px;
+    font-size:10.5px;
     font-weight:500;
     color:var(--muted);
-    margin-top:2px;
+    letter-spacing:.02em;
+    margin-top:3px;
   }
 
-  /* Divisor vertical liviano */
+  /* Divisor vertical fino con un leve degradé teal */
   .topbar-divider{
-    width:1px; height:28px;
-    background:var(--line);
+    width:1px; height:32px;
+    background:linear-gradient(180deg,
+      transparent 0%,
+      rgba(15,169,158,0.22) 50%,
+      transparent 100%);
   }
 
   .topbar-context{
     display:flex; flex-direction:column;
-    line-height:1.2;
+    line-height:1.25;
   }
   .topbar-context-main{
     display:flex; flex-direction:column;
@@ -240,12 +261,13 @@
     color:var(--ink);
     font-size:13.5px;
     font-weight:600;
+    margin-top:1px;
   }
 
   .topbar .spacer{flex:1}
 
   @media (max-width: 900px){
-    .topbar{ padding:9px 16px; gap:10px; }
+    .topbar{ padding:9px 16px; gap:12px; }
     .topbar-brand{ display:none; }
     .topbar-divider{ display:none; }
     .topbar-institucion{ display:none; }
@@ -267,39 +289,47 @@
   .role-pill.r{background:#EEF2F1;color:var(--muted);border:1px solid var(--line)}
 
   .acct{
-    display:flex; align-items:center; gap:8px; cursor:pointer;
-    padding:4px 10px 4px 4px; border-radius:999px;
-    transition:background .15s;
+    display:flex; align-items:center; gap:9px; cursor:pointer;
+    padding:4px 12px 4px 4px; border-radius:999px;
+    border:1px solid transparent;
+    transition:background .15s ease, border-color .15s ease;
   }
-  .acct:hover{background:var(--teal-ghost)}
+  .acct:hover{background:var(--teal-ghost); border-color:rgba(15,169,158,0.18)}
   .acct .av{
-    width:30px;height:30px;border-radius:50%;
-    display:grid;place-items:center;color:#fff;font-weight:600;font-size:11px;
-    background:var(--teal);
+    width:32px;height:32px;border-radius:50%;
+    display:grid;place-items:center;color:#fff;font-weight:700;font-size:11.5px;
+    background:linear-gradient(135deg, var(--teal) 0%, var(--teal-deep) 100%);
+    box-shadow:0 1px 2px rgba(7,104,98,0.18);
   }
 
-  /* Navegación tipo tabs — más chica, sin círculo decorativo */
+  /* Nav de pestañas, con un subrayado teal que acompaña el acento del header */
   .nav{
     background:#fff;
     border-bottom:1px solid var(--line);
     padding:0 24px;
-    display:flex; gap:2px;
+    display:flex; gap:4px;
     justify-content:center;
     overflow-x:auto;
-    position:sticky; top:57px; z-index:40;
+    position:sticky; top:60px; z-index:40;
     scrollbar-width:thin;
   }
   .nav::-webkit-scrollbar{height:4px}
   .nav::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
   .nav-item{
-    padding:12px 16px;
+    padding:13px 18px;
     color:var(--muted); font-size:14px; font-weight:500;
     border-bottom:2px solid transparent;
     white-space:nowrap;
-    transition:color .15s, border-color .15s;
+    transition:color .15s ease, border-color .15s ease, background .15s ease;
+    border-radius:4px 4px 0 0;
   }
-  .nav-item:hover{color:var(--ink)}
-  .nav-item.active{color:var(--teal-deep); border-bottom-color:var(--teal); font-weight:600}
+  .nav-item:hover{color:var(--teal-deep); background:var(--teal-ghost)}
+  .nav-item.active{
+    color:var(--teal-deep);
+    border-bottom-color:var(--teal);
+    font-weight:600;
+    background:transparent;
+  }
 
   .content{padding:32px 28px 56px;max-width:1400px;width:100%;margin:0 auto;flex:1}
 
