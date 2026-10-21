@@ -357,9 +357,13 @@
         <div class="panel-head"><h4>Ingresar lote nuevo</h4></div>
         <div class="form-body">
           <div class="grid2">
-            <div><label>Vacuna <span class="req">*</span></label><select id="lo-vac" onchange="toggleLoteMulti()" class="select-nice"><option value="">Seleccionar…</option></select></div>
-            <div><label>Número de lote <span class="req">*</span></label><input id="lo-num" placeholder="Ej: L-2026-A"></div>
-            <div><label>Fecha de vencimiento <span class="req">*</span></label><input id="lo-venc" type="date"></div>
+            <div><label>Vacuna <span class="req">*</span></label><select id="lo-vac" onchange="toggleLoteMulti();checkLoteExistente()" class="select-nice"><option value="">Seleccionar…</option></select></div>
+            <div>
+              <label>Número de lote <span class="req">*</span></label>
+              <input id="lo-num" placeholder="Ej: L-2026-A" oninput="checkLoteExistente()">
+              <div id="lo-existe-hint" class="lote-hint" style="display:none"></div>
+            </div>
+            <div><label>Fecha de vencimiento <span class="req">*</span></label><input id="lo-venc" type="date" oninput="checkLoteExistente()"></div>
             <div>
               <label id="lo-cant-lbl">Cantidad de dosis <span class="req">*</span></label>
               <input id="lo-cant" type="number" placeholder="0" min="1" oninput="toggleLoteMulti()">

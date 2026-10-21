@@ -393,7 +393,7 @@ app.get('/api/stock', requireAuth, async (req, res) => {
     // Así traemos también las vacunas sin lotes y sabemos si un lote
     // multidosis tiene un frasco abierto en curso.
     const [rows] = await pool.query(
-      `SELECT l.id, v.nombre AS vacuna, v.dosis_por_frasco, l.numero_lote, l.vencimiento,
+      `SELECT l.id, v.id AS vacuna_id, v.nombre AS vacuna, v.dosis_por_frasco, l.numero_lote, l.vencimiento,
               l.cantidad_inicial, l.disponible,
               CASE WHEN l.vencimiento IS NULL THEN NULL
                    ELSE DATEDIFF(l.vencimiento, CURDATE()) END AS dias_para_vencer,

@@ -914,21 +914,57 @@ async function saveLote(){
   const d = dpf($('lo-vac').value);
   const cantidad = multi ? Number($('lo-cant').value) * d : Number($('lo-cant').value);
   try{
-    await api('/lotes', { method:'POST', body: JSON.stringify({
+    const r = await api('/lotes', { method:'POST', body: JSON.stringify({
       vacuna_id: $('lo-vac').value,
       numero_lote: $('lo-num').value,
       vencimiento: $('lo-venc').value,
       cantidad,
     })});
-    msg('lo-msg',''); toast('ok','Lote ingresado con éxito');
+    msg('lo-msg','');
+    // El backend avisa si acumuló; mostramos el mensaje tal cual.
+    toast('ok', r.mensaje || 'Lote ingresado con éxito');
     clearLote();
     await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
     go('stock');
   }catch(err){ msg('lo-msg','err', err.message); }
 }
+
+/**
+ * Mientras cargan un lote, buscamos si el número ya existe en el stock
+ * para esa vacuna. Si coincide todo, avisamos que las dosis se van a
+ * SUMAR al lote existente. Si el vencimiento no coincide, avisamos
+ * en amarillo porque puede ser un typo.
+ */
+function checkLoteExistente(){
+  const hint = $('lo-existe-hint');
+  if (!hint) return;
+  const vacId = $('lo-vac').value;
+  const num = ($('lo-num').value || '').trim();
+  const venc = $('lo-venc').value;
+  if (!vacId || !num) { hint.style.display = 'none'; return; }
+  // Buscamos en el stock un lote con misma vacuna + mismo número.
+  const match = (STOCK_CACHE || []).find(r =>
+    String(r.id || '') &&
+    String(r.vacuna_id) === String(vacId) &&
+    (r.numero_lote || '').trim().toLowerCase() === num.toLowerCase()
+  );
+  if (!match) { hint.style.display = 'none'; return; }
+  const vencMatch = String(match.vencimiento).slice(0,10);
+  if (venc && venc !== vencMatch) {
+    hint.style.display = 'block';
+    hint.className = 'lote-hint warn';
+    hint.innerHTML = `<b>Mismo número, otro vencimiento.</b> El lote <b>${num}</b> ya está cargado pero vence el <b>${fmtFecha(vencMatch)}</b>. Si querés sumarle dosis, usá la misma fecha. Si en serio es otro lote, cambiá el número.`;
+    return;
+  }
+  const disp = match.disponible;
+  hint.style.display = 'block';
+  hint.className = 'lote-hint ok';
+  hint.innerHTML = `<b>Este lote ya existe</b> (vence ${fmtFecha(vencMatch)}, quedan ${disp} ${disp === 1 ? 'dosis' : 'dosis'}). Las dosis que cargues ahora se van a <b>sumar</b> al lote existente.`;
+}
 function clearLote(){
   ['lo-vac','lo-num','lo-venc','lo-cant'].forEach(id=>{ $(id).value=''; $(id).classList.remove('bad'); });
   $('lo-msg').innerHTML='';
+  const h = $('lo-existe-hint'); if (h) h.style.display = 'none';
   toggleLoteMulti();
 }
 

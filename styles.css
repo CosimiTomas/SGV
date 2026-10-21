@@ -573,6 +573,31 @@
   }
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
 
+  /* Aviso debajo del campo "número de lote" cuando el lote ya existe */
+  .lote-hint{
+    margin-top:8px;
+    padding:10px 12px;
+    border-radius:8px;
+    font-size:12.5px;
+    line-height:1.4;
+    border:1px solid transparent;
+    border-left-width:3px;
+  }
+  .lote-hint.ok{
+    background:var(--teal-ghost);
+    border-color:rgba(15,169,158,0.25);
+    border-left-color:var(--teal);
+    color:var(--ink);
+  }
+  .lote-hint.ok b{ color:var(--teal-deep); }
+  .lote-hint.warn{
+    background:var(--warn-tint);
+    border-color:rgba(166,106,15,0.25);
+    border-left-color:var(--warn);
+    color:var(--ink);
+  }
+  .lote-hint.warn b{ color:var(--warn); }
+
   /* Sección Mi cuenta */
   .account-card{
     display:flex; gap:18px; align-items:center;
