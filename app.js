@@ -1322,32 +1322,53 @@ function openEditLote(payloadEncoded) {
     const data = JSON.parse(decodeURIComponent(payloadEncoded));
     _editandoLoteId = data.id;
     _editandoLoteInfo = data;
-    $('el-vacuna').value = data.vacuna;
+
+    // Encabezado con el nombre de la vacuna + número de lote actual
+    const dpf = Number(data.dosis_por_frasco) || 1;
+    const esMultidosis = dpf > 1;
+    const chip = esMultidosis ? ` · Frasco × ${dpf}` : '';
+    $('el-vacuna-txt').innerHTML = `${data.vacuna}<small style="color:var(--muted);font-weight:500">${chip} · Lote ${data.numero_lote}</small>`;
+
+    // Bloque principal: dosis que hay ahora
+    const dispActual = Number(data.disponible || 0);
+    $('el-disp').value = dispActual;
+    $('el-disp-actual').textContent = dispActual + (dispActual === 1 ? ' dosis' : ' dosis');
+    $('el-disp-cambio').style.display = 'none';
+    $('el-disp').classList.remove('bad');
+    // Al cambiar el valor, mostrar en vivo el delta
+    $('el-disp').oninput = () => {
+      const nuevo = Number($('el-disp').value);
+      const cambio = $('el-disp-cambio');
+      if (!Number.isFinite(nuevo) || nuevo === dispActual) {
+        cambio.style.display = 'none';
+        return;
+      }
+      const diff = nuevo - dispActual;
+      const signo = diff > 0 ? '+' : '';
+      cambio.style.display = 'block';
+      cambio.className = 'el-disp-cambio ' + (diff > 0 ? 'up' : 'down');
+      cambio.innerHTML = `Se va a <b>${diff > 0 ? 'sumar' : 'descontar'}</b> ${Math.abs(diff)} ${Math.abs(diff) === 1 ? 'dosis' : 'dosis'} (quedarán <b>${nuevo}</b>).`;
+    };
+
+    // Bloque secundario: datos del lote (colapsado)
     $('el-num').value = data.numero_lote;
-    // vencimiento viene como "YYYY-MM-DD" desde el backend (ISO)
     $('el-venc').value = typeof data.vencimiento === 'string'
       ? data.vencimiento.slice(0, 10)
       : new Date(data.vencimiento).toISOString().slice(0, 10);
 
-    // Campo cantidad: si es multidosis, editamos en FRASCOS para que sea intuitivo.
-    // Si es monodosis, editamos en DOSIS directamente.
-    const dpf = Number(data.dosis_por_frasco) || 1;
-    const esMultidosis = dpf > 1;
     const cantInicial = Number(data.cantidad_inicial) || 0;
     if (esMultidosis) {
       $('el-cant').value = cantInicial / dpf;
       $('el-cant').step = 1;
-      $('el-cant-label').innerHTML = `Cantidad de frascos <span class="req">*</span>`;
+      $('el-cant-label').innerHTML = `Cantidad de frascos que entraron <span class="req">*</span>`;
       $('el-cant-hint').textContent = `Cada frasco tiene ${dpf} dosis. Total actual: ${cantInicial} dosis.`;
     } else {
       $('el-cant').value = cantInicial;
       $('el-cant').step = 1;
-      $('el-cant-label').innerHTML = `Cantidad de dosis <span class="req">*</span>`;
+      $('el-cant-label').innerHTML = `Cantidad de dosis que entraron <span class="req">*</span>`;
       $('el-cant-hint').textContent = '';
     }
-
-    // Aviso si el lote ya tuvo movimientos: no se puede bajar la cantidad por debajo de lo usado
-    const usadas = cantInicial - Number(data.disponible || 0);
+    const usadas = cantInicial - dispActual;
     if (usadas > 0) {
       const unidad = esMultidosis ? Math.ceil(usadas / dpf) + ' frasco(s) equivalente(s)' : usadas + ' dosis';
       $('el-cant-hint').textContent += ` Mínimo editable: ${unidad} (ya usadas).`;
@@ -1357,7 +1378,11 @@ function openEditLote(payloadEncoded) {
     $('el-venc').classList.remove('bad');
     $('el-cant').classList.remove('bad');
     $('el-msg').innerHTML = '';
+    // Que el bloque secundario arranque colapsado
+    const det = document.querySelector('#ovEditLote .el-datos');
+    if (det) det.open = false;
     $('ovEditLote').classList.add('on');
+    setTimeout(() => $('el-disp').focus(), 100);
   } catch (err) {
     toast('err', 'No se pudo abrir la edición del lote.');
   }
@@ -1367,24 +1392,33 @@ async function saveEditLote() {
   const numero = $('el-num').value.trim();
   const venc = $('el-venc').value;
   const cantRaw = $('el-cant').value;
+  const dispRaw = $('el-disp').value;
   let bad = false;
   if (!numero) { $('el-num').classList.add('bad'); bad = true; } else $('el-num').classList.remove('bad');
   if (!venc)   { $('el-venc').classList.add('bad'); bad = true; } else $('el-venc').classList.remove('bad');
   if (!cantRaw || Number(cantRaw) <= 0) { $('el-cant').classList.add('bad'); bad = true; } else $('el-cant').classList.remove('bad');
-  if (bad) return msg('el-msg', 'err', 'Completá todos los campos.');
+  if (dispRaw === '' || !Number.isInteger(Number(dispRaw)) || Number(dispRaw) < 0) {
+    $('el-disp').classList.add('bad'); bad = true;
+  } else $('el-disp').classList.remove('bad');
+  if (bad) return msg('el-msg', 'err', 'Completá los campos correctamente.');
 
-  // Si es multidosis, el campo son frascos → traducir a dosis totales para el backend
   const dpf = Number(_editandoLoteInfo?.dosis_por_frasco) || 1;
   const cantidadDosis = dpf > 1 ? Number(cantRaw) * dpf : Number(cantRaw);
+  const nuevoDisp = Number(dispRaw);
 
   try {
     const r = await api(`/lotes/${_editandoLoteId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ numero_lote: numero, vencimiento: venc, cantidad: cantidadDosis }),
+      body: JSON.stringify({
+        numero_lote: numero,
+        vencimiento: venc,
+        cantidad: cantidadDosis,
+        disponible: nuevoDisp,
+      }),
     });
     closeOv('ovEditLote');
     toast('ok', r.mensaje || 'Lote actualizado.');
-    await Promise.all([loadStock(), loadDashboard()]);
+    await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
   } catch (err) {
     msg('el-msg', 'err', err.message);
   }

@@ -628,6 +628,98 @@
     border-color:var(--warn);
   }
 
+  /* Modal "Editar lote": el campo principal es "Dosis que hay ahora".
+     Está destacado arriba y el resto (número, venc, cant inicial) va
+     colapsado abajo porque casi nunca se tocan. */
+  .el-vac-head{
+    display:flex; flex-direction:column; gap:2px;
+    padding-bottom:12px; margin-bottom:14px;
+    border-bottom:1px solid var(--line-soft);
+  }
+  .el-vac-label{
+    font-size:11px; font-weight:600; letter-spacing:.04em;
+    color:var(--muted); text-transform:uppercase;
+  }
+  .el-vac-nombre{
+    font-size:16px; font-weight:700; color:var(--ink);
+    display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;
+  }
+
+  .el-bloque-principal{
+    background:var(--teal-ghost);
+    border:1px solid rgba(15,169,158,0.18);
+    border-radius:10px;
+    padding:16px 18px;
+    margin-bottom:16px;
+  }
+  .el-disp-label{
+    display:block;
+    font-size:13px; font-weight:600;
+    color:var(--teal-deep);
+    margin-bottom:8px;
+  }
+  .el-disp-input{
+    width:100%;
+    padding:14px 16px !important;
+    font-size:22px !important;
+    font-weight:700 !important;
+    text-align:center;
+    border:2px solid rgba(15,169,158,0.35) !important;
+    background:#fff !important;
+    border-radius:8px !important;
+  }
+  .el-disp-input:focus{
+    outline:none;
+    border-color:var(--teal) !important;
+    box-shadow:0 0 0 3px rgba(15,169,158,0.14) !important;
+  }
+  .el-disp-hint{
+    font-size:12px; color:var(--muted);
+    margin-top:8px; text-align:center;
+  }
+  .el-disp-hint b{ color:var(--ink); }
+  .el-disp-cambio{
+    margin-top:10px;
+    padding:8px 12px;
+    border-radius:6px;
+    font-size:12.5px;
+    text-align:center;
+    background:#fff;
+    border:1px solid var(--line);
+  }
+  .el-disp-cambio.up{ color:var(--teal-deep); border-color:rgba(15,169,158,0.3); }
+  .el-disp-cambio.down{ color:var(--warn); border-color:rgba(166,106,15,0.3); }
+
+  .el-datos{
+    border:1px solid var(--line);
+    border-radius:8px;
+    overflow:hidden;
+  }
+  .el-datos > summary{
+    cursor:pointer;
+    padding:10px 14px;
+    font-size:13px;
+    font-weight:500;
+    color:var(--muted);
+    list-style:none;
+    display:flex; align-items:center; gap:8px;
+    background:var(--surface, #FAFBFB);
+  }
+  .el-datos > summary::before{
+    content:'▸';
+    display:inline-block;
+    transition:transform .15s ease;
+    font-size:10px;
+    color:var(--muted);
+  }
+  .el-datos[open] > summary::before{ transform:rotate(90deg); }
+  .el-datos > summary::-webkit-details-marker{ display:none; }
+  .el-datos > summary:hover{ color:var(--ink); }
+  .el-datos-body{
+    padding:14px 16px 16px;
+    border-top:1px solid var(--line-soft);
+  }
+
   /* Sección Mi cuenta */
   .account-card{
     display:flex; gap:18px; align-items:center;

@@ -489,26 +489,43 @@
   <div class="modal">
     <div class="modal-head"><h4>Editar lote</h4><button class="x" onclick="closeOv('ovEditLote')">×</button></div>
     <div class="modal-body">
-      <p style="color:var(--muted);font-size:13px;margin-bottom:12px">
-        Corregí errores de carga del lote. La vacuna no se puede modificar para preservar la trazabilidad.
-      </p>
-      <div style="margin-bottom:12px">
-        <label>Vacuna</label>
-        <input id="el-vacuna" type="text" disabled style="opacity:.7;cursor:not-allowed">
+
+      <!-- Vacuna como título chico, no como campo editable -->
+      <div class="el-vac-head">
+        <div class="el-vac-label">Vacuna</div>
+        <div id="el-vacuna-txt" class="el-vac-nombre">—</div>
       </div>
-      <div style="margin-bottom:12px">
-        <label>Número de lote <span class="req">*</span></label>
-        <input id="el-num" type="text" placeholder="Ej: L-2026-A">
+
+      <!-- Bloque principal: lo que la enfermera va a usar casi siempre.
+           "Dosis que hay ahora" bien grande y visible. -->
+      <div class="el-bloque-principal">
+        <label for="el-disp" class="el-disp-label">Dosis que hay ahora</label>
+        <input id="el-disp" type="number" min="0" step="1" class="el-disp-input" placeholder="0">
+        <div id="el-disp-hint" class="el-disp-hint">En el sistema hay <b id="el-disp-actual">0</b>. Si contaste otro número, poné el real acá.</div>
+        <div id="el-disp-cambio" class="el-disp-cambio" style="display:none"></div>
       </div>
-      <div style="margin-bottom:12px">
-        <label>Fecha de vencimiento <span class="req">*</span></label>
-        <input id="el-venc" type="date">
-      </div>
-      <div>
-        <label id="el-cant-label">Cantidad de dosis <span class="req">*</span></label>
-        <input id="el-cant" type="number" min="1" placeholder="Ej: 10">
-        <div id="el-cant-hint" style="font-size:11.5px;color:var(--muted);margin-top:4px"></div>
-      </div>
+
+      <!-- Bloque secundario: datos del lote. Colapsado por defecto porque
+           casi nunca se tocan. Un botón para desplegarlo. -->
+      <details class="el-datos">
+        <summary>Corregir datos del lote (número, vencimiento, cantidad inicial)</summary>
+        <div class="el-datos-body">
+          <div style="margin-bottom:12px">
+            <label>Número de lote <span class="req">*</span></label>
+            <input id="el-num" type="text" placeholder="Ej: L-2026-A">
+          </div>
+          <div style="margin-bottom:12px">
+            <label>Fecha de vencimiento <span class="req">*</span></label>
+            <input id="el-venc" type="date">
+          </div>
+          <div>
+            <label id="el-cant-label">Cantidad de dosis que entraron <span class="req">*</span></label>
+            <input id="el-cant" type="number" min="1" placeholder="Ej: 10">
+            <div id="el-cant-hint" style="font-size:11.5px;color:var(--muted);margin-top:4px"></div>
+          </div>
+        </div>
+      </details>
+
       <div id="el-msg" style="margin-top:10px"></div>
     </div>
     <div class="modal-foot">

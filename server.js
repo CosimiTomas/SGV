@@ -723,7 +723,7 @@ app.post('/api/lotes', requireAuth, requireRole('enfermeria'), async (req, res) 
  * trazabilidad de los movimientos ya registrados.
  */
 app.patch('/api/lotes/:id', requireAuth, requireRole('enfermeria'), async (req, res) => {
-  const { numero_lote, vencimiento, cantidad } = req.body;
+  const { numero_lote, vencimiento, cantidad, disponible: dispAjuste } = req.body;
   if (!numero_lote || !vencimiento)
     return res.status(400).json({ error: 'Completá el número de lote y la fecha de vencimiento.' });
   if (!/^\d{4}-\d{2}-\d{2}$/.test(vencimiento))
@@ -772,6 +772,23 @@ app.patch('/api/lotes/:id', requireAuth, requireRole('enfermeria'), async (req, 
       nuevoDisponible = nueva - usadas;
     }
 
+    // Ajuste directo de "dosis disponibles ahora" (recuento físico).
+    // Si el nuevo disponible es mayor que la cantidad inicial, subimos
+    // también cantidad_inicial para mantener la invariante disponible <= inicial.
+    let ajusteDosis = 0; // delta de dosis disponibles, para el motivo
+    if (dispAjuste !== undefined && dispAjuste !== null) {
+      const nd = Number(dispAjuste);
+      if (!Number.isInteger(nd) || nd < 0) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'Las dosis disponibles tienen que ser un número entero mayor o igual a 0.' });
+      }
+      ajusteDosis = nd - nuevoDisponible;
+      if (ajusteDosis !== 0) {
+        nuevoDisponible = nd;
+        if (nd > nuevaCantidad) nuevaCantidad = nd;
+      }
+    }
+
     await conn.query(
       'UPDATE lotes SET numero_lote = ?, vencimiento = ?, cantidad_inicial = ?, disponible = ? WHERE id = ?',
       [numero_lote.trim(), vencimiento, nuevaCantidad, nuevoDisponible, req.params.id]
@@ -798,6 +815,10 @@ app.patch('/api/lotes/:id', requireAuth, requireRole('enfermeria'), async (req, 
     if (lote.numero_lote !== numNuevo) cambios.push(`N° lote: ${lote.numero_lote} → ${numNuevo}`);
     if (vencOrig !== vencimiento) cambios.push(`Venc: ${vencOrig} → ${vencimiento}`);
     if (nuevaCantidad !== lote.cantidad_inicial) cambios.push(`Cant: ${lote.cantidad_inicial} → ${nuevaCantidad}`);
+    if (ajusteDosis !== 0) {
+      const signo = ajusteDosis > 0 ? '+' : '';
+      cambios.push(`Ajuste stock físico: ${lote.disponible} → ${nuevoDisponible} (${signo}${ajusteDosis} dosis)`);
+    }
 
     if (cambios.length > 0) {
       const motivoTxt = cambios.join(' · ').slice(0, 200);
