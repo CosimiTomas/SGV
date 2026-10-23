@@ -30,6 +30,19 @@ const SECRET = process.env.JWT_SECRET || 'dev_secret';
 const UMBRAL_STOCK_BAJO = 10;
 const DIAS_VENCIMIENTO = 15;     // por vencer: dentro de 15 días
 
+// Normaliza cualquier valor DATE que devuelve mysql2 (Date, string ISO,
+// string "YYYY-MM-DD") a "YYYY-MM-DD" en hora local, sin shift por UTC.
+function toYMD(v) {
+  if (!v) return '';
+  if (typeof v === 'string') return v.slice(0, 10);
+  const d = v instanceof Date ? v : new Date(v);
+  if (isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 /* ------------------------------------------------------------
  * Conexión a MySQL
  * Acepta variables de Railway (MYSQL*) y locales (DB_*).
@@ -658,10 +671,13 @@ app.post('/api/lotes', requireAuth, requireRole('enfermeria'), async (req, res) 
       // Si cargaron un vencimiento distinto para el mismo número de lote,
       // avisamos: puede ser un typo o puede que no sea el mismo lote.
       // Nos quedamos con el ya cargado y no mezclamos silenciosamente.
-      if (String(existente.vencimiento).slice(0, 10) !== vencimiento) {
+      // mysql2 devuelve DATE como objeto Date; hay que formatear a YYYY-MM-DD
+      // sin pasar por toISOString() (que shiftea por zona horaria).
+      const vencExistente = toYMD(existente.vencimiento);
+      if (vencExistente !== vencimiento) {
         await conn.rollback();
         return res.status(409).json({
-          error: `Ya existe un lote con el número "${numLote}" para esta vacuna, pero con otro vencimiento (${String(existente.vencimiento).slice(0, 10)}). Revisá los datos antes de cargarlo.`
+          error: `Ya existe un lote con el número "${numLote}" para esta vacuna, pero con otro vencimiento (${vencExistente}). Revisá los datos antes de cargarlo.`
         });
       }
       await conn.query(

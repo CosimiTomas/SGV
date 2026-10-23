@@ -942,14 +942,19 @@ function checkLoteExistente(){
   const num = ($('lo-num').value || '').trim();
   const venc = $('lo-venc').value;
   if (!vacId || !num) { hint.style.display = 'none'; return; }
+  // Nombre de la vacuna seleccionada, por si STOCK_CACHE todavía no trae
+  // vacuna_id (en deploys viejos no venía en /api/stock).
+  const sel = $('lo-vac');
+  const nombreVac = sel.options[sel.selectedIndex]?.textContent?.trim() || '';
   // Buscamos en el stock un lote con misma vacuna + mismo número.
-  const match = (STOCK_CACHE || []).find(r =>
-    String(r.id || '') &&
-    String(r.vacuna_id) === String(vacId) &&
-    (r.numero_lote || '').trim().toLowerCase() === num.toLowerCase()
-  );
+  const match = (STOCK_CACHE || []).find(r => {
+    if (!r.id) return false;
+    const mismaVac = String(r.vacuna_id) === String(vacId) ||
+                     (nombreVac && (r.vacuna || '').trim() === nombreVac);
+    return mismaVac && (r.numero_lote || '').trim().toLowerCase() === num.toLowerCase();
+  });
   if (!match) { hint.style.display = 'none'; return; }
-  const vencMatch = String(match.vencimiento).slice(0,10);
+  const vencMatch = String(match.vencimiento || '').slice(0,10);
   if (venc && venc !== vencMatch) {
     hint.style.display = 'block';
     hint.className = 'lote-hint warn';
