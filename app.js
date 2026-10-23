@@ -955,16 +955,33 @@ function checkLoteExistente(){
   });
   if (!match) { hint.style.display = 'none'; return; }
   const vencMatch = String(match.vencimiento || '').slice(0,10);
+  const btnFecha = `<button type="button" class="lote-hint-btn" onclick="completarVencLote('${vencMatch}')">Usar esta fecha</button>`;
   if (venc && venc !== vencMatch) {
     hint.style.display = 'block';
     hint.className = 'lote-hint warn';
-    hint.innerHTML = `<b>Mismo número, otro vencimiento.</b> El lote <b>${num}</b> ya está cargado pero vence el <b>${fmtFecha(vencMatch)}</b>. Si querés sumarle dosis, usá la misma fecha. Si en serio es otro lote, cambiá el número.`;
+    hint.innerHTML = `<b>Mismo número, otro vencimiento.</b> El lote <b>${num}</b> ya está cargado pero vence el <b>${fmtFecha(vencMatch)}</b>. Si en serio es otro lote, cambiá el número. ${btnFecha}`;
     return;
   }
   const disp = match.disponible;
   hint.style.display = 'block';
   hint.className = 'lote-hint ok';
-  hint.innerHTML = `<b>Este lote ya existe</b> (vence ${fmtFecha(vencMatch)}, quedan ${disp} ${disp === 1 ? 'dosis' : 'dosis'}). Las dosis que cargues ahora se van a <b>sumar</b> al lote existente.`;
+  const extraBtn = venc ? '' : btnFecha;
+  hint.innerHTML = `<b>Este lote ya existe</b> (vence ${fmtFecha(vencMatch)}, quedan ${disp} ${disp === 1 ? 'dosis' : 'dosis'}). Las dosis que cargues ahora se van a <b>sumar</b> al lote existente. ${extraBtn}`;
+}
+
+/**
+ * Completa el campo de vencimiento con la fecha del lote existente,
+ * para que el enfermero solo tenga que escribir la cantidad.
+ * Después manda el foco a Cantidad.
+ */
+function completarVencLote(ymd){
+  const venc = $('lo-venc');
+  if (!venc) return;
+  venc.value = ymd;
+  venc.classList.remove('bad');
+  checkLoteExistente();
+  const cant = $('lo-cant');
+  if (cant) cant.focus();
 }
 function clearLote(){
   ['lo-vac','lo-num','lo-venc','lo-cant'].forEach(id=>{ $(id).value=''; $(id).classList.remove('bad'); });
