@@ -673,7 +673,9 @@ function renderMovimientos(){
     // Edición y eliminación son registros de auditoría, no se pueden borrar.
     const puedeEliminar = m.tipo === 'aplicacion' || m.tipo === 'descarte';
     const btnEliminar = puedeEliminar
-      ? `<button class="btn subtle sm" style="color:var(--err)" onclick="eliminarMovimiento(${m.id}, '${lbl}', '${(m.vacuna || '').replace(/'/g, '&apos;')}', ${m.cantidad})" title="Eliminar movimiento y devolver las dosis al stock">Eliminar</button>`
+      ? `<button class="btn-eliminar-icon" onclick="eliminarMovimiento(${m.id}, '${lbl}', '${(m.vacuna || '').replace(/'/g, '&apos;')}', ${m.cantidad})" title="Eliminar movimiento y devolver las dosis al stock" aria-label="Eliminar movimiento">
+           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3 4h10M6 4V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1M4 4l1 9a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1l1-9M7 7v4M9 7v4"/></svg>
+         </button>`
       : '<span class="muted-dash">—</span>';
     return `<tr>
        <td data-label="Fecha mov.">${fmtFecha(m.fecha_mov)}</td>
