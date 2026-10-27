@@ -822,8 +822,17 @@
   #ovTrazabilidad .traz-section-historial{ padding:14px 14px 10px; }
   #ovTrazabilidad .traz-timeline{ min-height:120px; }
 
-  /* Botón de icono "eliminar" para Movimientos — ocupa muy poco y mantiene
-     la columna angosta así no se corta en pantallas chicas. */
+  /* Columna "Acciones" en Movimientos: ancho fijo compacto, todo centrado
+     para que el ícono quede alineado con el header y no empuje la tabla. */
+  .col-acciones{
+    width:72px;
+    min-width:72px;
+    text-align:center !important;
+    white-space:nowrap;
+  }
+
+  /* Botón de icono "eliminar" para Movimientos — ocupa muy poco y queda
+     centrado dentro de la columna de Acciones. */
   .btn-eliminar-icon{
     display:inline-flex; align-items:center; justify-content:center;
     width:30px; height:30px;
@@ -833,10 +842,14 @@
     color:var(--err);
     cursor:pointer;
     transition:background .15s ease, border-color .15s ease;
+    vertical-align:middle;
   }
   .btn-eliminar-icon:hover{
     background:var(--err-tint, #FDE8E4);
     border-color:rgba(180,35,24,0.2);
+  }
+  .btn-eliminar-icon:active{
+    transform:scale(0.95);
   }
   .traz-timeline-scroll{
     flex:1 1 auto;

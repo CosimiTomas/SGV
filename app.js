@@ -686,7 +686,7 @@ function renderMovimientos(){
        <td data-label="Motivo">${m.motivo || '<span class="muted-dash">—</span>'}</td>
        <td data-label="Cant.">${m.cantidad}</td>
        <td data-label="Resp.">${m.responsable}</td>
-       <td data-label="Acciones" class="enfermeria-only" style="text-align:right;white-space:nowrap">${btnEliminar}</td>
+       <td data-label="Acciones" class="enfermeria-only col-acciones">${btnEliminar}</td>
      </tr>`; }).join('')
     : '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">Sin movimientos que coincidan con los filtros.</td></tr>';
 
