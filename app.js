@@ -19,7 +19,13 @@ function msg(id,type,text){
   const ic = type==='err' ? '✕' : type==='ok' ? '✓' : '!';
   $(id).innerHTML = text ? `<div class="msg ${type}"><span class="ic">${ic}</span><span>${text}</span></div>` : '';
 }
-function today(){ return new Date().toISOString().slice(0,10); }
+// Fecha de hoy en hora LOCAL (no UTC). Con toISOString(), después de las
+// 21 hs de Argentina daba el día siguiente.
+function today(){ return ymdLocal(new Date()); }
+function ymdLocal(d){
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
 function fmtFecha(d){
   if(!d) return '<span class="muted-dash">—</span>';
   const s = String(d).slice(0,10).split('-');
@@ -186,17 +192,19 @@ function applyRole(){
 }
 
 /* ---------- Navegación ---------- */
-const TITLES = { inicio:'Inicio', stock:'Stock', mov:'Movimientos', aplicar:'Aplicación', descarte:'Descarte', lote:'Ingresar lote', usuarios:'Usuarios', cuenta:'Mi cuenta' };
+const TITLES = { inicio:'Inicio', stock:'Stock', mov:'Movimientos', estadisticas:'Estadísticas', aplicar:'Aplicación', descarte:'Descarte', lote:'Ingresar lote', usuarios:'Usuarios', cuenta:'Mi cuenta' };
 function go(page){
   // Bloquear acceso por URL a vistas sin permiso
   const info = ROL_INFO[USER.rol];
   if (['aplicar','descarte','lote'].includes(page) && !info.write) page = 'inicio';
   if (page === 'usuarios' && !info.manageUsers) page = 'inicio';
   if (page === 'mov' && !info.viewMovimientos) page = 'inicio';
+  if (page === 'estadisticas' && !info.manageUsers) page = 'inicio';
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   $('page-'+page).classList.add('on');
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page===page));
   if (page === 'aplicar' && !$('ap-fecha').value) $('ap-fecha').value = today();
+  if (page === 'estadisticas') loadEstadisticas();
   window.scrollTo(0,0);
 }
 
@@ -1787,3 +1795,313 @@ function enhanceAllSelects() {
 
 /* ---------- Init ---------- */
 $('p').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
+
+/* ============================================================
+   ESTADÍSTICAS — solo coordinadora
+   Pide /api/estadisticas para el período elegido y dibuja:
+   indicadores, evolución de aplicaciones, ranking de vacunas,
+   descartes por motivo, actividad por día y cobertura del stock.
+   ============================================================ */
+let EST_DATA = null;
+let EST_ORDEN = { k: 'aplicadas', dir: -1 };
+const nfmt = (n, dec = 0) => Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+const escHtml = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+// Calcula desde/hasta según la opción del desplegable
+function estRango() {
+  const op = $('est-rango').value;
+  const hoy = new Date();
+  const hasta = ymdLocal(hoy);
+  if (op === 'custom') {
+    return { desde: $('est-desde').value || hasta, hasta: $('est-hasta').value || hasta };
+  }
+  if (op === 'mes')  return { desde: ymdLocal(new Date(hoy.getFullYear(), hoy.getMonth(), 1)), hasta };
+  if (op === 'anio') return { desde: ymdLocal(new Date(hoy.getFullYear(), 0, 1)), hasta };
+  const n = Number(op) || 30;
+  const d = new Date(hoy); d.setDate(d.getDate() - (n - 1));
+  return { desde: ymdLocal(d), hasta };
+}
+
+function estOnRangoChange() {
+  const custom = $('est-rango').value === 'custom';
+  $('est-desde-wrap').style.display = custom ? '' : 'none';
+  $('est-hasta-wrap').style.display = custom ? '' : 'none';
+  if (custom && !$('est-desde').value) {
+    const r = estRango(); // completa con los últimos 30 días como punto de partida
+    const d = new Date(); d.setDate(d.getDate() - 29);
+    $('est-desde').value = ymdLocal(d); $('est-hasta').value = r.hasta;
+  }
+  loadEstadisticas();
+}
+
+async function loadEstadisticas() {
+  const { desde, hasta } = estRango();
+  const pagina = $('page-estadisticas');
+  pagina.classList.add('est-cargando');
+  $('est-msg').innerHTML = '';
+  try {
+    EST_DATA = await api(`/estadisticas?desde=${desde}&hasta=${hasta}`);
+    renderEstadisticas();
+  } catch (err) {
+    msg('est-msg', 'err', 'No se pudieron cargar las estadísticas: ' + escHtml(err.message));
+  } finally {
+    pagina.classList.remove('est-cargando');
+  }
+}
+
+function excelEstadisticas() {
+  const { desde, hasta } = estRango();
+  descargarArchivo(`/estadisticas/excel?desde=${desde}&hasta=${hasta}`, `SGV_estadisticas_${desde}_a_${hasta}.xlsx`);
+}
+
+function renderEstadisticas() {
+  const d = EST_DATA; if (!d) return;
+  const p = d.periodo;
+  $('est-periodo-txt').textContent =
+    `Del ${fmtFecha(p.desde)} al ${fmtFecha(p.hasta)} · ${p.dias} ${p.dias === 1 ? 'día' : 'días'}. Las comparaciones son contra los ${p.dias} días anteriores.`;
+  estRenderKpis(d.kpis);
+  estRenderSerie();
+  estRenderBarras('est-top', d.top_vacunas.map(v => ({ label: v.vacuna, valor: v.dosis })), 8,
+    'Sin aplicaciones registradas en el período.', 'vacunas más (ver la tabla de abajo)');
+  estRenderBarras('est-motivos', d.motivos.map(m => ({ label: m.motivo, valor: m.dosis })), 8,
+    'Sin descartes registrados en el período.');
+  estRenderDow(d.dia_semana);
+  estRenderCobertura(d.por_vacuna);
+  estRenderTabla();
+}
+
+/* ---------- Indicadores ---------- */
+// Variación contra el período anterior. "subeEsBueno" decide el color de la flecha.
+function estDelta(actual, previo, subeEsBueno, sufijo = '%', esPuntos = false) {
+  if (!previo && !actual) return '<span class="est-delta neutro">Sin movimiento en ambos períodos</span>';
+  if (!previo) return '<span class="est-delta neutro">Sin datos del período anterior</span>';
+  const diff = esPuntos ? (actual - previo) : ((actual - previo) / previo) * 100;
+  const r = Math.round(diff * 10) / 10;
+  if (r === 0) return '<span class="est-delta neutro">= Igual que el período anterior</span>';
+  const sube = r > 0;
+  const clase = subeEsBueno === null ? 'neutro' : ((sube === subeEsBueno) ? 'bien' : 'mal');
+  const flecha = sube ? '▲' : '▼';
+  const txt = esPuntos ? `${sube ? '+' : ''}${nfmt(r, 1)} pts` : `${sube ? '+' : ''}${nfmt(r, Math.abs(r) < 10 ? 1 : 0)}${sufijo}`;
+  return `<span class="est-delta ${clase}"><b>${flecha} ${txt}</b> vs. período anterior</span>`;
+}
+
+function estRenderKpis(k) {
+  const tile = (titulo, valor, detalle, delta = '') => `
+    <div class="est-kpi">
+      <div class="est-kpi-lab">${titulo}</div>
+      <div class="est-kpi-num">${valor}</div>
+      <div class="est-kpi-det">${detalle}</div>
+      ${delta}
+    </div>`;
+  $('est-kpis').innerHTML = [
+    tile('Dosis aplicadas', nfmt(k.aplicadas), `en ${nfmt(k.registros_aplicacion)} ${k.registros_aplicacion === 1 ? 'registro' : 'registros'}`,
+      estDelta(k.aplicadas, k.aplicadas_prev, true)),
+    tile('Promedio diario', nfmt(k.promedio_diario, 1), 'dosis aplicadas por día'),
+    tile('Dosis descartadas', nfmt(k.descartadas), 'por vencimiento, rotura u otros',
+      estDelta(k.descartadas, k.descartadas_prev, false)),
+    tile('Tasa de descarte', `${nfmt(k.tasa_descarte, 1)}<small>%</small>`, 'de las dosis usadas se descartaron',
+      estDelta(k.tasa_descarte, k.tasa_descarte_prev, false, '', true)),
+    tile('Dosis ingresadas', nfmt(k.ingresadas), 'recibidas en lotes nuevos',
+      estDelta(k.ingresadas, k.ingresadas_prev, null)),
+    tile('Stock actual', nfmt(k.stock_total), 'dosis vigentes hoy'),
+  ].join('');
+}
+
+/* ---------- Evolución de aplicaciones (barras SVG con tooltip) ---------- */
+const MESES_CORTOS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+const DIAS_CORTOS = ['dom','lun','mar','mié','jue','vie','sáb'];
+function estFechaCorta(ymd) { const [, m, d] = ymd.split('-'); return `${d}/${m}`; }
+function estEtiquetaPunto(pt, gran, larga) {
+  if (gran === 'mes') { const [y, m] = pt.desde.split('-'); return `${MESES_CORTOS[Number(m) - 1]}${larga ? ' ' + y : ' ' + y.slice(2)}`; }
+  if (gran === 'semana') return larga ? `Semana del ${fmtFecha(pt.desde)} al ${fmtFecha(pt.hasta)}` : estFechaCorta(pt.desde);
+  if (larga) { const [y, m, dd] = pt.desde.split('-').map(Number); return `${DIAS_CORTOS[new Date(y, m - 1, dd).getDay()]} ${fmtFecha(pt.desde)}`; }
+  return estFechaCorta(pt.desde);
+}
+function estMaxLindo(v) {
+  if (v <= 4) return 4;
+  const pot = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (m * pot >= v) return m * pot;
+  return 10 * pot;
+}
+
+function estRenderSerie() {
+  const cont = $('est-serie');
+  const { granularidad: gran, puntos } = EST_DATA.serie;
+  const sub = { dia: 'Dosis aplicadas por día', semana: 'Dosis aplicadas por semana', mes: 'Dosis aplicadas por mes' }[gran];
+  $('est-serie-sub').textContent = sub;
+  const total = puntos.reduce((s, p) => s + p.dosis, 0);
+  if (!total) { cont.innerHTML = '<div class="est-vacio">Sin aplicaciones registradas en el período.</div>'; return; }
+
+  const W = Math.max(cont.clientWidth || 800, 320), H = 250;
+  const m = { t: 18, r: 12, b: 30, l: 40 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const n = puntos.length;
+  const max = estMaxLindo(Math.max(...puntos.map(p => p.dosis)));
+  const banda = pw / n;
+  const gap = Math.max(2, Math.min(8, banda * 0.28));
+  const bw = Math.max(1.5, banda - gap);
+  const y = v => m.t + ph - (v / max) * ph;
+  const r = bw >= 8 ? 4 : (bw >= 4 ? 2 : 0);
+
+  // Grilla y eje Y (4 líneas, recesivas)
+  let svg = '';
+  for (let i = 0; i <= 4; i++) {
+    const v = (max / 4) * i, yy = y(v);
+    svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}" class="est-grid${i === 0 ? ' base' : ''}"/>`;
+    svg += `<text x="${m.l - 8}" y="${yy + 4}" class="est-eje" text-anchor="end">${nfmt(v)}</text>`;
+  }
+  // Barras (con esquinas superiores redondeadas, apoyadas en la base)
+  puntos.forEach((p, i) => {
+    if (!p.dosis) return;
+    const x = m.l + i * banda + gap / 2, top = y(p.dosis), base = y(0), h = base - top;
+    const rr = Math.min(r, h, bw / 2);
+    svg += `<path class="est-bar" data-i="${i}" d="M${x},${base} V${top + rr} Q${x},${top} ${x + rr},${top} H${x + bw - rr} Q${x + bw},${top} ${x + bw},${top + rr} V${base} Z"/>`;
+  });
+  // Línea de promedio (solo por día)
+  if (gran === 'dia') {
+    const prom = total / n, yy = y(prom);
+    svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}" class="est-prom"/>`;
+    svg += `<text x="${W - m.r}" y="${yy - 6}" class="est-prom-txt" text-anchor="end">Promedio ${nfmt(prom, 1)}</text>`;
+  }
+  // Etiquetas del eje X (a lo sumo ~8)
+  const paso = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(pw / 80))));
+  puntos.forEach((p, i) => {
+    if (i % paso !== 0 && i !== n - 1) return;
+    if (i === n - 1 && i % paso !== 0 && (n - 1) % paso < paso * 0.6) return; // evita choques con la anterior
+    svg += `<text x="${m.l + i * banda + banda / 2}" y="${H - 8}" class="est-eje" text-anchor="middle">${estEtiquetaPunto(p, gran, false)}</text>`;
+  });
+  // Zonas de hover más grandes que las barras
+  puntos.forEach((p, i) => {
+    svg += `<rect class="est-hit" data-i="${i}" x="${m.l + i * banda}" y="${m.t}" width="${banda}" height="${ph}"/>`;
+  });
+  cont.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="${sub}">${svg}</svg>`;
+
+  const tip = $('est-tip');
+  cont.querySelectorAll('.est-hit').forEach(el => {
+    const i = Number(el.dataset.i), p = puntos[i];
+    el.addEventListener('mousemove', e => {
+      cont.querySelectorAll('.est-bar').forEach(b => b.classList.toggle('on', Number(b.dataset.i) === i));
+      tip.innerHTML = `<div class="est-tip-t">${estEtiquetaPunto(p, gran, true)}</div><div><b>${nfmt(p.dosis)}</b> ${p.dosis === 1 ? 'dosis aplicada' : 'dosis aplicadas'}</div>`;
+      estMoverTip(e);
+    });
+    el.addEventListener('mouseleave', () => {
+      tip.classList.remove('on');
+      cont.querySelectorAll('.est-bar.on').forEach(b => b.classList.remove('on'));
+    });
+  });
+}
+function estMoverTip(e) {
+  const tip = $('est-tip');
+  tip.classList.add('on');
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = e.clientX + 14, yy = e.clientY - h - 12;
+  if (x + w > window.innerWidth - 8) x = e.clientX - w - 14;
+  if (yy < 8) yy = e.clientY + 16;
+  tip.style.left = x + 'px'; tip.style.top = yy + 'px';
+}
+// Redibuja el gráfico de evolución si cambia el ancho de la ventana
+let _estResize;
+window.addEventListener('resize', () => {
+  clearTimeout(_estResize);
+  _estResize = setTimeout(() => {
+    if (EST_DATA && $('page-estadisticas')?.classList.contains('on')) estRenderSerie();
+  }, 150);
+});
+
+/* ---------- Barras horizontales (ranking y motivos) ---------- */
+function estRenderBarras(id, items, limite, vacio, textoMas) {
+  const cont = $(id);
+  if (!items.length) { cont.innerHTML = `<div class="est-vacio">${vacio}</div>`; return; }
+  const max = Math.max(...items.map(i => i.valor)) || 1;
+  const total = items.reduce((s, i) => s + i.valor, 0);
+  const vis = items.slice(0, limite);
+  cont.innerHTML = `<ul class="est-hbars">${vis.map(it => {
+    const pct = Math.round((it.valor / total) * 100);
+    return `<li title="${escHtml(it.label)}: ${nfmt(it.valor)} dosis (${pct}% del total)">
+      <span class="est-hb-label">${escHtml(it.label)}</span>
+      <span class="est-hb-track"><span class="est-hb-fill" style="width:${Math.max(2, (it.valor / max) * 100)}%"></span></span>
+      <span class="est-hb-val">${nfmt(it.valor)} <small>${pct}%</small></span>
+    </li>`;
+  }).join('')}</ul>${items.length > limite && textoMas ? `<div class="est-mas">+ ${items.length - limite} ${textoMas}</div>` : ''}`;
+}
+
+/* ---------- Día de la semana ---------- */
+function estRenderDow(dias) {
+  const cont = $('est-dow');
+  const max = Math.max(...dias.map(d => d.dosis));
+  if (!max) { cont.innerHTML = '<div class="est-vacio">Sin aplicaciones registradas en el período.</div>'; return; }
+  const top = dias.reduce((a, b) => (b.dosis > a.dosis ? b : a));
+  cont.innerHTML = `
+    <div class="est-dow">${dias.map(d => `
+      <div class="est-dow-col${d === top ? ' top' : ''}" title="${d.dia}: ${nfmt(d.dosis)} dosis">
+        <span class="est-dow-val">${d.dosis ? nfmt(d.dosis) : ''}</span>
+        <span class="est-dow-track"><span class="est-dow-bar" style="height:${d.dosis ? Math.max(3, (d.dosis / max) * 100) : 0}%"></span></span>
+        <span class="est-dow-lab">${d.dia.slice(0, 3)}</span>
+      </div>`).join('')}
+    </div>
+    <div class="est-nota">El día con más aplicaciones es el <b>${top.dia.toLowerCase()}</b> (${nfmt(top.dosis)} dosis).</div>`;
+}
+
+/* ---------- Cobertura del stock ---------- */
+function estEstadoCobertura(v) {
+  if (v.stock === 0) return { cls: 'critica', txt: 'Sin stock' };
+  if (v.cobertura_dias < 15) return { cls: 'critica', txt: 'Crítica' };
+  if (v.cobertura_dias < 30) return { cls: 'baja', txt: 'Baja' };
+  return { cls: 'buena', txt: 'Buena' };
+}
+function estRenderCobertura(porVac) {
+  const cont = $('est-cobertura');
+  const conUso = porVac.filter(v => v.cobertura_dias !== null)
+    .sort((a, b) => a.cobertura_dias - b.cobertura_dias);
+  const sinUso = porVac.length - conUso.length;
+  if (!conUso.length) { cont.innerHTML = '<div class="est-vacio">No hubo consumo en el período para estimar la cobertura.</div>'; return; }
+  const vis = conUso.slice(0, 6);
+  cont.innerHTML = `<ul class="est-cob">${vis.map(v => {
+    const e = estEstadoCobertura(v);
+    const dias = v.stock === 0 ? 'Sin dosis' : `≈ ${nfmt(v.cobertura_dias)} ${v.cobertura_dias === 1 ? 'día' : 'días'}`;
+    return `<li>
+      <div class="est-cob-txt">
+        <b>${escHtml(v.vacuna)}</b>
+        <small>Stock ${nfmt(v.stock)} · consumo ${nfmt(v.consumo_diario, 1)}/día</small>
+      </div>
+      <div class="est-cob-dias">${dias}</div>
+      <span class="est-cob-pill ${e.cls}">${e.txt}</span>
+    </li>`;
+  }).join('')}</ul>
+  <div class="est-nota">Se muestran las ${vis.length} con menos días de cobertura.${sinUso ? ` ${sinUso} ${sinUso === 1 ? 'vacuna no tuvo' : 'vacunas no tuvieron'} consumo en el período.` : ''}</div>`;
+}
+
+/* ---------- Tabla por vacuna (ordenable) ---------- */
+function estOrdenar(k) {
+  EST_ORDEN = EST_ORDEN.k === k ? { k, dir: -EST_ORDEN.dir } : { k, dir: (k === 'vacuna' || k === 'cobertura_dias') ? 1 : -1 };
+  estRenderTabla();
+}
+function estRenderTabla() {
+  const rows = [...(EST_DATA?.por_vacuna || [])];
+  const { k, dir } = EST_ORDEN;
+  rows.sort((a, b) => {
+    let va = a[k], vb = b[k];
+    if (k === 'vacuna') return dir * String(va).localeCompare(String(vb), 'es');
+    if (va === null) va = dir > 0 ? Infinity : -Infinity; // "sin consumo" va al final
+    if (vb === null) vb = dir > 0 ? Infinity : -Infinity;
+    return dir * (va - vb) || a.vacuna.localeCompare(b.vacuna, 'es');
+  });
+  document.querySelectorAll('.est-tabla th').forEach(th => {
+    th.classList.toggle('ord', th.dataset.k === k);
+    th.dataset.dir = th.dataset.k === k ? (dir > 0 ? 'asc' : 'desc') : '';
+  });
+  $('est-tabla-body').innerHTML = rows.map(v => {
+    const cob = v.cobertura_dias === null
+      ? '<span class="muted-dash">Sin consumo</span>'
+      : (() => { const e = estEstadoCobertura(v); return `<span class="est-cob-pill ${e.cls}">${v.stock === 0 ? 'Sin stock' : nfmt(v.cobertura_dias) + ' días'}</span>`; })();
+    return `<tr>
+      <td data-label="Vacuna"><b>${escHtml(v.vacuna)}</b>${chipMulti(v.dosis_por_frasco)}</td>
+      <td data-label="Aplicadas" class="num">${nfmt(v.aplicadas)}</td>
+      <td data-label="Descartadas" class="num">${v.descartadas ? nfmt(v.descartadas) : '<span class="muted-dash">—</span>'}</td>
+      <td data-label="Ingresadas" class="num">${v.ingresadas ? nfmt(v.ingresadas) : '<span class="muted-dash">—</span>'}</td>
+      <td data-label="Stock actual" class="num">${nfmt(v.stock)}</td>
+      <td data-label="Consumo / día" class="num">${v.consumo_diario ? nfmt(v.consumo_diario, 1) : '<span class="muted-dash">—</span>'}</td>
+      <td data-label="Cobertura" class="num">${cob}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="est-vacio">Sin vacunas activas.</td></tr>';
+}

@@ -68,6 +68,7 @@
     <button class="nav-item enfermeria-only" data-page="lote" onclick="go('lote')">Ingresar lote</button>
     <button class="nav-item enfermeria-only" data-page="descarte" onclick="go('descarte')">Descarte</button>
     <button class="nav-item hide-proveedora" data-page="mov" onclick="go('mov')">Movimientos</button>
+    <button class="nav-item coordinadora-only" data-page="estadisticas" onclick="go('estadisticas')">Estadísticas</button>
     <button class="nav-item coordinadora-only" data-page="usuarios" onclick="go('usuarios')">Usuarios</button>
     <button class="nav-item coordinadora-only" data-page="catalogo" onclick="go('catalogo')">Vacunas</button>
     <button class="nav-item" data-page="cuenta" onclick="go('cuenta')">Mi cuenta</button>
@@ -377,6 +378,126 @@
           </div>
         </div>
       </div>
+    </section>
+
+    <!-- ESTADÍSTICAS (solo coordinadora) -->
+    <section class="page coordinadora-only" id="page-estadisticas">
+      <div class="page-head">
+        <div>
+          <h1>Estadísticas</h1>
+          <div class="sub" id="est-periodo-txt">Uso de vacunas, descartes y cobertura del stock.</div>
+        </div>
+      </div>
+
+      <!-- Filtros de período: una sola fila arriba de todo -->
+      <div class="est-filtros">
+        <div class="est-campo">
+          <label for="est-rango">Período</label>
+          <select id="est-rango" class="select-nice" onchange="estOnRangoChange()">
+            <option value="7">Últimos 7 días</option>
+            <option value="30" selected>Últimos 30 días</option>
+            <option value="90">Últimos 90 días</option>
+            <option value="mes">Este mes</option>
+            <option value="anio">Este año</option>
+            <option value="custom">Personalizado…</option>
+          </select>
+        </div>
+        <div class="est-campo" id="est-desde-wrap" style="display:none">
+          <label for="est-desde">Desde</label>
+          <input type="date" id="est-desde" onchange="loadEstadisticas()">
+        </div>
+        <div class="est-campo" id="est-hasta-wrap" style="display:none">
+          <label for="est-hasta">Hasta</label>
+          <input type="date" id="est-hasta" onchange="loadEstadisticas()">
+        </div>
+        <div class="spacer"></div>
+        <button class="btn subtle sm" onclick="excelEstadisticas()" title="Descargar el detalle por vacuna del período en Excel">⬇ Excel</button>
+      </div>
+
+      <div id="est-msg"></div>
+
+      <!-- Indicadores principales -->
+      <div class="est-kpis" id="est-kpis"></div>
+
+      <!-- Evolución de aplicaciones -->
+      <div class="panel est-card">
+        <div class="est-card-head">
+          <div>
+            <h4>Aplicaciones en el tiempo</h4>
+            <div class="est-card-sub" id="est-serie-sub">Dosis aplicadas por día</div>
+          </div>
+        </div>
+        <div class="est-chart" id="est-serie"></div>
+      </div>
+
+      <div class="est-grid2">
+        <div class="panel est-card">
+          <div class="est-card-head">
+            <div>
+              <h4>Vacunas más aplicadas</h4>
+              <div class="est-card-sub">Dosis aplicadas en el período</div>
+            </div>
+          </div>
+          <div id="est-top"></div>
+        </div>
+        <div class="panel est-card">
+          <div class="est-card-head">
+            <div>
+              <h4>Descartes por motivo</h4>
+              <div class="est-card-sub">Dosis descartadas en el período</div>
+            </div>
+          </div>
+          <div id="est-motivos"></div>
+        </div>
+      </div>
+
+      <div class="est-grid2">
+        <div class="panel est-card">
+          <div class="est-card-head">
+            <div>
+              <h4>Actividad por día de la semana</h4>
+              <div class="est-card-sub">Total de dosis aplicadas cada día</div>
+            </div>
+          </div>
+          <div id="est-dow"></div>
+        </div>
+        <div class="panel est-card">
+          <div class="est-card-head">
+            <div>
+              <h4>Cobertura del stock</h4>
+              <div class="est-card-sub">Días que alcanza el stock al ritmo de consumo del período</div>
+            </div>
+          </div>
+          <div id="est-cobertura"></div>
+        </div>
+      </div>
+
+      <!-- Detalle por vacuna (también funciona como vista en tabla de los gráficos) -->
+      <div class="panel est-card est-card-tabla">
+        <div class="est-card-head">
+          <div>
+            <h4>Detalle por vacuna</h4>
+            <div class="est-card-sub">Tocá un encabezado para ordenar</div>
+          </div>
+        </div>
+        <div class="tabla-scroll">
+          <table class="est-tabla">
+            <thead><tr>
+              <th data-k="vacuna" onclick="estOrdenar('vacuna')">Vacuna</th>
+              <th data-k="aplicadas" class="num" onclick="estOrdenar('aplicadas')">Aplicadas</th>
+              <th data-k="descartadas" class="num" onclick="estOrdenar('descartadas')">Descartadas</th>
+              <th data-k="ingresadas" class="num" onclick="estOrdenar('ingresadas')">Ingresadas</th>
+              <th data-k="stock" class="num" onclick="estOrdenar('stock')">Stock actual</th>
+              <th data-k="consumo_diario" class="num" onclick="estOrdenar('consumo_diario')">Consumo / día</th>
+              <th data-k="cobertura_dias" class="num" onclick="estOrdenar('cobertura_dias')">Cobertura</th>
+            </tr></thead>
+            <tbody id="est-tabla-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Tooltip compartido de los gráficos -->
+      <div class="est-tip" id="est-tip" role="tooltip"></div>
     </section>
 
     <!-- USUARIOS -->

@@ -1633,6 +1633,250 @@ function fmtFechaARHora(v) {
  * USUARIOS — solo coordinadora
  * ========================================================= */
 const soloCoord = [requireAuth, requireRole('coordinadora')];
+
+/* ===========================================================
+ * ESTADÍSTICAS — solo coordinadora
+ * Resumen de uso del período: aplicaciones, descartes, ingresos,
+ * evolución en el tiempo, ranking por vacuna, motivos de descarte,
+ * actividad por día de la semana y cobertura estimada del stock.
+ * ========================================================= */
+
+// Suma días a una fecha "YYYY-MM-DD" y devuelve otra "YYYY-MM-DD" (sin zona horaria)
+function sumarDias(ymd, n) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + n));
+  return dt.toISOString().slice(0, 10);
+}
+function diasEntre(desde, hasta) {
+  const a = Date.parse(desde + 'T00:00:00Z');
+  const b = Date.parse(hasta + 'T00:00:00Z');
+  return Math.round((b - a) / 864e5) + 1;
+}
+// "Hoy" en hora de Argentina (UTC-3, sin horario de verano), aunque el
+// servidor de Railway corra en UTC.
+function hoyYMD() { return new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10); }
+
+// Agrupa la motivación libre del descarte en categorías fijas
+function categoriaMotivo(m) {
+  const t = String(m || '').toLowerCase();
+  if (t.includes('frasco')) return 'Frasco abierto vencido';
+  if (t.includes('venc')) return 'Vencimiento';
+  if (t.includes('cadena') || t.includes('frío') || t.includes('frio')) return 'Cadena de frío';
+  if (t.includes('rotura') || t.includes('derrame')) return 'Rotura / derrame';
+  return 'Otro';
+}
+
+// Valida y normaliza el rango pedido. Por defecto: últimos 30 días.
+function rangoEstadisticas(q) {
+  const re = /^\d{4}-\d{2}-\d{2}$/;
+  let hasta = re.test(q.hasta || '') ? q.hasta : hoyYMD();
+  let desde = re.test(q.desde || '') ? q.desde : sumarDias(hasta, -29);
+  if (desde > hasta) [desde, hasta] = [hasta, desde];
+  const dias = diasEntre(desde, hasta);
+  if (dias > 1100) return { error: 'El período no puede superar los 3 años.' };
+  return { desde, hasta, dias };
+}
+
+// Fecha efectiva de cada movimiento: la de aplicación si existe, si no la de registro.
+const MOV_CON_FECHA = `
+  SELECT m.tipo, m.vacuna_id, m.cantidad, m.motivo,
+         CASE WHEN m.tipo = 'aplicacion' AND m.fecha_aplicacion IS NOT NULL
+              THEN m.fecha_aplicacion ELSE DATE(m.fecha_mov) END AS f
+    FROM movimientos m
+   WHERE m.tipo IN ('aplicacion','descarte','ingreso')`;
+
+async function calcularEstadisticas(desde, hasta, dias) {
+  const prevHasta = sumarDias(desde, -1);
+  const prevDesde = sumarDias(desde, -dias);
+
+  // 1) Totales del período y del período anterior (para comparar)
+  const [totRows] = await pool.query(
+    `SELECT x.tipo,
+            SUM(CASE WHEN x.f BETWEEN ? AND ? THEN x.cantidad ELSE 0 END) AS dosis,
+            SUM(CASE WHEN x.f BETWEEN ? AND ? THEN 1 ELSE 0 END)          AS registros,
+            SUM(CASE WHEN x.f BETWEEN ? AND ? THEN x.cantidad ELSE 0 END) AS dosis_prev
+       FROM (${MOV_CON_FECHA}) x
+      GROUP BY x.tipo`,
+    [desde, hasta, desde, hasta, prevDesde, prevHasta]
+  );
+  const tot = { aplicacion: {}, descarte: {}, ingreso: {} };
+  totRows.forEach(r => { tot[r.tipo] = { dosis: Number(r.dosis), registros: Number(r.registros), prev: Number(r.dosis_prev) }; });
+  const apl = tot.aplicacion.dosis || 0, aplPrev = tot.aplicacion.prev || 0;
+  const des = tot.descarte.dosis || 0,   desPrev = tot.descarte.prev || 0;
+  const tasa = (a, d) => (a + d) > 0 ? Math.round((d / (a + d)) * 1000) / 10 : 0;
+
+  // 2) Serie diaria de aplicaciones (se completa con ceros y se agrupa abajo)
+  const [diaRows] = await pool.query(
+    `SELECT DATE_FORMAT(x.f, '%Y-%m-%d') AS dia, SUM(x.cantidad) AS dosis
+       FROM (${MOV_CON_FECHA}) x
+      WHERE x.tipo = 'aplicacion' AND x.f BETWEEN ? AND ?
+      GROUP BY dia`,
+    [desde, hasta]
+  );
+  const porDia = new Map(diaRows.map(r => [r.dia, Number(r.dosis)]));
+  const diasSerie = [];
+  for (let i = 0; i < dias; i++) {
+    const d = sumarDias(desde, i);
+    diasSerie.push({ dia: d, dosis: porDia.get(d) || 0 });
+  }
+  let granularidad = 'dia';
+  let puntos = diasSerie.map(p => ({ desde: p.dia, hasta: p.dia, dosis: p.dosis }));
+  if (dias > 370) {
+    granularidad = 'mes';
+    const m = new Map();
+    diasSerie.forEach(p => {
+      const k = p.dia.slice(0, 7);
+      if (!m.has(k)) m.set(k, { desde: p.dia, hasta: p.dia, dosis: 0 });
+      const g = m.get(k); g.hasta = p.dia; g.dosis += p.dosis;
+    });
+    puntos = [...m.values()];
+  } else if (dias > 62) {
+    granularidad = 'semana';
+    puntos = [];
+    for (let i = 0; i < diasSerie.length; i += 7) {
+      const tramo = diasSerie.slice(i, i + 7);
+      puntos.push({ desde: tramo[0].dia, hasta: tramo[tramo.length - 1].dia, dosis: tramo.reduce((s, p) => s + p.dosis, 0) });
+    }
+  }
+
+  // 3) Movimientos agrupados por vacuna y tipo
+  const [vacMovRows] = await pool.query(
+    `SELECT x.vacuna_id, x.tipo, SUM(x.cantidad) AS dosis
+       FROM (${MOV_CON_FECHA}) x
+      WHERE x.f BETWEEN ? AND ?
+      GROUP BY x.vacuna_id, x.tipo`,
+    [desde, hasta]
+  );
+
+  // 4) Stock actual vigente y próximo vencimiento por vacuna
+  const [stockRows] = await pool.query(
+    `SELECT v.id, v.nombre, v.dosis_por_frasco,
+            COALESCE(SUM(CASE WHEN l.vencimiento >= CURDATE() THEN l.disponible ELSE 0 END), 0) AS stock,
+            DATE_FORMAT(MIN(CASE WHEN l.vencimiento >= CURDATE() AND l.disponible > 0 THEN l.vencimiento END), '%Y-%m-%d') AS prox_venc
+       FROM vacunas v
+       LEFT JOIN lotes l ON l.vacuna_id = v.id
+      WHERE v.activa = 1
+      GROUP BY v.id, v.nombre, v.dosis_por_frasco
+      ORDER BY v.nombre`
+  );
+  const movPorVac = new Map();
+  vacMovRows.forEach(r => {
+    if (!movPorVac.has(r.vacuna_id)) movPorVac.set(r.vacuna_id, { aplicacion: 0, descarte: 0, ingreso: 0 });
+    movPorVac.get(r.vacuna_id)[r.tipo] = Number(r.dosis);
+  });
+  const porVacuna = stockRows.map(v => {
+    const mv = movPorVac.get(v.id) || { aplicacion: 0, descarte: 0, ingreso: 0 };
+    const stock = Number(v.stock);
+    const consumoDiario = mv.aplicacion / dias;
+    const cobertura = consumoDiario > 0 ? Math.floor(stock / consumoDiario) : null;
+    return {
+      vacuna_id: v.id,
+      vacuna: v.nombre,
+      dosis_por_frasco: Number(v.dosis_por_frasco),
+      aplicadas: mv.aplicacion,
+      descartadas: mv.descarte,
+      ingresadas: mv.ingreso,
+      stock,
+      consumo_diario: Math.round(consumoDiario * 100) / 100,
+      cobertura_dias: cobertura,
+      prox_venc: v.prox_venc || null,
+    };
+  });
+
+  // 5) Descartes por motivo (categorías fijas)
+  const [motRows] = await pool.query(
+    `SELECT x.motivo, SUM(x.cantidad) AS dosis
+       FROM (${MOV_CON_FECHA}) x
+      WHERE x.tipo = 'descarte' AND x.f BETWEEN ? AND ?
+      GROUP BY x.motivo`,
+    [desde, hasta]
+  );
+  const motMap = new Map();
+  motRows.forEach(r => {
+    const k = categoriaMotivo(r.motivo);
+    motMap.set(k, (motMap.get(k) || 0) + Number(r.dosis));
+  });
+  const motivos = [...motMap.entries()].map(([motivo, dosis]) => ({ motivo, dosis }))
+    .sort((a, b) => b.dosis - a.dosis);
+
+  // 6) Aplicaciones por día de la semana (lunes primero)
+  const [dowRows] = await pool.query(
+    `SELECT WEEKDAY(x.f) AS dow, SUM(x.cantidad) AS dosis
+       FROM (${MOV_CON_FECHA}) x
+      WHERE x.tipo = 'aplicacion' AND x.f BETWEEN ? AND ?
+      GROUP BY dow`,
+    [desde, hasta]
+  );
+  const NOMBRES = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+  const diaSemana = NOMBRES.map((nombre, i) => {
+    const r = dowRows.find(x => Number(x.dow) === i);
+    return { dia: nombre, dosis: r ? Number(r.dosis) : 0 };
+  });
+
+  return {
+    periodo: { desde, hasta, dias, prev_desde: prevDesde, prev_hasta: prevHasta },
+    kpis: {
+      aplicadas: apl,
+      aplicadas_prev: aplPrev,
+      registros_aplicacion: tot.aplicacion.registros || 0,
+      promedio_diario: Math.round((apl / dias) * 10) / 10,
+      descartadas: des,
+      descartadas_prev: desPrev,
+      tasa_descarte: tasa(apl, des),
+      tasa_descarte_prev: tasa(aplPrev, desPrev),
+      ingresadas: tot.ingreso.dosis || 0,
+      ingresadas_prev: tot.ingreso.prev || 0,
+      stock_total: porVacuna.reduce((s, v) => s + v.stock, 0),
+      vacunas_con_uso: porVacuna.filter(v => v.aplicadas > 0).length,
+    },
+    serie: { granularidad, puntos },
+    top_vacunas: porVacuna.filter(v => v.aplicadas > 0)
+      .sort((a, b) => b.aplicadas - a.aplicadas)
+      .map(v => ({ vacuna: v.vacuna, dosis: v.aplicadas })),
+    motivos,
+    dia_semana: diaSemana,
+    por_vacuna: porVacuna,
+  };
+}
+
+app.get('/api/estadisticas', soloCoord, async (req, res) => {
+  const r = rangoEstadisticas(req.query);
+  if (r.error) return res.status(400).json({ error: r.error });
+  try {
+    res.json(await calcularEstadisticas(r.desde, r.hasta, r.dias));
+  } catch (err) {
+    console.error('estadisticas:', err.message);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
+
+app.get('/api/estadisticas/excel', soloCoord, async (req, res) => {
+  const r = rangoEstadisticas(req.query);
+  if (r.error) return res.status(400).json({ error: r.error });
+  try {
+    const e = await calcularEstadisticas(r.desde, r.hasta, r.dias);
+    const fmt = ymd => ymd ? ymd.split('-').reverse().join('/') : '';
+    const rows = e.por_vacuna
+      .sort((a, b) => b.aplicadas - a.aplicadas || a.vacuna.localeCompare(b.vacuna))
+      .map(v => ({
+        'Vacuna': v.vacuna,
+        'Presentación': v.dosis_por_frasco > 1 ? `Frasco × ${v.dosis_por_frasco}` : 'Monodosis',
+        'Dosis aplicadas': v.aplicadas,
+        'Dosis descartadas': v.descartadas,
+        'Dosis ingresadas': v.ingresadas,
+        'Stock actual (dosis)': v.stock,
+        'Consumo promedio por día': v.consumo_diario,
+        'Cobertura estimada (días)': v.cobertura_dias === null ? 'Sin consumo en el período' : v.cobertura_dias,
+        'Próximo vencimiento': fmt(v.prox_venc),
+      }));
+    sendXlsx(res, `SGV_estadisticas_${r.desde}_a_${r.hasta}.xlsx`, 'Estadísticas', rows, {
+      tituloReporte: `SGV — Estadísticas del ${fmt(r.desde)} al ${fmt(r.hasta)} · CAPS San José Obrero`,
+    });
+  } catch (err) {
+    console.error('estadisticas/excel:', err.message);
+    res.status(500).json({ error: 'Error del servidor.' });
+  }
+});
 const ROLES_VALIDOS = ['enfermeria', 'coordinadora', 'jefa', 'proveedora'];
 
 app.get('/api/usuarios', soloCoord, async (req, res) => {
