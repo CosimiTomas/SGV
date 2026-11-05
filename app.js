@@ -1274,7 +1274,9 @@ function renderStockRow(r, ETIQ) {
     <td data-label="Estado"><span class="pill ${r.estado}">${ETIQ[r.estado]}</span></td>
     <td class="enfermeria-only" style="text-align:right;white-space:nowrap">
       <button class="btn subtle sm" onclick="openEditLote('${payload}')" title="Corregir número de lote, vencimiento o cantidad">Editar</button>
-      <button class="btn subtle sm" style="color:var(--err);margin-left:6px" onclick="eliminarLote(${r.id}, '${(r.vacuna || '').replace(/'/g, '&apos;')}', '${(r.numero_lote || '').replace(/'/g, '&apos;')}')" title="Eliminar el lote (solo si no tiene aplicaciones ni descartes)">Eliminar</button>
+      <button class="btn-eliminar-icon" style="margin-left:4px" onclick="eliminarLote(${r.id}, '${(r.vacuna || '').replace(/'/g, '&apos;')}', '${(r.numero_lote || '').replace(/'/g, '&apos;')}')" title="Eliminar el lote (solo si no tiene aplicaciones ni descartes)" aria-label="Eliminar el lote ${(r.numero_lote || '').replace(/'/g, '&apos;')}">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3 4h10M6 4V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1M4 4l1 9a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1l1-9M7 7v4M9 7v4"/></svg>
+      </button>
     </td>
     <td class="traz-only" style="text-align:right;white-space:nowrap">
       <button class="btn-traz" onclick="verTrazabilidad(${r.id})" title="Ver información completa del lote y datos del laboratorio">
@@ -1680,7 +1682,7 @@ function renderUsuarios(){
       <td data-label="Estado"><span class="pill ${u.activo?'act':'ina'}">${u.activo?'Activo':'Inactivo'}</span></td>
       <td data-label="Acciones" style="text-align:right;white-space:nowrap">
         <button class="iconbtn" onclick="openEditarUsuario(${u.id})">Editar</button>
-        <button class="iconbtn" onclick="openResetPass(${u.id})">Resetear</button>
+        <button class="iconbtn" onclick="openResetPass(${u.id})">Restablecer clave</button>
         <button class="iconbtn ${u.activo?'del':''}" onclick="toggleUser(${u.id})" ${esYo?'disabled title="No podés desactivarte a vos misma"':''}>${u.activo?'Desactivar':'Activar'}</button>
       </td>
     </tr>`;
@@ -3243,3 +3245,25 @@ document.addEventListener('keydown', e => {
     else if ($('ovFicha').classList.contains('on')) closeOv('ovFicha');
   }
 });
+
+
+/* ============================================================
+   LOGIN: estante con frascos (mismo dibujo que la heladera) y
+   botón para ver la contraseña.
+   ============================================================ */
+function gateVerClave() {
+  const i = $('p'), b = $('gateVer');
+  const ver = i.type === 'password';
+  i.type = ver ? 'text' : 'password';
+  b.textContent = ver ? 'Ocultar' : 'Mostrar';
+  b.setAttribute('aria-pressed', String(ver));
+  b.setAttribute('aria-label', ver ? 'Ocultar contraseña' : 'Mostrar contraseña');
+  i.focus();
+}
+(function gateEstante() {
+  const cont = $('gateEstante');
+  if (!cont) return;
+  const frascos = [[1, 'ok', .85], [10, 'ok', .55], [1, 'low', .22], [1, 'ok', .95], [5, 'exp', .4], [1, 'ok', .7], [10, 'ok', .9]];
+  cont.innerHTML = frascos.map(([d, est, nivel], i) =>
+    `<span class="gate-frasco" style="--i:${i}">${iniVialSVG({ dosis_por_frasco: d }, est, nivel, false)}</span>`).join('');
+})();

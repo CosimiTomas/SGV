@@ -2539,3 +2539,138 @@ thead th{ text-transform:none; letter-spacing:0; font-size:12.5px; font-weight:6
   color:rgba(178,52,42,.9); font-size:13px; font-weight:800; transform:rotate(-8deg); background:rgba(255,255,255,.7);
 }
 .btn svg{ flex:none; }
+
+/* =====================================================================
+   REDISEÑO GENERAL (nov/2026): fondo plano, encabezados iguales en todas
+   las secciones, filtros en una fila arriba de cada tabla y acciones
+   discretas. Lo llamativo queda solo en tres lugares: la heladera del
+   Inicio, el carnet de la visita y el estante del login.
+   ===================================================================== */
+body{ background:#F6F9F8; background-image:none; }
+
+/* ---------- Login ---------- */
+.gate{
+  display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:stretch; justify-content:stretch;
+  min-height:100vh; padding:0; background:#F6F9F8; overflow:hidden;
+}
+.gate::before, .gate::after{ display:none; }
+.gate-lado{
+  position:relative; display:flex; flex-direction:column; justify-content:space-between; gap:40px;
+  padding:44px 56px 0; color:#fff; background:var(--teal-deep); overflow:hidden;
+}
+.gate-marca{ display:flex; align-items:center; gap:14px; }
+.gate-logo{ display:grid; place-items:center; width:56px; height:56px; padding:6px; border-radius:14px; background:#fff; flex:none; }
+.gate-logo img{ width:100%; height:100%; object-fit:contain; filter:none; }
+.gate-sgv{ font-size:20px; font-weight:800; letter-spacing:-.01em; line-height:1.1; }
+.gate-caps{ margin-top:2px; font-size:14px; color:rgba(255,255,255,.78); }
+.gate-texto h2{ max-width:440px; font-size:38px; font-weight:800; line-height:1.1; letter-spacing:-.03em; }
+.gate-texto p{ max-width:400px; margin-top:14px; font-size:17px; line-height:1.5; color:rgba(255,255,255,.8); }
+/* Estante con frascos apoyados */
+.gate-estante{
+  display:flex; align-items:flex-end; gap:22px; padding:0 4px 22px; margin:0 -56px; padding-left:56px;
+  border-top:0; position:relative;
+}
+.gate-estante::after{
+  content:""; position:absolute; left:0; right:0; bottom:0; height:22px;
+  background:linear-gradient(180deg, rgba(255,255,255,.28) 0 2px, rgba(255,255,255,.12) 2px 9px, rgba(0,0,0,.12) 9px, rgba(0,0,0,0));
+}
+.gate-frasco .vial{ width:52px; height:95px; display:block; }
+.gate-frasco:nth-child(2n) .vial{ width:46px; height:84px; }
+.gate-frasco .vial-vidrio{ fill:rgba(255,255,255,.22); }
+.gate-frasco .vial-borde{ stroke:rgba(255,255,255,.55); }
+.gate-frasco .vial-marca, .gate-frasco .vial-marca-baja{ stroke:rgba(255,255,255,.45); }
+.gate-frasco .vial-tapa{ fill:#CFE0DD; }
+
+.gate-form{ display:flex; align-items:center; justify-content:center; padding:40px 24px; }
+.gate-card{
+  width:100%; max-width:400px; padding:0; background:none; border:none; box-shadow:none; animation:none;
+}
+.gate-card h1{ font-size:30px; font-weight:800; letter-spacing:-.025em; line-height:1.15; color:var(--ink); }
+.gate-sub{ margin-top:8px; font-size:15.5px; line-height:1.5; color:var(--ink-soft); }
+.gate-card .field-group{ margin-top:22px; }
+.gate-card .field-group + .field-group{ margin-top:16px; }
+.gate-pass{ position:relative; }
+.gate-pass input{ padding-right:96px; }
+.gate-ver{
+  position:absolute; right:8px; top:50%; transform:translateY(-50%); height:34px; padding:0 12px; border-radius:8px;
+  font-size:13.5px; font-weight:600; color:var(--teal-deep);
+}
+.gate-ver:hover{ background:var(--teal-ghost); }
+.gate-ver:focus-visible{ outline:none; box-shadow:var(--ring); }
+.gate-btn{ margin-top:22px; padding:15px; font-size:16px; }
+.gate-ayuda{ margin-top:16px; font-size:13.5px; line-height:1.5; color:var(--muted); }
+.gate-logo-movil{ display:none; }
+
+/* ---------- Barra superior y navegación ---------- */
+.topbar-brand{ gap:0; }
+.topbar-title-sub{ font-size:12.5px; }
+.nav-item{ font-weight:500; }
+.nav-item.active{ font-weight:650; }
+
+/* ---------- Encabezados de sección ---------- */
+.page-head{ align-items:flex-end; margin-bottom:22px; }
+.page-head h1{ font-size:30px; font-weight:800; line-height:1.15; }
+.page-head .sub{ max-width:640px; line-height:1.5; }
+
+/* ---------- Filtros en una fila arriba de la tabla (Stock y Movimientos) ---------- */
+.mov-layout{ display:block; }
+.mov-sidebar{
+  position:static; display:flex; flex-direction:row; flex-wrap:wrap; align-items:flex-end; gap:12px 14px;
+  margin-bottom:14px; padding:0; background:none; border:none; box-shadow:none;
+}
+.mov-sidebar-head{ order:9; margin:0 0 4px; padding:0; border:none; }
+.mov-sidebar-head h4{ display:none; }
+.mov-campo{ flex:0 0 210px; gap:6px; }
+.mov-campo:has(input[type="text"]){ flex:1 1 260px; max-width:360px; }
+.mov-campo label{ font-size:13px; font-weight:600; color:var(--ink-soft); }
+.mov-campo input, .mov-campo select{ height:42px; }
+.mov-campo .nice-select-btn{ min-height:42px; border-radius:10px; }
+.mov-main{ margin-bottom:0; }
+
+/* ---------- Tablas y acciones por fila ---------- */
+.panel{ box-shadow:none; }
+.panel-head h4{ font-size:16.5px; }
+tbody td{ padding-top:13px; padding-bottom:13px; }
+.btn-eliminar-icon{
+  display:inline-grid; place-items:center; width:32px; height:32px; border-radius:8px; vertical-align:middle;
+  color:var(--muted); background:none; border:1px solid transparent;
+}
+.btn-eliminar-icon:hover{ color:var(--err); background:var(--err-tint); border-color:#EFC0B9; }
+.iconbtn{ border-color:transparent; background:none; color:var(--teal-deep); font-weight:600; }
+.iconbtn:hover{ background:var(--teal-ghost); border-color:transparent; }
+.iconbtn.del{ color:var(--err); }
+.iconbtn:disabled{ opacity:.4; cursor:not-allowed; }
+
+/* Barra de búsqueda y filtros de Usuarios y Vacunas: en una sola fila */
+.toolbar{ background:#FAFCFB; gap:12px; }
+.toolbar .search{ flex:1 1 260px; max-width:420px; }
+.toolbar .nice-select{ width:auto; flex:0 0 220px; }
+.toolbar .search input, .toolbar .nice-select-btn{ min-height:40px; }
+
+/* Nota de solo lectura */
+.readonly-note{ align-items:center; }
+.readonly-note .ic{ display:inline-grid; place-items:center; color:var(--teal-deep); }
+
+/* ---------- Mi cuenta ---------- */
+.account-card{
+  max-width:720px; background:var(--card); background-image:none; border:1px solid var(--line); box-shadow:none;
+}
+.account-card .av{ border-radius:16px; }
+.info-list{ max-width:720px; }
+.info-list .row .k{ text-transform:none; letter-spacing:0; font-size:14px; font-weight:500; color:var(--muted); }
+
+/* ---------- Modales ---------- */
+.modal{ box-shadow:0 24px 60px rgba(7,40,38,.25); }
+.modal-head h4{ font-size:17px; }
+
+@media (max-width:900px){
+  .gate{ grid-template-columns:1fr; }
+  .gate-lado{ display:none; }
+  .gate-form{ align-items:flex-start; padding:48px 20px; }
+  .gate-logo-movil{ display:grid; margin-bottom:22px; width:64px; height:64px; box-shadow:0 0 0 1px var(--line); }
+}
+@media (max-width:760px){
+  .mov-campo, .mov-campo:has(input[type="text"]){ flex:1 1 100%; max-width:none; }
+  .toolbar .search, .toolbar .nice-select{ flex:1 1 100%; max-width:none; }
+  .page-head h1{ font-size:26px; }
+}
