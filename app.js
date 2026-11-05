@@ -114,8 +114,8 @@ async function doLogin(){
     const data = await api('/login', { method:'POST', body: JSON.stringify({ correo:u.value, password:p.value }) });
     TOKEN = data.token;
     USER = data.usuario;
-    msg('login-msg','ok','Ingreso correcto…');
-    setTimeout(enterApp, 350);
+    $('login-msg').innerHTML = '';
+    gateAbrir(enterApp);
   }catch(err){
     u.classList.add('bad'); p.classList.add('bad');
     msg('login-msg','err', err.message);
@@ -145,7 +145,8 @@ function logout(){
   DASH = null; INI.q = ''; INI.estado = ''; INI.verMas = false;
   const b = $('iniBuscar'); if (b) b.value = '';
   $('app').classList.remove('on');
-  $('gate').style.display = 'flex';
+  $('gate').style.display = '';
+  $('gateHeladera')?.classList.remove('abierta');
   $('u').value=''; $('p').value=''; $('login-msg').innerHTML='';
 }
 
@@ -317,8 +318,6 @@ function renderInicio() {
   iniRenderHeladera();
   iniRenderTareas();
   iniRenderVencimientos();
-  iniRenderFrascos();
-  iniRenderActividad();
   INI.animar = false;   // el llenado de los frascos se ve solo al entrar
 }
 
@@ -329,9 +328,10 @@ function iniRenderHead() {
   const info = iniInfo();
   const ahora = new Date();
   const dia = INI_DIAS[ahora.getDay()];
-  $('iniFecha').textContent = `${dia.charAt(0).toUpperCase()}${dia.slice(1)} ${ahora.getDate()} de ${INI_MESES[ahora.getMonth()]}`;
   $('iniSaludo').textContent = `${iniSaludoTxt(ahora.getHours())}, ${info.name || ''}`;
 
+  // Una sola línea: la fecha, lo urgente y lo que pasó hoy
+  const fecha = `${dia.charAt(0).toUpperCase()}${dia.slice(1)} ${ahora.getDate()} de ${INI_MESES[ahora.getMonth()]}.`;
   let txt;
   if (info.esProveedora) {
     const r = iniReposicionConteo();
@@ -339,25 +339,17 @@ function iniRenderHead() {
       ? `${r.total} ${r.total === 1 ? 'vacuna necesita' : 'vacunas necesitan'} reposición${r.urg ? `, <b class="ini-res-urg">${r.urg} sin stock</b>` : ''}.`
       : 'No hay vacunas para reponer por ahora.';
   } else {
-    const t = iniTareas();
-    const urg = t.filter(x => x.sev === 'urg').length;
-    const rev = t.length - urg;
-    const urgTxt = `<b class="ini-res-urg">${urg} ${urg === 1 ? 'aviso urgente' : 'avisos urgentes'}</b>`;
-    if (urg && rev) txt = `Hay ${urgTxt} y ${rev} para revisar.`;
-    else if (urg) txt = `Hay ${urgTxt} para resolver.`;
-    else if (rev) txt = `No hay urgencias. Hay ${rev} ${rev === 1 ? 'aviso' : 'avisos'} para revisar.`;
-    else txt = 'Todo en orden: no hay vencimientos ni faltantes para resolver.';
+    const urg = iniTareas().filter(x => x.sev === 'urg').length;
     const ap = DASH.hoy?.aplicaciones || { dosis: 0 };
-    txt += ap.dosis > 0 ? ` Hoy se aplicaron ${nfmt(ap.dosis)} dosis.` : ' Todavía no hay aplicaciones registradas hoy.';
+    txt = urg ? `<b class="ini-res-urg">${urg} ${urg === 1 ? 'aviso urgente' : 'avisos urgentes'}</b> en la puerta de la heladera.` : 'Nada urgente para resolver.';
+    txt += ap.dosis > 0 ? ` Hoy se aplicaron ${nfmt(ap.dosis)} dosis.` : ' Todavía no hay aplicaciones hoy.';
   }
-  $('iniResumen').innerHTML = txt;
+  $('iniResumen').innerHTML = `${fecha} ${txt}`;
 
-  // Accesos rápidos según el perfil
   let acc = '';
   if (info.write) {
-    acc = `<button type="button" class="btn" onclick="iniAplicar()">Registrar aplicación</button>
-      <button type="button" class="btn ghost" onclick="iniIngresarLote()">Ingresar lote</button>
-      <button type="button" class="btn ghost" onclick="iniDescarte()">Registrar descarte</button>`;
+    acc = `<button type="button" class="btn ghost" onclick="iniIngresarLote()">Ingresar lote</button>
+      <button type="button" class="btn" onclick="iniAplicar()">Registrar aplicación</button>`;
   } else if (info.manageUsers) {
     acc = `<button type="button" class="btn ghost" onclick="go('estadisticas')">Ver estadísticas</button>`;
   } else if (info.esProveedora) {
@@ -366,8 +358,6 @@ function iniRenderHead() {
     acc = `<button type="button" class="btn ghost" onclick="go('mov')">Ver movimientos</button>`;
   }
   $('iniAcciones').innerHTML = acc;
-  const t = INI.actualizado || ahora;
-  $('iniActualizado').textContent = `Actualizado a las ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
 }
 
 // Mismo criterio que el pedido de reposición del servidor
@@ -462,9 +452,11 @@ function iniCoberturaSlot(v) {
 
 function iniSlot(v, i, animar) {
   const est = iniEstado(v);
-  const vencidas = v.stock_vencido > 0 && !iniInfo().esProveedora;
+  const info = iniInfo();
+  const vencidas = v.stock_vencido > 0 && !info.esProveedora;
+  const abierto = info.esProveedora ? null : (DASH.frascos || []).find(f => Number(f.vacuna_id) === Number(v.id));
   let linea;
-  if (vencidas) linea = 'Dosis vencidas';
+  if (vencidas) linea = `${v.stock_vencido} vencidas`;
   else if (est === 'nostock') linea = 'Sin stock';
   else if (est === 'low') linea = 'Stock bajo';
   else if (est === 'exp') {
@@ -472,15 +464,19 @@ function iniSlot(v, i, animar) {
     linea = d <= 0 ? 'Vence hoy' : `Vence en ${d} ${d === 1 ? 'día' : 'días'}`;
   } else linea = iniCoberturaSlot(v);
   const aria = `${v.nombre}: ${v.stock} dosis vigentes, ${INI_EST[est].lbl.toLowerCase()}` +
-    (vencidas ? `, con ${v.stock_vencido} dosis vencidas sin descartar` : '') + '. Ver lotes.';
+    (vencidas ? `, con ${v.stock_vencido} dosis vencidas sin descartar` : '') +
+    (abierto ? `, con un frasco abierto (quedan ${abierto.dosis_sobrantes} dosis)` : '') + '. Ver lotes.';
   return `<button type="button" class="hel-slot is-${est}${vencidas ? ' is-alerta' : ''}" style="--i:${i}"
       onclick="iniAbrirFicha(${v.id})" aria-label="${iniTxt(aria)}" title="${iniTxt(v.nombre)}">
-      ${vencidas ? '<span class="hel-alerta" aria-hidden="true">!</span>' : ''}
-      <span class="hel-nom">${iniSilabear(v.nombre)}</span>
-      <span class="hel-linea">${linea}</span>
-      <span class="hel-pie">
+      <span class="hel-frasco">
         ${iniVialSVG(v, est, iniNivel(v), animar)}
-        <span class="hel-cant"><b>${nfmt(v.stock)}</b><small>dosis</small></span>
+        ${vencidas ? '<span class="hel-alerta" aria-hidden="true">!</span>' : ''}
+        ${abierto ? `<span class="hel-abierto${abierto.dias_restantes < 0 ? ' is-venc' : ''}" aria-hidden="true">Abierto</span>` : ''}
+      </span>
+      <span class="hel-etq">
+        <span class="hel-nom">${iniSilabear(v.nombre)}</span>
+        <span class="hel-dato"><b>${nfmt(v.stock)}</b> dosis</span>
+        <span class="hel-linea">${linea}</span>
       </span>
     </button>`;
 }
@@ -489,8 +485,11 @@ function iniRenderHeladera() {
   const vacs = DASH?.vacunas || [];
   const conStock = vacs.filter(v => v.stock > 0);
   const total = conStock.reduce((s, v) => s + v.stock, 0);
+  const t = INI.actualizado || new Date();
+  const hora = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+  $('iniDisplay').textContent = nfmt(total);
   $('iniHelSub').textContent = vacs.length
-    ? `${nfmt(total)} dosis vigentes en ${conStock.length} de ${vacs.length} vacunas.`
+    ? `${conStock.length} de ${vacs.length} vacunas con stock. Actualizado a las ${hora}.`
     : 'Todavía no hay vacunas activas en el catálogo.';
 
   // Filtros por estado con su conteo
@@ -549,7 +548,7 @@ function iniSetOrden(orden) {
 function iniFiltrarEstado(k, desdeAviso) {
   INI.estado = desdeAviso ? k : (INI.estado === k ? '' : k);
   iniRenderHeladera();
-  if (desdeAviso) document.querySelector('.ini-heladera')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (desdeAviso) document.querySelector('.refri')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function iniLimpiarFiltros() {
   INI.q = ''; INI.estado = '';
@@ -734,26 +733,24 @@ function iniTareas() {
 function iniRenderTareas() {
   const cont = $('iniTareas');
   if (!cont) return;
-  const t = iniTareas();
-  const urg = t.filter(x => x.sev === 'urg');
-  const rev = t.filter(x => x.sev === 'rev');
+  const t = iniTareas();     // vienen ordenadas: primero lo urgente
   $('iniTarTotal').textContent = t.length ? String(t.length) : '';
   if (!t.length) {
-    cont.innerHTML = `<div class="tar-vacio">${INI_IC.ok}<p><b>Todo en orden.</b> No hay vencimientos ni faltantes para resolver.</p></div>`;
+    cont.innerHTML = `<div class="nota nota-ok"><span class="iman" aria-hidden="true"></span>
+        <p class="nota-tit">Todo en orden</p><p class="nota-det">No hay vencimientos ni faltantes para resolver.</p></div>`;
     return;
   }
-  const item = x => `<li class="tar-item sev-${x.sev}">
-      <span class="tar-ic" aria-hidden="true">${INI_IC[x.ic] || ''}</span>
-      <div class="tar-txt"><p class="tar-tit">${x.tit}</p><p class="tar-det">${x.det}</p></div>
+  const LIM = window.matchMedia('(max-width: 760px)').matches ? 3 : 4;
+  const vis = INI.verMas ? t : t.slice(0, LIM);
+  const nota = (x, i) => `<li class="nota sev-${x.sev}" style="--r:${[-1.4, 1, -.6, 1.5, -1.1][i % 5]}deg">
+      <span class="iman" aria-hidden="true"></span>
+      <p class="nota-tit">${x.tit}</p>
+      <p class="nota-det">${x.det}</p>
       ${x.acc ? `<button type="button" class="tar-btn${x.acc.cls ? ' ' + x.acc.cls : ''}" onclick="${x.acc.fn}">${x.acc.lbl}</button>` : ''}
     </li>`;
-  const LIM = 5;
-  const revVis = INI.verMas ? rev : rev.slice(0, LIM);
-  let html = '';
-  if (urg.length) html += `<h3 class="tar-grupo is-urg">Urgente <span>${urg.length}</span></h3><ul class="tar-lista">${urg.map(item).join('')}</ul>`;
-  if (rev.length) html += `<h3 class="tar-grupo">Para revisar <span>${rev.length}</span></h3><ul class="tar-lista">${revVis.map(item).join('')}</ul>`;
-  if (rev.length > LIM) {
-    html += `<button type="button" class="tar-mas" onclick="INI.verMas=!INI.verMas;iniRenderTareas()">${INI.verMas ? 'Ver menos' : `Ver ${rev.length - LIM} más`}</button>`;
+  let html = `<ul class="notas">${vis.map(nota).join('')}</ul>`;
+  if (t.length > LIM) {
+    html += `<button type="button" class="tar-mas" onclick="INI.verMas=!INI.verMas;iniRenderTareas()">${INI.verMas ? 'Ver menos' : `Ver ${t.length - LIM} más`}</button>`;
   }
   cont.innerHTML = html;
 }
@@ -769,9 +766,14 @@ function iniRenderVencimientos() {
     ? `${prox.length} ${prox.length === 1 ? 'lote vence' : 'lotes vencen'} en los próximos 60 días, con ${nfmt(dosis)} dosis en total.`
     : 'Ningún lote con stock vence en los próximos 60 días.';
   iniDibujarTrack(lotes);
-
-  const LIM = 5;
+  const ver = $('iniVenVer');
+  if (ver) {
+    ver.textContent = prox.length > 1 ? `Ver los ${prox.length} lotes en Stock` : 'Ver en Stock';
+    ver.style.display = prox.length ? '' : 'none';
+  }
   const lista = $('iniVenLista');
+  if (!lista) return;
+  const LIM = 5;
   lista.innerHTML = prox.slice(0, LIM).map(l => {
     const [, m, d] = l.vencimiento.split('-');
     return `<li><button type="button" class="ven-item z-${iniZona(l.dias)}" onclick="iniAbrirFicha(${l.vacuna_id})">
@@ -3260,10 +3262,24 @@ function gateVerClave() {
   b.setAttribute('aria-label', ver ? 'Ocultar contraseña' : 'Mostrar contraseña');
   i.focus();
 }
-(function gateEstante() {
-  const cont = $('gateEstante');
-  if (!cont) return;
-  const frascos = [[1, 'ok', .85], [10, 'ok', .55], [1, 'low', .22], [1, 'ok', .95], [5, 'exp', .4], [1, 'ok', .7], [10, 'ok', .9]];
-  cont.innerHTML = frascos.map(([d, est, nivel], i) =>
-    `<span class="gate-frasco" style="--i:${i}">${iniVialSVG({ dosis_por_frasco: d }, est, nivel, false)}</span>`).join('');
+// Interior de la heladera del login: tres estantes con frascos de ejemplo (solo decoración)
+(function gateEstantes() {
+  const filas = [
+    [[1, 'ok', .85], [10, 'ok', .55], [1, 'ok', .95], [5, 'exp', .4]],
+    [[1, 'low', .22], [1, 'ok', .7], [10, 'ok', .9], [1, 'ok', .6]],
+    [[5, 'ok', .75], [1, 'ok', .5], [1, 'exp', .35], [10, 'ok', .8]],
+  ];
+  document.querySelectorAll('.gate-estante').forEach((cont, k) => {
+    cont.innerHTML = filas[k].map(([d, est, nivel], i) =>
+      `<span class="gate-frasco" style="--i:${k * 4 + i}">${iniVialSVG({ dosis_por_frasco: d }, est, nivel, false)}</span>`).join('');
+  });
 })();
+
+// Abre la puerta y recién ahí entra a la web
+function gateAbrir(despues) {
+  const h = $('gateHeladera');
+  const quieto = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!h || quieto) return despues();
+  h.classList.add('abierta');
+  setTimeout(despues, 1050);
+}
