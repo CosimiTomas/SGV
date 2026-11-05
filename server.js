@@ -562,6 +562,10 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
         ORDER BY f.fecha_apertura DESC`,
       [DIAS_VENCIMIENTO]
     );
+
+    /* ---------- Datos del tablero de Inicio (rediseño nov/2026) ---------- */
+    const tablero = await datosTablero(req.user && req.user.rol);
+
     res.json({
       kpis: {
         tipos, unidades,
@@ -573,9 +577,193 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
         frascosVencidos, frascosPorVencer, frascosActivos,
       },
       umbrales: { stockBajo: UMBRAL_STOCK_BAJO, diasVencimiento: DIAS_VENCIMIENTO },
+      ...tablero,
     });
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
 });
+
+/**
+ * Datos extra para el tablero de Inicio:
+ *  - vacunas:   resumen por vacuna activa (stock vigente, por vencer, vencido sin
+ *               descartar, consumo de los últimos 30 días, cobertura estimada y
+ *               el lote que conviene usar primero).
+ *  - radar:     lotes con stock que vencen en los próximos 60 días (o ya vencidos).
+ *  - frascos:   frascos multidosis abiertos con dosis sobrantes.
+ *  - hoy:       aplicaciones, descartes e ingresos del día.
+ *  - serie14:   dosis aplicadas por día en las últimas dos semanas.
+ *  - actividad: últimos movimientos registrados hoy (no se envía a la proveedora,
+ *               que no tiene acceso al historial).
+ */
+async function datosTablero(rol) {
+  const [[{ hoy }]] = await pool.query(`SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS hoy`);
+
+  // 1) Resumen de stock por vacuna (solo lotes con dosis)
+  const [vacRows] = await pool.query(
+    `SELECT v.id, v.nombre, v.dosis_por_frasco,
+            COALESCE(SUM(CASE WHEN l.vencimiento >= CURDATE() THEN l.disponible ELSE 0 END), 0) AS stock,
+            COALESCE(SUM(CASE WHEN DATEDIFF(l.vencimiento, CURDATE()) BETWEEN 0 AND ?
+                              THEN l.disponible ELSE 0 END), 0) AS stock_por_vencer,
+            COALESCE(SUM(CASE WHEN l.vencimiento < CURDATE() THEN l.disponible ELSE 0 END), 0) AS stock_vencido,
+            COUNT(CASE WHEN l.vencimiento >= CURDATE() THEN 1 END) AS lotes,
+            DATE_FORMAT(MIN(CASE WHEN l.vencimiento >= CURDATE() THEN l.vencimiento END), '%Y-%m-%d') AS prox_venc
+       FROM vacunas v
+       LEFT JOIN lotes l ON l.vacuna_id = v.id AND l.disponible > 0
+      WHERE v.activa = 1
+      GROUP BY v.id, v.nombre, v.dosis_por_frasco
+      ORDER BY v.nombre`,
+    [DIAS_VENCIMIENTO]
+  );
+
+  // 2) Aplicaciones de los últimos 30 días por vacuna (para estimar cobertura)
+  const [consRows] = await pool.query(
+    `SELECT x.vacuna_id, SUM(x.cantidad) AS dosis
+       FROM (${MOV_CON_FECHA}) x
+      WHERE x.tipo = 'aplicacion'
+        AND x.f BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()
+      GROUP BY x.vacuna_id`
+  );
+  const consumo = new Map(consRows.map(r => [Number(r.vacuna_id), Number(r.dosis)]));
+
+  // 3) Lotes vigentes con dosis, para elegir cuál usar primero:
+  //    si hay un frasco multidosis abierto, ese lote; si no, el que vence antes.
+  const [lotesVig] = await pool.query(
+    `SELECT l.id AS lote_id, l.vacuna_id, l.numero_lote,
+            DATE_FORMAT(l.vencimiento, '%Y-%m-%d') AS vencimiento,
+            DATEDIFF(l.vencimiento, CURDATE()) AS dias, l.disponible,
+            EXISTS (SELECT 1 FROM frascos_abiertos f
+                     WHERE f.lote_id = l.id AND f.estado = 'activo'
+                       AND (f.dosis_totales - f.dosis_usadas) > 0
+                       AND DATEDIFF(CURDATE(), f.fecha_apertura) <= 30) AS frasco_abierto
+       FROM lotes l
+      WHERE l.disponible > 0 AND l.vencimiento >= CURDATE()
+      ORDER BY l.vencimiento, l.id`
+  );
+  const usarPrimero = new Map();
+  lotesVig.forEach(l => {
+    const k = Number(l.vacuna_id);
+    const actual = usarPrimero.get(k);
+    const conFrasco = Number(l.frasco_abierto) === 1;
+    if (!actual || (conFrasco && !actual.frasco_abierto)) {
+      usarPrimero.set(k, {
+        lote_id: l.lote_id, numero_lote: l.numero_lote, vencimiento: l.vencimiento,
+        dias: Number(l.dias), disponible: Number(l.disponible), frasco_abierto: conFrasco,
+      });
+    }
+  });
+
+  const vacunas = vacRows.map(v => {
+    const stock = Number(v.stock);
+    const consumo30 = consumo.get(Number(v.id)) || 0;
+    const porDia = consumo30 / 30;
+    return {
+      id: v.id,
+      nombre: v.nombre,
+      dosis_por_frasco: Number(v.dosis_por_frasco),
+      stock,
+      stock_por_vencer: Number(v.stock_por_vencer),
+      stock_vencido: Number(v.stock_vencido),
+      lotes: Number(v.lotes),
+      prox_venc: v.prox_venc || null,
+      consumo30,
+      cobertura_dias: porDia > 0 ? Math.floor(stock / porDia) : null,
+      usar_primero: usarPrimero.get(Number(v.id)) || null,
+    };
+  });
+
+  // 4) Lotes con dosis que vencen en los próximos 60 días (o que ya vencieron)
+  const [radar] = await pool.query(
+    `SELECT l.id AS lote_id, v.id AS vacuna_id, v.nombre AS vacuna, v.dosis_por_frasco,
+            l.numero_lote, DATE_FORMAT(l.vencimiento, '%Y-%m-%d') AS vencimiento,
+            DATEDIFF(l.vencimiento, CURDATE()) AS dias, l.disponible
+       FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
+      WHERE v.activa = 1 AND l.disponible > 0 AND DATEDIFF(l.vencimiento, CURDATE()) <= 60
+      ORDER BY l.vencimiento, v.nombre`
+  );
+
+  // 5) Frascos multidosis abiertos con dosis sobrantes
+  const [frascos] = await pool.query(
+    `SELECT f.id AS frasco_id, f.lote_id, l.numero_lote, v.id AS vacuna_id, v.nombre AS vacuna,
+            DATE_FORMAT(f.fecha_apertura, '%Y-%m-%d') AS fecha_apertura,
+            DATEDIFF(CURDATE(), f.fecha_apertura) AS dias_abierto,
+            f.dosis_totales, (f.dosis_totales - f.dosis_usadas) AS dosis_sobrantes,
+            LEAST(30 - DATEDIFF(CURDATE(), f.fecha_apertura),
+                  DATEDIFF(l.vencimiento, CURDATE())) AS dias_restantes,
+            CASE WHEN DATEDIFF(l.vencimiento, CURDATE()) < (30 - DATEDIFF(CURDATE(), f.fecha_apertura))
+                 THEN 'lote' ELSE '30dias' END AS causa_vencimiento
+       FROM frascos_abiertos f
+       JOIN lotes l   ON l.id = f.lote_id
+       JOIN vacunas v ON v.id = l.vacuna_id
+      WHERE f.estado = 'activo' AND (f.dosis_totales - f.dosis_usadas) > 0
+      ORDER BY dias_restantes, f.fecha_apertura`
+  );
+
+  // 6) Totales del día y serie de aplicaciones de 14 días (fecha efectiva)
+  const [diaRows] = await pool.query(
+    `SELECT DATE_FORMAT(x.f, '%Y-%m-%d') AS dia, x.tipo,
+            SUM(x.cantidad) AS dosis, COUNT(*) AS registros
+       FROM (${MOV_CON_FECHA}) x
+      WHERE x.f BETWEEN DATE_SUB(CURDATE(), INTERVAL 13 DAY) AND CURDATE()
+      GROUP BY dia, x.tipo`
+  );
+  const hoyTot = {
+    aplicaciones: { dosis: 0, registros: 0 },
+    descartes:    { dosis: 0, registros: 0 },
+    ingresos:     { dosis: 0, registros: 0 },
+  };
+  const CLAVE = { aplicacion: 'aplicaciones', descarte: 'descartes', ingreso: 'ingresos' };
+  const aplPorDia = new Map();
+  diaRows.forEach(r => {
+    if (r.tipo === 'aplicacion') aplPorDia.set(r.dia, Number(r.dosis));
+    if (r.dia === hoy && CLAVE[r.tipo]) {
+      hoyTot[CLAVE[r.tipo]] = { dosis: Number(r.dosis), registros: Number(r.registros) };
+    }
+  });
+  const serie14 = [];
+  for (let i = 13; i >= 0; i--) {
+    const dia = sumarDias(hoy, -i);
+    serie14.push({ dia, dosis: aplPorDia.get(dia) || 0 });
+  }
+
+  // 7) Movimientos registrados hoy (la proveedora no ve el historial)
+  let actividad = [];
+  let actividadTotal = 0;
+  if (rol !== 'proveedora') {
+    try {
+      [actividad] = await pool.query(
+        `SELECT m.id, m.tipo, v.id AS vacuna_id, v.nombre AS vacuna,
+                COALESCE(l.numero_lote, m.numero_lote_snap) AS numero_lote,
+                m.cantidad, m.motivo, DATE_FORMAT(m.fecha_mov, '%H:%i') AS hora,
+                DATE_FORMAT(m.fecha_aplicacion, '%Y-%m-%d') AS fecha_aplicacion
+           FROM movimientos m
+           JOIN vacunas v ON v.id = m.vacuna_id
+           LEFT JOIN lotes l ON l.id = m.lote_id
+          WHERE m.fecha_mov >= CURDATE()
+          ORDER BY m.fecha_mov DESC, m.id DESC
+          LIMIT 12`
+      );
+      const [[{ n }]] = await pool.query(`SELECT COUNT(*) AS n FROM movimientos WHERE fecha_mov >= CURDATE()`);
+      actividadTotal = Number(n);
+    } catch (err) {
+      // Si falla (por ejemplo, una base sin la migración de movimientos v2),
+      // el resto del tablero se sigue mostrando sin la actividad del día.
+      console.error('dashboard/actividad de hoy:', err.message);
+      actividad = [];
+      actividadTotal = 0;
+    }
+  }
+
+  return {
+    hoy: { fecha: hoy, ...hoyTot },
+    serie14,
+    vacunas,
+    radar: radar.map(r => ({ ...r, dias: Number(r.dias), disponible: Number(r.disponible),
+                             dosis_por_frasco: Number(r.dosis_por_frasco) })),
+    frascos: frascos.map(f => ({ ...f, dias_abierto: Number(f.dias_abierto), dias_restantes: Number(f.dias_restantes),
+                                 dosis_totales: Number(f.dosis_totales), dosis_sobrantes: Number(f.dosis_sobrantes) })),
+    actividad,
+    actividadTotal,
+  };
+}
 
 /**
  * Resumen de actividad — pensado para el rol de jefa de enfermería, que necesita

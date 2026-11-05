@@ -126,6 +126,7 @@ async function enterApp(){
   $('gate').style.display = 'none';
   $('app').classList.add('on');
   applyRole();
+  INI.animar = true;
   await loadVacunas();
   await Promise.all([ loadDashboard(), loadStock(), loadMovimientos() ]);
   if (ROL_INFO[USER.rol].manageUsers) {
@@ -140,6 +141,9 @@ async function enterApp(){
 
 function logout(){
   TOKEN = null; USER = null;
+  clearTimeout(INI.timer);
+  DASH = null; INI.q = ''; INI.estado = ''; INI.verMas = false;
+  const b = $('iniBuscar'); if (b) b.value = '';
   $('app').classList.remove('on');
   $('gate').style.display = 'flex';
   $('u').value=''; $('p').value=''; $('login-msg').innerHTML='';
@@ -168,6 +172,7 @@ function applyRole(){
   document.body.classList.toggle('rol-sin-escritura', !info.write);
   document.body.classList.toggle('rol-sin-gestion', !info.manageUsers);
   document.body.classList.toggle('rol-sin-traz', !info.viewTrazabilidad);
+  document.body.dataset.rol = USER.rol;
   // Vistas específicas por rol — se usa la clase 'role-hidden' con !important
   // en CSS para garantizar que el toggle siempre se aplique bien y no dependa
   // del display default del elemento (que puede ser flex, block o inline-flex).
@@ -205,6 +210,8 @@ function go(page){
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page===page));
   if (page === 'aplicar' && !$('ap-fecha').value) $('ap-fecha').value = today();
   if (page === 'estadisticas') loadEstadisticas();
+  if (page === 'inicio' && DASH) iniDibujarTrack(DASH.radar || []);
+  iniTipOcultar();
   window.scrollTo(0,0);
 }
 
@@ -222,104 +229,784 @@ async function loadVacunas(){
   if ($('ap-fecha')) $('ap-fecha').value = today();
 }
 
-// Guardamos la lista de vencidas para poder saltar al descarte precargado
+/* ============================================================
+   INICIO · tablero del vacunatorio (rediseño nov/2026)
+   Todo sale de /api/dashboard y se dibuja con HTML/SVG propio:
+     - saludo con el resumen del día y accesos rápidos
+     - heladera: un frasco por vacuna, el líquido muestra el stock vigente
+     - "Para resolver": cada aviso trae su acción (descartar, aplicar, ver)
+     - próximos vencimientos en una línea de tiempo de 60 días
+     - frascos multidosis abiertos con los días que les quedan
+     - actividad registrada hoy y aplicaciones de los últimos 14 días
+   ============================================================ */
+let DASH = null;
+// Listas que usan los accesos de descarte rápido
 let VENCIDAS_CACHE = [];
 let FRASCOS_VENCIDOS_CACHE = [];
+// Estado de la vista (búsqueda, filtro, orden) y animación de llenado
+const INI = { q: '', estado: '', orden: 'az', verMas: false, animar: true, actualizado: null, timer: null };
+const INI_EST = {
+  ok:      { lbl: 'En orden',   prio: 3 },
+  low:     { lbl: 'Stock bajo', prio: 1 },
+  exp:     { lbl: 'Por vencer', prio: 2 },
+  nostock: { lbl: 'Sin stock',  prio: 4 },
+};
+const INI_DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+const INI_MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const INI_MESES_C = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
-async function loadDashboard(){
+function iniInfo() { return ROL_INFO[USER?.rol] || {}; }
+function iniUmbral() { return DASH?.umbrales?.stockBajo ?? 10; }
+function iniDiasVenc() { return DASH?.umbrales?.diasVencimiento ?? 15; }
+function iniTxt(s) { return escHtml(s); }
+
+// Días entre hoy (fecha de la base) y una fecha YYYY-MM-DD
+function iniDiasHasta(ymd) {
+  if (!ymd) return null;
+  const hoy = DASH?.hoy?.fecha || today();
+  return Math.round((Date.parse(String(ymd).slice(0, 10) + 'T00:00:00Z') - Date.parse(hoy + 'T00:00:00Z')) / 864e5);
+}
+
+// Estado de una vacuna según su stock vigente (sumando todos sus lotes)
+function iniEstado(v) {
+  if (v.stock <= 0) return 'nostock';
+  if (v.stock <= iniUmbral()) return 'low';
+  if (v.stock_por_vencer > 0) return 'exp';
+  return 'ok';
+}
+// Nivel del líquido: el límite de stock bajo queda a 1/4 del frasco
+function iniNivel(v) {
+  if (v.stock <= 0) return 0;
+  return Math.max(0.07, Math.min(1, v.stock / (iniUmbral() * 4)));
+}
+// Cobertura estimada con el uso de los últimos 30 días (texto para la ficha y los avisos)
+function iniCobertura(v) {
+  if (v.stock <= 0) return 'No quedan dosis vigentes.';
+  const c = v.cobertura_dias;
+  if (c === null || c === undefined) return 'No se aplicó en los últimos 30 días.';
+  if (c < 1) return 'Alcanza para menos de un día.';
+  if (c >= 365) return 'Alcanza para más de un año.';
+  if (c >= 60) return `Alcanza para unos ${Math.round(c / 30)} meses.`;
+  return `Alcanza para unos ${c} ${c === 1 ? 'día' : 'días'}.`;
+}
+
+async function loadDashboard() {
   const d = await api('/dashboard');
-  // KPIs (5: tipos, unidades, stockBajo, porVencer, vencidas)
-  const k = d.kpis;
-  const nums = document.querySelectorAll('#page-inicio .kpi .num');
-  if (nums.length >= 4){
-    nums[0].textContent = k.tipos;
-    nums[1].textContent = k.unidades;
-    nums[2].textContent = k.stockBajo;
-    // "Por vencer" del KPI incluye lotes por vencer + frascos por vencer
-    nums[3].textContent = (k.porVencer || 0) + (d.alertas.frascosPorVencer?.length || 0);
-    // "Vencidas" incluye lotes vencidos + frascos vencidos
-    if (nums[4]) nums[4].textContent = (k.vencidas || 0) + (d.alertas.frascosVencidos?.length || 0);
+  DASH = d;
+  VENCIDAS_CACHE = d.alertas?.vencidas || [];
+  FRASCOS_VENCIDOS_CACHE = d.alertas?.frascosVencidos || [];
+  INI.actualizado = new Date();
+  renderInicio();
+  const info = iniInfo();
+  // Paneles propios de cada rol (se consultan solo para quien los ve)
+  if (info.viewActividad) loadResumenActividad();
+  if (info.esProveedora) loadResumenReposicion();
+  iniProgramarRefresco();
+}
+
+function renderInicio() {
+  if (!DASH) return;
+  iniRenderHead();
+  iniRenderHeladera();
+  iniRenderTareas();
+  iniRenderVencimientos();
+  iniRenderFrascos();
+  iniRenderActividad();
+  INI.animar = false;   // el llenado de los frascos se ve solo al entrar
+}
+
+/* ---------- Saludo y resumen del día ---------- */
+function iniSaludoTxt(h) { return h < 6 ? 'Buenas noches' : h < 13 ? 'Buen día' : h < 20 ? 'Buenas tardes' : 'Buenas noches'; }
+
+function iniRenderHead() {
+  const info = iniInfo();
+  const ahora = new Date();
+  const dia = INI_DIAS[ahora.getDay()];
+  $('iniFecha').textContent = `${dia.charAt(0).toUpperCase()}${dia.slice(1)} ${ahora.getDate()} de ${INI_MESES[ahora.getMonth()]}`;
+  $('iniSaludo').textContent = `${iniSaludoTxt(ahora.getHours())}, ${info.name || ''}`;
+
+  let txt;
+  if (info.esProveedora) {
+    const r = iniReposicionConteo();
+    txt = r.total
+      ? `${r.total} ${r.total === 1 ? 'vacuna necesita' : 'vacunas necesitan'} reposición${r.urg ? `, <b class="ini-res-urg">${r.urg} sin stock</b>` : ''}.`
+      : 'No hay vacunas para reponer por ahora.';
+  } else {
+    const t = iniTareas();
+    const urg = t.filter(x => x.sev === 'urg').length;
+    const rev = t.length - urg;
+    const urgTxt = `<b class="ini-res-urg">${urg} ${urg === 1 ? 'aviso urgente' : 'avisos urgentes'}</b>`;
+    if (urg && rev) txt = `Hay ${urgTxt} y ${rev} para revisar.`;
+    else if (urg) txt = `Hay ${urgTxt} para resolver.`;
+    else if (rev) txt = `No hay urgencias. Hay ${rev} ${rev === 1 ? 'aviso' : 'avisos'} para revisar.`;
+    else txt = 'Todo en orden: no hay vencimientos ni faltantes para resolver.';
+    const ap = DASH.hoy?.aplicaciones || { dosis: 0 };
+    txt += ap.dosis > 0 ? ` Hoy se aplicaron ${nfmt(ap.dosis)} dosis.` : ' Todavía no hay aplicaciones registradas hoy.';
   }
-  // Alertas
-  const low = d.alertas.stockBajo || [];
-  const exp = d.alertas.porVencer || [];
-  const vencidas = d.alertas.vencidas || [];
-  const frascosVencidos = d.alertas.frascosVencidos || [];
-  const frascosPorVencer = d.alertas.frascosPorVencer || [];
-  VENCIDAS_CACHE = vencidas;
-  FRASCOS_VENCIDOS_CACHE = frascosVencidos;
+  $('iniResumen').innerHTML = txt;
 
-  const lowUl = document.querySelector('#page-inicio .alert.low ul');
-  const expUl = document.querySelector('#page-inicio .alert.exp ul');
+  // Accesos rápidos según el perfil
+  let acc = '';
+  if (info.write) {
+    acc = `<button type="button" class="btn" onclick="iniAplicar()">Registrar aplicación</button>
+      <button type="button" class="btn ghost" onclick="iniIngresarLote()">Ingresar lote</button>
+      <button type="button" class="btn ghost" onclick="iniDescarte()">Registrar descarte</button>`;
+  } else if (info.manageUsers) {
+    acc = `<button type="button" class="btn ghost" onclick="go('estadisticas')">Ver estadísticas</button>`;
+  } else if (info.esProveedora) {
+    acc = `<button type="button" class="btn" onclick="descargarReposicion()">Descargar pedido en Excel</button>`;
+  } else if (info.viewMovimientos) {
+    acc = `<button type="button" class="btn ghost" onclick="go('mov')">Ver movimientos</button>`;
+  }
+  $('iniAcciones').innerHTML = acc;
+  const t = INI.actualizado || ahora;
+  $('iniActualizado').textContent = `Actualizado a las ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+}
 
-  // STOCK BAJO — solo lotes con poco stock (los frascos no van acá)
-  if (lowUl) lowUl.innerHTML = low.length
-    ? low.map(a => `<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — quedan ${fmtDisp(a.disponible, a.dosis_por_frasco)}</li>`).join('')
-    : '<li class="alert-empty">Sin vacunas con stock bajo.</li>';
+// Mismo criterio que el pedido de reposición del servidor
+function iniReposicionConteo() {
+  let urg = 0, alta = 0, media = 0;
+  (DASH?.vacunas || []).forEach(v => {
+    if (v.stock <= 0) urg++;
+    else if (v.stock <= iniUmbral() || v.stock_por_vencer >= v.stock) alta++;
+    else if (v.stock_por_vencer > 0) media++;
+  });
+  return { urg, alta, media, total: urg + alta + media };
+}
 
-  // POR VENCER — lotes por vencer + frascos abiertos por vencer.
-  // Los frascos se marcan con un chip "Frasco abierto" (ícono SVG) para que
-  // sea claro que es un caso distinto al lote normal.
-  // Excepción: la proveedora NO ve frascos abiertos (es info interna del CAPS).
-  const info = ROL_INFO[USER?.rol] || {};
-  const mostrarFrascos = !info.esProveedora;
-  if (expUl) {
-    const items = [];
-    exp.forEach(a => items.push(
-      `<li>${a.vacuna}${chipMulti(a.dosis_por_frasco)} — vence <b>${fmtFecha(a.vencimiento)}</b> (${fmtDias(a.dias)})</li>`
-    ));
-    if (mostrarFrascos) {
-      frascosPorVencer.forEach(f => {
-        const causaTxt = f.causa_vencimiento === 'lote'
-          ? ' <span class="frasco-causa">por vencimiento del lote</span>'
-          : '';
-        items.push(
-          `<li class="frasco">${f.vacuna} <span class="frasco-tag chip-frasco">${ICON_FRASCO}Frasco abierto</span> — vence en <b>${f.dias_restantes} ${f.dias_restantes === 1 ? 'día' : 'días'}</b> · ${f.dosis_sobrantes} ${f.dosis_sobrantes === 1 ? 'dosis restante' : 'dosis restantes'}${causaTxt}</li>`
-        );
-      });
+/* ---------- Heladera ---------- */
+// Geometría de los frascos (viewBox 48×88). Los multidosis son más anchos.
+const INI_VIAL = {
+  mono:  { L: 10, R: 38, nL: 15, nR: 33, cL: 13, cR: 35 },
+  multi: { L: 6,  R: 42, nL: 13, nR: 35, cL: 11, cR: 37 },
+};
+function iniVialSVG(v, est, nivel, conAnimacion) {
+  const tipo = v.dosis_por_frasco > 1 ? 'multi' : 'mono';
+  const g = INI_VIAL[tipo];
+  const cuerpo = `M${g.nL} 19L${g.nL} 22C${g.nL} 26 ${g.L} 25 ${g.L} 30L${g.L} 79Q${g.L} 86 ${g.L + 7} 86L${g.R - 7} 86Q${g.R} 86 ${g.R} 79L${g.R} 30C${g.R} 25 ${g.nR} 26 ${g.nR} 22L${g.nR} 19Z`;
+  const cx = (g.L + g.R) / 2;
+  const destino = ((1 - nivel) * 53).toFixed(1);
+  const inicio = conAnimacion ? '53' : destino;
+  const liquido = est === 'nostock' ? '' : `
+      <g clip-path="url(#vclip-${tipo})">
+        <g class="vial-liq" data-to="${destino}" style="transform:translateY(${inicio}px)">
+          <path d="M${g.L - 2} 31Q${cx} 35.5 ${g.R + 2} 31L${g.R + 2} 92L${g.L - 2} 92Z" fill="url(#liq-${est})"/>
+          <path d="M${g.L} 31.7Q${cx} 35.3 ${g.R} 31.7" class="vial-menisco"/>
+        </g>
+      </g>`;
+  // Graduaciones del vidrio: la de abajo (más larga) es el límite de stock bajo
+  const marcas = [0.25, 0.5, 0.75].map(p => {
+    const y = (85 - p * 53).toFixed(1);
+    const largo = p === 0.25 ? 8 : 4.5;
+    return `<line x1="${g.R - 2 - largo}" y1="${y}" x2="${g.R - 2}" y2="${y}" class="${p === 0.25 ? 'vial-marca-baja' : 'vial-marca'}"/>`;
+  }).join('');
+  return `<svg class="vial vial-${est}" viewBox="0 0 48 88" aria-hidden="true" focusable="false">
+      <path d="${cuerpo}" class="vial-vidrio"/>${liquido}
+      ${marcas}
+      <rect x="${g.L + 3.5}" y="33" width="2.6" height="44" rx="1.3" class="vial-brillo"/>
+      <rect x="${g.nL - 1.5}" y="12" width="${g.nR - g.nL + 3}" height="8" rx="1.6" fill="url(#vial-alu)" class="vial-precinto"/>
+      <rect x="${g.cL}" y="3" width="${g.cR - g.cL}" height="10" rx="3" class="vial-tapa"/>
+      <path d="${cuerpo}" class="vial-borde"/>
+    </svg>`;
+}
+
+// Corta las palabras largas en sílabas con guiones suaves (\u00AD) para que los
+// nombres entren en los estantes sin partirse en cualquier letra
+// (ej.: "Antimeningocócica" -> Anti-me-nin-go-có-cica). Reglas básicas del español:
+// V-CV, VC-CV, sin separar grupos como bl, br, pl, tr, ch, ll, rr.
+const INI_GRUPOS = new Set(['bl','br','cl','cr','dr','fl','fr','gl','gr','kl','kr','pl','pr','tr','ch','ll','rr']);
+function iniSilabear(nombre) {
+  const VOC = 'aeiouáéíóúü';
+  return String(nombre ?? '').split(/(\s+)/).map(pal => {
+    if (pal.length < 10 || !/^[a-záéíóúüñ]+$/i.test(pal)) return escHtml(pal);
+    const w = pal.toLowerCase();
+    const cortes = [];
+    let i = 0;
+    while (i < w.length) {
+      if (!VOC.includes(w[i])) { i++; continue; }
+      let j = i + 1;
+      while (j < w.length && !VOC.includes(w[j])) j++;
+      if (j >= w.length) break;                 // no hay otra vocal: fin de palabra
+      const k = j - i - 1;                       // consonantes entre las dos vocales
+      let corte = -1;
+      if (k === 1) corte = i + 1;
+      else if (k === 2) corte = INI_GRUPOS.has(w.slice(i + 1, j)) ? i + 1 : i + 2;
+      else if (k === 3) corte = INI_GRUPOS.has(w.slice(j - 2, j)) ? i + 2 : i + 3;
+      else if (k >= 4) corte = i + 3;
+      if (corte >= 3 && w.length - corte >= 3) cortes.push(corte);
+      i = j;
     }
-    expUl.innerHTML = items.length ? items.join('')
-      : '<li class="alert-empty">Sin vacunas próximas a vencer.</li>';
+    let out = '', ant = 0;
+    cortes.forEach(c => { out += escHtml(pal.slice(ant, c)) + '\u00AD'; ant = c; });
+    return out + escHtml(pal.slice(ant));
+  }).join('');
+}
+
+// Texto corto de cobertura para el estante ("hay para ~2 meses"), con el uso
+// de los últimos 30 días. La explicación completa está en la ficha.
+function iniCoberturaSlot(v) {
+  const c = v.cobertura_dias;
+  if (c === null || c === undefined) return '<span class="solo-pc">Sin uso reciente</span><span class="solo-movil">Sin uso</span>';
+  if (c < 1) return 'Para hoy';
+  if (c >= 365) return 'Para +1 año';
+  if (c >= 60) return `Para ~${Math.round(c / 30)} meses`;
+  return `Para ~${c} ${c === 1 ? 'día' : 'días'}`;
+}
+
+function iniSlot(v, i, animar) {
+  const est = iniEstado(v);
+  const vencidas = v.stock_vencido > 0 && !iniInfo().esProveedora;
+  let linea;
+  if (vencidas) linea = 'Dosis vencidas';
+  else if (est === 'nostock') linea = 'Sin stock';
+  else if (est === 'low') linea = 'Stock bajo';
+  else if (est === 'exp') {
+    const d = iniDiasHasta(v.prox_venc);
+    linea = d <= 0 ? 'Vence hoy' : `Vence en ${d} ${d === 1 ? 'día' : 'días'}`;
+  } else linea = iniCoberturaSlot(v);
+  const aria = `${v.nombre}: ${v.stock} dosis vigentes, ${INI_EST[est].lbl.toLowerCase()}` +
+    (vencidas ? `, con ${v.stock_vencido} dosis vencidas sin descartar` : '') + '. Ver lotes.';
+  return `<button type="button" class="hel-slot is-${est}${vencidas ? ' is-alerta' : ''}" style="--i:${i}"
+      onclick="iniAbrirFicha(${v.id})" aria-label="${iniTxt(aria)}" title="${iniTxt(v.nombre)}">
+      ${vencidas ? '<span class="hel-alerta" aria-hidden="true">!</span>' : ''}
+      <span class="hel-nom">${iniSilabear(v.nombre)}</span>
+      <span class="hel-linea">${linea}</span>
+      <span class="hel-pie">
+        ${iniVialSVG(v, est, iniNivel(v), animar)}
+        <span class="hel-cant"><b>${nfmt(v.stock)}</b><small>dosis</small></span>
+      </span>
+    </button>`;
+}
+
+function iniRenderHeladera() {
+  const vacs = DASH?.vacunas || [];
+  const conStock = vacs.filter(v => v.stock > 0);
+  const total = conStock.reduce((s, v) => s + v.stock, 0);
+  $('iniHelSub').textContent = vacs.length
+    ? `${nfmt(total)} dosis vigentes en ${conStock.length} de ${vacs.length} vacunas.`
+    : 'Todavía no hay vacunas activas en el catálogo.';
+
+  // Filtros por estado con su conteo
+  const cuenta = { ok: 0, low: 0, exp: 0, nostock: 0 };
+  vacs.forEach(v => { cuenta[iniEstado(v)]++; });
+  const chips = [['', 'Todas', vacs.length], ['ok', 'En orden', cuenta.ok], ['low', 'Stock bajo', cuenta.low],
+                 ['exp', 'Por vencer', cuenta.exp], ['nostock', 'Sin stock', cuenta.nostock]];
+  $('iniHelFiltros').innerHTML = chips.map(([k, lbl, n]) => {
+    const on = INI.estado === k;
+    const off = k && n === 0 && !on;
+    return `<button type="button" class="hel-chip${k ? ' is-' + k : ''}${on ? ' on' : ''}" aria-pressed="${on}"${off ? ' disabled' : ''}
+        onclick="iniFiltrarEstado('${k}')">${k ? '<i class="hel-dot" aria-hidden="true"></i>' : ''}${lbl}<b>${n}</b></button>`;
+  }).join('');
+
+  let lista = vacs.slice();
+  const q = INI.q.trim().toLowerCase();
+  if (q) lista = lista.filter(v => v.nombre.toLowerCase().includes(q));
+  if (INI.estado) lista = lista.filter(v => iniEstado(v) === INI.estado);
+  if (INI.orden === 'atencion') {
+    lista.sort((a, b) => (b.stock_vencido > 0) - (a.stock_vencido > 0)
+      || INI_EST[iniEstado(a)].prio - INI_EST[iniEstado(b)].prio
+      || a.nombre.localeCompare(b.nombre));
+  } else {
+    lista.sort((a, b) => a.nombre.localeCompare(b.nombre));
   }
 
-  // BANNER DE VENCIDAS — unifica lotes vencidos + frascos vencidos.
-  // Un solo botón "Ir a descartar" que resuelve la primera urgencia.
-  const banner = $('bannerVencidas');
-  if (banner) {
-    const totalUrgentes = vencidas.length + frascosVencidos.length;
-    if (totalUrgentes > 0) {
-      // Título dinámico según haya lotes, frascos o ambos
-      let titulo;
-      if (vencidas.length > 0 && frascosVencidos.length > 0) {
-        titulo = `${totalUrgentes} vencimientos sin descartar (lotes y frascos abiertos)`;
-      } else if (vencidas.length > 0) {
-        titulo = `${vencidas.length} ${vencidas.length === 1 ? 'lote vencido' : 'lotes vencidos'} sin descartar`;
-      } else {
-        titulo = `${frascosVencidos.length} ${frascosVencidos.length === 1 ? 'frasco abierto vencido' : 'frascos abiertos vencidos'}`;
-      }
-      $('bannerVencidasTitulo').textContent = titulo;
-      // Lista mezclada: primero lotes, después frascos, con etiqueta clara
-      const partes = [];
-      const nombresLotes = [...new Set(vencidas.map(v => v.vacuna))];
-      nombresLotes.forEach(n => partes.push(n));
-      frascosVencidos.forEach(f => partes.push(`${f.vacuna} (frasco abierto)`));
-      $('bannerVencidasLista').textContent = partes.join(' · ');
-      banner.style.display = 'flex';
-    } else {
-      banner.style.display = 'none';
+  const cont = $('iniHelEstantes');
+  if (!lista.length) {
+    cont.innerHTML = `<div class="hel-vacio">
+        <p>${vacs.length ? 'No hay vacunas que coincidan con la búsqueda.' : 'Cuando el catálogo tenga vacunas activas, van a aparecer acá.'}</p>
+        ${vacs.length ? '<button type="button" class="btn ghost sm" onclick="iniLimpiarFiltros()">Limpiar filtros</button>' : ''}
+      </div>`;
+    return;
+  }
+  const animar = INI.animar;
+  cont.innerHTML = lista.map((v, i) => iniSlot(v, i, animar)).join('');
+  if (animar) {
+    // Dos frames para que el navegador pinte el frasco vacío antes de llenarlo
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      cont.querySelectorAll('.vial-liq').forEach(g => { g.style.transform = `translateY(${g.dataset.to}px)`; });
+    }));
+  }
+}
+
+function iniOnBuscar(valor) { INI.q = valor || ''; iniRenderHeladera(); }
+function iniSetOrden(orden) {
+  INI.orden = orden;
+  document.querySelectorAll('.hel-orden button').forEach(b => {
+    const on = b.dataset.orden === orden;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  iniRenderHeladera();
+}
+// Desde un aviso se fija el filtro y se baja a la heladera; desde los chips, alterna
+function iniFiltrarEstado(k, desdeAviso) {
+  INI.estado = desdeAviso ? k : (INI.estado === k ? '' : k);
+  iniRenderHeladera();
+  if (desdeAviso) document.querySelector('.ini-heladera')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function iniLimpiarFiltros() {
+  INI.q = ''; INI.estado = '';
+  const b = $('iniBuscar'); if (b) b.value = '';
+  iniRenderHeladera();
+}
+
+/* ---------- Ficha de una vacuna (modal) ---------- */
+function iniAbrirFicha(id) {
+  const v = (DASH?.vacunas || []).find(x => Number(x.id) === Number(id));
+  if (!v) return;
+  const info = iniInfo();
+  const est = iniEstado(v);
+  const multi = v.dosis_por_frasco > 1;
+  const up = v.usar_primero;
+  const ETIQ = { ok: 'Disponible', low: 'Stock bajo', exp: 'Por vencer', vencida: 'Vencida', nostock: 'Sin stock' };
+  const lotes = (STOCK_CACHE || [])
+    .filter(r => Number(r.vacuna_id) === Number(v.id) && r.id && Number(r.disponible) > 0)
+    .sort((a, b) => Number(a.dias_para_vencer) - Number(b.dias_para_vencer));
+  // Los frascos abiertos son información interna del CAPS: no los ve la proveedora
+  const frascos = info.esProveedora ? [] : (DASH.frascos || []).filter(f => Number(f.vacuna_id) === Number(v.id));
+
+  $('fichaTit').innerHTML = `${iniTxt(v.nombre)}${chipMulti(v.dosis_por_frasco)}`;
+
+  const filas = lotes.map(r => {
+    const dias = Number(r.dias_para_vencer);
+    let acc = '';
+    if (info.write) {
+      acc = r.estado === 'vencida'
+        ? `<button type="button" class="tar-btn fic-btn-err" onclick="iniDescartarLote(${r.id})">Descartar</button>`
+        : `<button type="button" class="tar-btn" onclick="iniAplicar(${v.id}, ${r.id})">Aplicar</button>`;
+    } else if (info.viewTrazabilidad) {
+      acc = `<button type="button" class="tar-btn" onclick="iniVerLote(${r.id})">Detalles</button>`;
     }
-  }
+    return `<li class="fic-lote">
+        <span class="fic-lote-num"><b>Lote ${iniTxt(r.numero_lote)}</b><small>${dias < 0 ? 'Venció' : 'Vence'} el ${fmtFecha(r.vencimiento)}, ${fmtDias(dias)}</small></span>
+        <span class="fic-lote-dosis"><b>${r.disponible}</b> dosis${multi ? `<small>${fmtDisp(r.disponible, v.dosis_por_frasco)}</small>` : ''}</span>
+        <span class="pill ${r.estado}">${ETIQ[r.estado] || r.estado}</span>
+        <span class="fic-lote-acc">${acc}</span>
+      </li>`;
+  }).join('');
 
-  // Si el usuario es jefa, cargar también el resumen de actividad de gestión.
-  // Solo se dispara para ella para no consultar de más en los otros roles.
-  if (USER && ROL_INFO[USER.rol]?.viewActividad) {
-    loadResumenActividad();
+  const frascoTxt = frascos.map(f => {
+    const dr = f.dias_restantes;
+    const vence = dr < 0 ? `venció ${fmtDias(dr)}` : `vence ${fmtDias(dr)}`;
+    return `<p class="fic-frasco${dr < 0 ? ' is-venc' : ''}">${ICON_FRASCO}<span>Frasco abierto del lote ${iniTxt(f.numero_lote)}: quedan ${f.dosis_sobrantes} de ${f.dosis_totales} dosis y ${vence}.</span></p>`;
+  }).join('');
+
+  $('fichaBody').innerHTML = `
+    <div class="fic-top">
+      <div class="fic-vial">${iniVialSVG(v, est, iniNivel(v), false)}</div>
+      <div class="fic-res">
+        <p class="fic-num"><b>${nfmt(v.stock)}</b> dosis vigentes</p>
+        ${multi && v.stock > 0 ? `<p class="fic-fr">${fmtDisp(v.stock, v.dosis_por_frasco)}</p>` : ''}
+        <span class="pill ${est}">${INI_EST[est].lbl}</span>
+      </div>
+    </div>
+    <dl class="fic-datos">
+      <div><dt>Aplicadas en los últimos 30 días</dt><dd>${nfmt(v.consumo30)} dosis</dd></div>
+      <div><dt>Cobertura estimada</dt><dd>${iniCobertura(v)}</dd></div>
+      <div><dt>Usar primero</dt><dd>${up ? `Lote ${iniTxt(up.numero_lote)}, vence el ${fmtFecha(up.vencimiento)}.${up.frasco_abierto ? ' Tiene un frasco abierto.' : ''}` : 'No hay lotes vigentes.'}</dd></div>
+      ${v.stock_vencido > 0 && !info.esProveedora ? `<div class="fic-alerta"><dt>Vencidas sin descartar</dt><dd>${v.stock_vencido} dosis</dd></div>` : ''}
+    </dl>
+    ${frascoTxt}
+    <h5 class="fic-sub">Lotes con stock</h5>
+    ${filas ? `<ul class="fic-lotes">${filas}</ul>` : '<p class="fic-vacio">No hay lotes con dosis de esta vacuna.</p>'}`;
+
+  let pie = `<button type="button" class="btn ghost" onclick="iniVerEnStock(${v.id})">Ver en Stock</button>`;
+  if (info.write) {
+    pie = `<button type="button" class="btn ghost" onclick="iniIngresarLote(${v.id})">Ingresar lote</button>` + pie;
+    if (up) pie += `<button type="button" class="btn" onclick="iniAplicar(${v.id}, ${up.lote_id})">Registrar aplicación</button>`;
   }
-  // Panel de reposición de la proveedora: resumen por prioridad y
-  // primeras vacunas urgentes. Solo se consulta para ella.
-  if (USER && ROL_INFO[USER.rol]?.esProveedora) {
-    loadResumenReposicion();
+  $('fichaFoot').innerHTML = pie;
+  iniTipOcultar();
+  $('ovFicha').classList.add('on');
+}
+
+function iniVerLote(loteId) { closeOv('ovFicha'); verTrazabilidad(loteId); }
+function iniVerEnStock(vacId) {
+  const v = (DASH?.vacunas || []).find(x => Number(x.id) === Number(vacId));
+  closeOv('ovFicha');
+  go('stock');
+  const s = $('stock-search');
+  if (s) s.value = v ? v.nombre : '';
+  stSetEstado('');
+}
+
+/* ---------- Accesos rápidos a los formularios ---------- */
+async function iniAplicar(vacId, loteId) {
+  closeOv('ovFicha');
+  clearAplicacion('ap');
+  go('aplicar');
+  if (!vacId) return;
+  const sv = $('ap-vac');
+  sv.value = String(vacId);
+  if (sv._niceRefresh) sv._niceRefresh();
+  await loadLotes('ap');
+  const sl = $('ap-lote');
+  if (loteId && [...sl.options].some(o => o.value === String(loteId))) {
+    sl.value = String(loteId);
+    if (sl._niceRefresh) sl._niceRefresh();
   }
+  $('ap-cant').focus();
+}
+function iniIngresarLote(vacId) {
+  closeOv('ovFicha');
+  clearLote();
+  go('lote');
+  const s = $('lo-vac');
+  if (vacId) s.value = String(vacId);
+  if (s._niceRefresh) s._niceRefresh();
+  toggleLoteMulti();
+  checkLoteExistente();
+  if (vacId) $('lo-num').focus();
+}
+function iniDescarte() { closeOv('ovFicha'); clearDescarte(); go('descarte'); }
+function iniDescartarLote(loteId) {
+  const l = VENCIDAS_CACHE.find(x => Number(x.lote_id) === Number(loteId));
+  if (l) return irADescartarLote(l);
+  // Lote vencido que no vino en las alertas: se arma con lo que hay en el stock
+  const r = (STOCK_CACHE || []).find(x => Number(x.id) === Number(loteId));
+  if (r) return irADescartarLote({ lote_id: r.id, vacuna_id: r.vacuna_id, disponible: Number(r.disponible) });
+  iniDescarte();
+}
+
+/* ---------- Para resolver ---------- */
+const INI_IC = {
+  urg:    '<svg viewBox="0 0 16 16" width="15" height="15"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.7v4M8 11.2v.1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  frasco: '<svg viewBox="0 0 16 16" width="15" height="15"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M5.5 1.5h5M6.5 1.5V4L5 6v7.5a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V6L9.5 4V1.5M5 9.5h6"/></svg>',
+  bajo:   '<svg viewBox="0 0 16 16" width="15" height="15"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M3 13.5h10"/></svg>',
+  reloj:  '<svg viewBox="0 0 16 16" width="15" height="15"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 4.6V8l2.3 1.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  vacio:  '<svg viewBox="0 0 16 16" width="15" height="15"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.8 12.2l8.4-8.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  ok:     '<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><circle cx="20" cy="20" r="17" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12.5 20.5l5 5 10-11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
+
+function iniTareas() {
+  if (!DASH) return [];
+  const info = iniInfo();
+  const U = iniDiasVenc();
+  const t = [];
+  const verLote = id => (info.viewTrazabilidad ? { lbl: 'Ver lote', fn: `verTrazabilidad(${id})` } : null);
+
+  // Urgente: lotes vencidos que todavía tienen dosis
+  (DASH.alertas?.vencidas || []).forEach(l => t.push({
+    sev: 'urg', ic: 'urg',
+    tit: `Descartar el lote vencido de ${iniTxt(l.vacuna)}`,
+    det: `Lote ${iniTxt(l.numero_lote)}: ${l.disponible} dosis. Venció ${fmtDias(l.dias)}.`,
+    acc: info.write ? { lbl: 'Descartar', fn: `iniDescartarLote(${l.lote_id})`, cls: 'is-peligro' } : verLote(l.lote_id),
+  }));
+  // Urgente: frascos multidosis abiertos que ya vencieron
+  (DASH.frascos || []).filter(f => f.dias_restantes < 0).forEach(f => t.push({
+    sev: 'urg', ic: 'frasco',
+    tit: `Descartar el frasco abierto de ${iniTxt(f.vacuna)}`,
+    det: `Lote ${iniTxt(f.numero_lote)}: quedan ${f.dosis_sobrantes} dosis. ${f.causa_vencimiento === 'lote' ? 'Venció junto con el lote.' : `Lleva ${f.dias_abierto} días abierto.`}`,
+    acc: info.write ? { lbl: 'Descartar', fn: `descartarFrascoVencido(${f.frasco_id})`, cls: 'is-peligro' } : null,
+  }));
+  // Para revisar: vacunas con poco stock (sumando todos sus lotes)
+  (DASH.vacunas || []).filter(v => iniEstado(v) === 'low').forEach(v => t.push({
+    sev: 'rev', ic: 'bajo',
+    tit: `Queda poco stock de ${iniTxt(v.nombre)}`,
+    det: `${v.stock} dosis vigentes. ${iniCobertura(v)}`,
+    acc: { lbl: 'Ver', fn: `iniAbrirFicha(${v.id})` },
+  }));
+  // Para revisar: lotes que vencen dentro del umbral
+  (DASH.radar || []).filter(l => l.dias >= 0 && l.dias <= U).forEach(l => t.push({
+    sev: 'rev', ic: 'reloj',
+    tit: `Usar primero el lote ${iniTxt(l.numero_lote)}`,
+    det: `${iniTxt(l.vacuna)}: ${l.disponible} dosis. Vence ${fmtDias(l.dias)}, el ${fmtFecha(l.vencimiento)}.`,
+    acc: info.write ? { lbl: 'Aplicar', fn: `iniAplicar(${l.vacuna_id}, ${l.lote_id})` } : verLote(l.lote_id),
+  }));
+  // Para revisar: frascos abiertos que vencen dentro del umbral
+  (DASH.frascos || []).filter(f => f.dias_restantes >= 0 && f.dias_restantes <= U).forEach(f => t.push({
+    sev: 'rev', ic: 'frasco',
+    tit: `Terminar el frasco abierto de ${iniTxt(f.vacuna)}`,
+    det: `Lote ${iniTxt(f.numero_lote)}: quedan ${f.dosis_sobrantes} dosis. Vence ${fmtDias(f.dias_restantes)}${f.causa_vencimiento === 'lote' ? ', junto con el lote' : ''}.`,
+    acc: info.write ? { lbl: 'Aplicar', fn: `iniAplicar(${f.vacuna_id}, ${f.lote_id})` } : null,
+  }));
+  // Para revisar: vacunas sin stock, agrupadas en un solo aviso
+  const sin = (DASH.vacunas || []).filter(v => v.stock <= 0);
+  if (sin.length) {
+    const nombres = sin.slice(0, 3).map(v => iniTxt(v.nombre)).join(', ');
+    t.push({
+      sev: 'rev', ic: 'vacio',
+      tit: sin.length === 1 ? `Sin stock de ${iniTxt(sin[0].nombre)}` : `${sin.length} vacunas sin stock`,
+      det: sin.length === 1 ? 'No quedan dosis vigentes.' : `${nombres}${sin.length > 3 ? ` y ${sin.length - 3} más` : ''}.`,
+      acc: { lbl: 'Ver', fn: `iniFiltrarEstado('nostock', true)` },
+    });
+  }
+  return t;
+}
+
+function iniRenderTareas() {
+  const cont = $('iniTareas');
+  if (!cont) return;
+  const t = iniTareas();
+  const urg = t.filter(x => x.sev === 'urg');
+  const rev = t.filter(x => x.sev === 'rev');
+  $('iniTarTotal').textContent = t.length ? String(t.length) : '';
+  if (!t.length) {
+    cont.innerHTML = `<div class="tar-vacio">${INI_IC.ok}<p><b>Todo en orden.</b> No hay vencimientos ni faltantes para resolver.</p></div>`;
+    return;
+  }
+  const item = x => `<li class="tar-item sev-${x.sev}">
+      <span class="tar-ic" aria-hidden="true">${INI_IC[x.ic] || ''}</span>
+      <div class="tar-txt"><p class="tar-tit">${x.tit}</p><p class="tar-det">${x.det}</p></div>
+      ${x.acc ? `<button type="button" class="tar-btn${x.acc.cls ? ' ' + x.acc.cls : ''}" onclick="${x.acc.fn}">${x.acc.lbl}</button>` : ''}
+    </li>`;
+  const LIM = 5;
+  const revVis = INI.verMas ? rev : rev.slice(0, LIM);
+  let html = '';
+  if (urg.length) html += `<h3 class="tar-grupo is-urg">Urgente <span>${urg.length}</span></h3><ul class="tar-lista">${urg.map(item).join('')}</ul>`;
+  if (rev.length) html += `<h3 class="tar-grupo">Para revisar <span>${rev.length}</span></h3><ul class="tar-lista">${revVis.map(item).join('')}</ul>`;
+  if (rev.length > LIM) {
+    html += `<button type="button" class="tar-mas" onclick="INI.verMas=!INI.verMas;iniRenderTareas()">${INI.verMas ? 'Ver menos' : `Ver ${rev.length - LIM} más`}</button>`;
+  }
+  cont.innerHTML = html;
+}
+
+/* ---------- Próximos vencimientos (línea de tiempo de 60 días) ---------- */
+function iniZona(dias) { return dias < 0 ? 'venc' : dias <= iniDiasVenc() ? '15' : dias <= 30 ? '30' : '60'; }
+
+function iniRenderVencimientos() {
+  const lotes = (DASH?.radar || []).filter(l => l.dias >= 0 || !iniInfo().esProveedora).sort((a, b) => a.dias - b.dias);
+  const prox = lotes.filter(l => l.dias >= 0);
+  const dosis = prox.reduce((s, l) => s + l.disponible, 0);
+  $('iniVenSub').textContent = prox.length
+    ? `${prox.length} ${prox.length === 1 ? 'lote vence' : 'lotes vencen'} en los próximos 60 días, con ${nfmt(dosis)} dosis en total.`
+    : 'Ningún lote con stock vence en los próximos 60 días.';
+  iniDibujarTrack(lotes);
+
+  const LIM = 5;
+  const lista = $('iniVenLista');
+  lista.innerHTML = prox.slice(0, LIM).map(l => {
+    const [, m, d] = l.vencimiento.split('-');
+    return `<li><button type="button" class="ven-item z-${iniZona(l.dias)}" onclick="iniAbrirFicha(${l.vacuna_id})">
+        <span class="ven-hoja" aria-hidden="true"><b>${Number(d)}</b>${INI_MESES_C[Number(m) - 1]}</span>
+        <span class="ven-item-txt"><b>${iniTxt(l.vacuna)}</b><small>Lote ${iniTxt(l.numero_lote)}</small></span>
+        <span class="ven-item-dosis">${l.disponible} dosis</span>
+        <span class="ven-item-dias">${l.dias === 0 ? 'Vence hoy' : `En ${l.dias} ${l.dias === 1 ? 'día' : 'días'}`}</span>
+      </button></li>`;
+  }).join('') + (prox.length > LIM
+    ? `<li class="ven-mas"><button type="button" onclick="iniVerVencimientosEnStock()">Ver los ${prox.length} lotes en Stock</button></li>`
+    : '');
+}
+
+function iniDibujarTrack(lotes) {
+  const track = $('iniVenTrack');
+  if (!track) return;
+  const ancho = track.clientWidth || 800;
+  const hayVenc = lotes.some(l => l.dias < 0);
+  const nVenc = lotes.filter(l => l.dias < 0).length;
+  // Franja de "vencidos" a la izquierda: al menos 84 px para que sus etiquetas no se pisen con "Hoy"
+  const G = hayVenc ? Math.min(0.3, Math.max(0.12, 84 / ancho)) : 0.015;
+  const FIN = 0.985;
+  const xFrac = dias => (dias < 0 ? G * 0.5 : G + (Math.min(dias, 60) / 60) * (FIN - G));
+  const pct = f => (f * 100).toFixed(2) + '%';
+
+  // Puntos: tamaño según las dosis, en carriles para que no se pisen
+  const puntos = lotes.map(l => ({ l, x: xFrac(l.dias) * ancho, r: Math.round(5 + Math.min(8, Math.sqrt(l.disponible) * 1.1)) }))
+    .sort((a, b) => a.x - b.x);
+  const carriles = [];
+  puntos.forEach(p => {
+    let k = carriles.findIndex(fin => p.x - p.r > fin + 4);
+    if (k === -1) { k = carriles.length; carriles.push(0); }
+    carriles[k] = p.x + p.r;
+    p.k = k;
+  });
+  const EJE = 38, PASO = 30;
+  const alto = EJE + 22 + Math.max(1, carriles.length) * PASO;
+  track.style.height = alto + 'px';
+
+  const hoy = DASH?.hoy?.fecha || today();
+  const marcas = ancho < 520 ? [0, 15, 30, 60] : [0, 15, 30, 45, 60];   // en el celular, una marca menos
+  const ticks = marcas.map(d => {
+    const [y, m, dd] = sumarDiasYMD(hoy, d).split('-');
+    const f = xFrac(d);
+    const alin = f < 0.06 ? ' is-ini' : f > 0.94 ? ' is-fin' : '';
+    return `<span class="ven-tick${alin}" style="left:${pct(f)}"><b>${d === 0 ? 'Hoy' : `${d} días`}</b>${Number(dd)} ${INI_MESES_C[Number(m) - 1]}</span>`;
+  }).join('');
+  const zona = `<span class="ven-zona" style="left:${pct(G)};width:${pct((iniDiasVenc() / 60) * (FIN - G))};bottom:${EJE}px"><span>Usar primero</span></span>`;
+  const gutter = hayVenc
+    ? `<span class="ven-gutter" style="width:${pct(G * 0.92)};bottom:${EJE}px"></span><span class="ven-tick is-venc" style="left:${pct(G * 0.46)}"><b>Vencidos</b>${nVenc} ${nVenc === 1 ? 'lote' : 'lotes'}</span>`
+    : '';
+  const dots = puntos.map(p => {
+    const l = p.l;
+    const yc = EJE + 18 + p.k * PASO;
+    const tip = `${l.vacuna}, lote ${l.numero_lote}: ${l.disponible} dosis. ${l.dias < 0 ? `Venció ${fmtDias(l.dias)}` : `Vence ${fmtDias(l.dias)}`}, el ${fmtFecha(l.vencimiento)}.`;
+    return `<span class="ven-palo" style="left:${pct(p.x / ancho)};bottom:${EJE}px;height:${yc - EJE}px"></span>
+      <button type="button" class="ven-dot z-${iniZona(l.dias)}" style="left:${pct(p.x / ancho)};bottom:${yc}px;width:${p.r * 2}px;height:${p.r * 2}px"
+        data-tip="${iniTxt(tip)}" aria-label="${iniTxt(tip)}" onclick="iniAbrirFicha(${l.vacuna_id})"></button>`;
+  }).join('');
+  track.innerHTML = `${gutter}${zona}<span class="ven-eje" style="bottom:${EJE}px"></span>${ticks}${dots}`;
+}
+
+// Suma días a "YYYY-MM-DD" sin zona horaria
+function sumarDiasYMD(ymd, n) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+function iniVerVencimientosEnStock() {
+  go('stock');
+  const s = $('stock-search'); if (s) s.value = '';
+  const o = $('stock-orden');
+  if (o) { o.value = 'venc-asc'; if (o._niceRefresh) o._niceRefresh(); }
+  stSetEstado('');
+}
+
+/* ---------- Frascos abiertos ---------- */
+function iniRenderFrascos() {
+  const cont = $('iniFrascos');
+  if (!cont) return;
+  const fr = DASH?.frascos || [];
+  const info = iniInfo();
+  if (!fr.length) {
+    cont.innerHTML = '<p class="fra-vacio">No hay frascos multidosis abiertos.</p>';
+    return;
+  }
+  const U = iniDiasVenc();
+  const C = 2 * Math.PI * 21;
+  cont.innerHTML = fr.map(f => {
+    const dr = f.dias_restantes;
+    const z = dr < 0 ? 'venc' : dr <= U ? 'porv' : 'ok';
+    const frac = Math.max(0, Math.min(1, dr / 30));
+    const centro = dr < 0 ? '<b>!</b>' : `<b>${dr}</b><small>${dr === 1 ? 'día' : 'días'}</small>`;
+    const pips = f.dosis_totales <= 20
+      ? `<span class="fra-pips" aria-hidden="true">${Array.from({ length: f.dosis_totales }, (_, i) => `<i${i < f.dosis_sobrantes ? ' class="on"' : ''}></i>`).join('')}</span>`
+      : '';
+    const vence = dr < 0
+      ? (f.causa_vencimiento === 'lote' ? 'Venció junto con el lote' : `Venció ${fmtDias(dr)}`)
+      : `Vence ${fmtDias(dr)}${f.causa_vencimiento === 'lote' ? ', junto con el lote' : ''}`;
+    let acc = '';
+    if (info.write) {
+      acc = dr < 0
+        ? `<button type="button" class="tar-btn fic-btn-err" onclick="descartarFrascoVencido(${f.frasco_id})">Descartar</button>`
+        : `<button type="button" class="tar-btn" onclick="iniAplicar(${f.vacuna_id}, ${f.lote_id})">Aplicar</button>`;
+    }
+    return `<article class="fra-item z-${z}">
+        <div class="fra-anillo-wrap">
+          <svg class="fra-anillo" viewBox="0 0 52 52" aria-hidden="true">
+            <circle cx="26" cy="26" r="21" class="fra-anillo-base"/>
+            ${dr >= 0 ? `<circle cx="26" cy="26" r="21" class="fra-anillo-arco" stroke-dasharray="${(frac * C).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 26 26)"/>` : ''}
+          </svg>
+          <span class="fra-centro">${centro}</span>
+        </div>
+        <div class="fra-txt">
+          <p class="fra-nom">${iniTxt(f.vacuna)}</p>
+          <p class="fra-lote">Lote ${iniTxt(f.numero_lote)}, abierto el ${fmtFecha(f.fecha_apertura)}</p>
+          ${pips}
+          <p class="fra-dosis">Quedan ${f.dosis_sobrantes} de ${f.dosis_totales} dosis</p>
+          <p class="fra-vence">${vence}</p>
+          ${acc ? `<div class="fra-acc">${acc}</div>` : ''}
+        </div>
+      </article>`;
+  }).join('');
+}
+
+/* ---------- Actividad de hoy ---------- */
+function iniRenderActividad() {
+  const serieCont = $('iniSerie');
+  if (!serieCont) return;
+  const serie = DASH?.serie14 || [];
+  const total = serie.reduce((s, p) => s + p.dosis, 0);
+  const max = Math.max(1, ...serie.map(p => p.dosis));
+  const barras = serie.map((p, i) => {
+    const esHoy = i === serie.length - 1;
+    const [y, m, d] = p.dia.split('-').map(Number);
+    const nombre = esHoy ? 'Hoy' : `${INI_DIAS[new Date(y, m - 1, d).getDay()]} ${d}/${m}`;
+    const h = p.dosis > 0 ? Math.max(6, Math.round((p.dosis / max) * 100)) : 4;
+    return `<span class="${esHoy ? 'hoy' : ''}${p.dosis === 0 ? ' cero' : ''}" style="height:${h}%" data-tip="${nombre}: ${p.dosis} dosis"></span>`;
+  }).join('');
+  serieCont.innerHTML = `<div class="act-serie-txt"><span>Aplicaciones de los últimos 14 días</span><b>${nfmt(total)} dosis</b></div>
+    <div class="act-barras" role="img" aria-label="Aplicaciones por día en los últimos 14 días: ${total} dosis en total.">${barras}</div>`;
+
+  const TITULO = {
+    aplicacion:  v => `Aplicación de ${v}`,
+    descarte:    v => `Descarte de ${v}`,
+    ingreso:     v => `Ingreso de ${v}`,
+    edicion:     v => `Edición de un lote de ${v}`,
+    eliminacion: v => `Se eliminó un lote de ${v}`,
+  };
+  const CLASE = { aplicacion: 'apl', descarte: 'des', ingreso: 'ing', edicion: 'edi', eliminacion: 'eli' };
+  const acts = DASH?.actividad || [];
+  $('iniActividad').innerHTML = acts.length ? acts.map(m => {
+    const v = iniTxt(m.vacuna);
+    const tit = (TITULO[m.tipo] || (x => x))(v);
+    const det = (m.tipo === 'edicion' || m.tipo === 'eliminacion')
+      ? iniTxt(m.motivo || '')
+      : `${m.cantidad} dosis${m.numero_lote ? `, lote ${iniTxt(m.numero_lote)}` : ''}${m.tipo === 'descarte' && m.motivo ? `. ${iniTxt(m.motivo)}` : ''}`;
+    return `<li class="act-item t-${CLASE[m.tipo] || 'edi'}">
+        <time>${m.hora}</time><span class="act-punto" aria-hidden="true"></span>
+        <div><p class="act-tit">${tit}</p><p class="act-det">${det}</p></div>
+      </li>`;
+  }).join('') : '<li class="act-vacio">Todavía no se registraron movimientos hoy.</li>';
+
+  const ver = $('iniActVer');
+  if (ver) {
+    const n = DASH?.actividadTotal || 0;
+    ver.textContent = n > acts.length ? `Ver los ${n} movimientos de hoy` : 'Ver los movimientos de hoy';
+    ver.style.display = n ? '' : 'none';
+  }
+}
+
+function iniVerMovimientosHoy() {
+  go('mov');
+  const r = $('mv-rango');
+  if (r) {
+    r.value = 'hoy';
+    if (r._niceRefresh) r._niceRefresh();
+    mvOnRangoChange();
+  }
+}
+
+/* ---------- Tooltip compartido (puntos de vencimiento y barras) ---------- */
+function iniTipMostrar(el) {
+  const tip = $('iniTip');
+  if (!tip || !el.dataset.tip) return;
+  tip.textContent = el.dataset.tip;
+  tip.hidden = false;
+  const r = el.getBoundingClientRect();
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  const x = Math.max(8, Math.min(window.innerWidth - tw - 8, r.left + r.width / 2 - tw / 2));
+  let y = r.top - th - 8;
+  if (y < 8) y = r.bottom + 8;
+  tip.style.left = x + 'px';
+  tip.style.top = y + 'px';
+}
+function iniTipOcultar() { const t = $('iniTip'); if (t) t.hidden = true; }
+document.addEventListener('mouseover', e => { const el = e.target.closest && e.target.closest('#page-inicio [data-tip]'); if (el) iniTipMostrar(el); });
+document.addEventListener('mouseout', e => { const el = e.target.closest && e.target.closest('#page-inicio [data-tip]'); if (el && !el.contains(e.relatedTarget)) iniTipOcultar(); });
+document.addEventListener('focusin', e => { const el = e.target.closest && e.target.closest('#page-inicio [data-tip]'); if (el) iniTipMostrar(el); else iniTipOcultar(); });
+window.addEventListener('scroll', iniTipOcultar, true);
+
+// La línea de tiempo se recalcula al cambiar el ancho de la ventana
+let _iniResize;
+window.addEventListener('resize', () => {
+  clearTimeout(_iniResize);
+  _iniResize = setTimeout(() => {
+    if (DASH && $('page-inicio')?.classList.contains('on')) iniDibujarTrack(DASH.radar || []);
+  }, 150);
+});
+
+/* ---------- Actualización ---------- */
+async function iniActualizar() {
+  const b = document.querySelector('.ini-refresh');
+  if (b) b.classList.add('girando');
+  try {
+    await Promise.all([loadDashboard(), loadStock()]);
+  } catch (err) {
+    toast('err', 'No se pudieron actualizar los datos. Revisá la conexión e intentá de nuevo.');
+  } finally {
+    if (b) b.classList.remove('girando');
+  }
+}
+// Cada 5 minutos, si el Inicio está a la vista, se vuelven a pedir los datos
+function iniProgramarRefresco() {
+  clearTimeout(INI.timer);
+  INI.timer = setTimeout(async () => {
+    if (!TOKEN) return;
+    const aLaVista = document.visibilityState === 'visible' && $('page-inicio')?.classList.contains('on');
+    if (!aLaVista) return iniProgramarRefresco();
+    try { await Promise.all([loadDashboard(), loadStock()]); }
+    catch (e) { iniProgramarRefresco(); }
+  }, 5 * 60 * 1000);
 }
 
 /**
@@ -344,14 +1031,15 @@ async function loadResumenReposicion() {
     const top = d.items.slice(0, TOP);
     lista.innerHTML = top.map(it => {
       const multi = Number(it.dosis_por_frasco) > 1 ? ` <span class="chip-multi chip-frasco">Frasco × ${it.dosis_por_frasco}</span>` : '';
-      const dosis = it.disponible === 0 ? 'sin stock' :
-                    `${it.disponible} ${it.disponible === 1 ? 'dosis disponibles' : 'dosis disponibles'}`;
-      const extra = it.por_vencer > 0 ? ` · ${it.por_vencer} por vencer` : '';
+      const det = it.disponible === 0
+        ? it.situacion
+        : `${it.situacion}: ${it.disponible} dosis disponibles${it.por_vencer > 0 ? `, ${it.por_vencer} por vencer` : ''}`;
+      const prio = it.prioridad.charAt(0) + it.prioridad.slice(1).toLowerCase();
       return `<li class="prov-item prov-prio-${it.prioridad.toLowerCase()}">
-        <span class="prov-prio-tag">${it.prioridad}</span>
+        <span class="prov-prio-tag">${prio}</span>
         <div class="prov-item-body">
-          <div class="prov-item-nom"><b>${it.vacuna}</b>${multi}</div>
-          <div class="prov-item-det">${it.situacion} · ${dosis}${extra}</div>
+          <div class="prov-item-nom"><b>${escHtml(it.vacuna)}</b>${multi}</div>
+          <div class="prov-item-det">${det}</div>
         </div>
       </li>`;
     }).join('');
@@ -401,7 +1089,7 @@ async function loadResumenActividad() {
     if (top) {
       if (d.topVacunasMes && d.topVacunasMes.length > 0) {
         top.innerHTML = d.topVacunasMes
-          .map(v => `<li><b>${v.nombre}</b> — ${v.dosis} ${v.dosis === 1 ? 'dosis' : 'dosis'}</li>`)
+          .map(v => `<li><span class="ges-top-nom">${escHtml(v.nombre)}</span><span class="ges-top-n">${v.dosis} dosis</span></li>`)
           .join('');
       } else {
         top.innerHTML = '<li class="jefa-top-empty">Sin aplicaciones registradas en el último mes.</li>';
@@ -413,49 +1101,47 @@ async function loadResumenActividad() {
 }
 
 /**
- * Botón unificado "Ir a descartar" del banner de vencidas.
- * Prioriza lotes vencidos primero (porque suelen ser más dosis que un frasco).
- * Si no hay lotes vencidos pero sí frascos, descarta el primer frasco.
+ * Descarte rápido de un lote vencido: abre el formulario de descarte con la
+ * vacuna, el lote, el motivo y la cantidad ya cargados.
+ * Sin parámetro usa el primer lote vencido de las alertas.
  */
-async function irADescartar(){
-  if (VENCIDAS_CACHE.length > 0) {
-    await irADescartarLote();
-  } else if (FRASCOS_VENCIDOS_CACHE.length > 0) {
-    await descartarFrascoVencido();
-  } else {
-    go('descarte');
-  }
-}
-
-/* Precarga el descarte con el primer lote vencido. */
-async function irADescartarLote(){
-  const primero = VENCIDAS_CACHE[0];
+async function irADescartarLote(lote){
+  const l = lote || VENCIDAS_CACHE[0];
+  closeOv('ovFicha');
+  clearDescarte();
   go('descarte');
+  if (!l) return;
   const selVac = $('de-vac');
-  selVac.value = String(primero.vacuna_id);
+  selVac.value = String(l.vacuna_id);
+  if (selVac._niceRefresh) selVac._niceRefresh();
   await loadLotes('de');
-  $('de-lote').value = String(primero.lote_id);
-  $('de-motivo').value = 'Vencimiento';
-  const multi = esMulti(primero.vacuna_id);
-  if (multi) {
-    const d = dpf(primero.vacuna_id);
-    const frascos = Math.floor(primero.disponible / d);
-    const sueltas = primero.disponible % d;
-    $('de-cant').value = frascos;
-    $('de-sueltas').value = sueltas;
+  const selLote = $('de-lote');
+  selLote.value = String(l.lote_id);
+  if (selLote._niceRefresh) selLote._niceRefresh();
+  const mot = $('de-motivo');
+  mot.value = 'Vencimiento';
+  if (mot._niceRefresh) mot._niceRefresh();
+  const disp = Number(l.disponible) || 0;
+  if (esMulti(l.vacuna_id)) {
+    const d = dpf(l.vacuna_id);
+    $('de-cant').value = Math.floor(disp / d);
+    $('de-sueltas').value = disp % d;
   } else {
-    $('de-cant').value = primero.disponible;
+    $('de-cant').value = disp;
   }
   toggleDescarteMulti();
 }
 
 /**
- * Descarta el primer frasco abierto vencido de la lista cacheada.
+ * Descarta un frasco abierto vencido (por id, o el primero de las alertas).
  * Confirma con el usuario mostrando los detalles del frasco.
  */
-async function descartarFrascoVencido(){
-  if (FRASCOS_VENCIDOS_CACHE.length === 0) return;
-  const f = FRASCOS_VENCIDOS_CACHE[0];
+async function descartarFrascoVencido(frascoId){
+  const f = frascoId
+    ? (FRASCOS_VENCIDOS_CACHE.find(x => Number(x.frasco_id) === Number(frascoId))
+       || (DASH?.frascos || []).find(x => Number(x.frasco_id) === Number(frascoId)))
+    : FRASCOS_VENCIDOS_CACHE[0];
+  if (!f) return;
   const ok = confirm(
     `¿Descartar el frasco abierto de ${f.vacuna} (lote ${f.numero_lote})?\n\n` +
     `Se descuentan ${f.dosis_sobrantes} dosis sobrantes con motivo "Frasco abierto vencido".`
@@ -646,10 +1332,13 @@ async function loadMovimientos(){
 }
 
 // Comparadora: convierte "YYYY-MM-DD" o Date a comparable YYYY-MM-DD
+// Los timestamps llegan en UTC ("2026-11-04T23:30:00.000Z"): se pasan a la
+// fecha LOCAL para que después de las 21 hs no cuenten como del día siguiente.
 function toISODate(v){
   if (!v) return '';
-  if (typeof v === 'string') return v.slice(0, 10);
-  try { return new Date(v).toISOString().slice(0, 10); } catch { return ''; }
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  const d = new Date(v);
+  return isNaN(d) ? String(v).slice(0, 10) : ymdLocal(d);
 }
 
 function renderMovimientos(){
@@ -686,7 +1375,7 @@ function renderMovimientos(){
          </button>`
       : '<span class="muted-dash">—</span>';
     return `<tr>
-       <td data-label="Fecha mov.">${fmtFecha(m.fecha_mov)}</td>
+       <td data-label="Fecha mov.">${fmtFecha(toISODate(m.fecha_mov))}</td>
        <td data-label="Fecha aplic.">${fmtFecha(m.fecha_aplicacion)}</td>
        <td data-label="Vacuna"><b>${m.vacuna}</b></td>
        <td data-label="Lote">${m.numero_lote || '<span class="muted-dash">—</span>'}</td>
@@ -715,7 +1404,7 @@ function renderMovimientos(){
 function mvOnRangoChange(){
   const rango = $('mv-rango').value;
   const hoy = new Date();
-  const iso = d => d.toISOString().slice(0, 10);
+  const iso = d => ymdLocal(d);
   let desde = '', hasta = '';
   const custom = rango === 'custom';
   if (rango === 'hoy') {

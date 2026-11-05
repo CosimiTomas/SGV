@@ -76,108 +76,147 @@
 
   <div class="content">
 
-    <!-- INICIO -->
+    <!-- INICIO · tablero del vacunatorio (rediseño nov/2026)
+         Arriba: saludo con el resumen del día y accesos rápidos.
+         Centro: la heladera (stock por vacuna) y la lista de lo que hay que resolver.
+         Abajo: próximos vencimientos, frascos abiertos y actividad de hoy. -->
     <section class="page on" id="page-inicio">
-      <div class="page-head">
-        <h1>Inicio</h1>
-      </div>
 
-      <!-- Banner de alerta crítica: solo aparece si hay lotes vencidos -->
-      <div class="banner-vencidas hide-proveedora" id="bannerVencidas" style="display:none">
-        <div class="banner-vencidas-ic">⚠</div>
-        <div class="banner-vencidas-txt">
-          <div class="banner-vencidas-titulo" id="bannerVencidasTitulo"></div>
-          <div class="banner-vencidas-lista" id="bannerVencidasLista"></div>
+      <header class="ini-head">
+        <div class="ini-head-txt">
+          <p class="ini-fecha" id="iniFecha"></p>
+          <h1 class="ini-saludo" id="iniSaludo">Inicio</h1>
+          <p class="ini-resumen" id="iniResumen">Cargando el estado del vacunatorio…</p>
         </div>
-        <button class="banner-vencidas-btn enfermeria-only" onclick="irADescartar()">Ir a descartar</button>
-      </div>
+        <div class="ini-head-lado">
+          <div class="ini-acciones" id="iniAcciones"></div>
+          <p class="ini-actualizado">
+            <span id="iniActualizado"></span>
+            <button type="button" class="ini-refresh" onclick="iniActualizar()" aria-label="Actualizar los datos del inicio" title="Actualizar ahora">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3"/></svg>
+            </button>
+          </p>
+        </div>
+      </header>
 
-      <!-- Cuatro alertas en grid: stock bajo, por vencer, vencidas (banner arriba) y multidosis -->
-      <div class="alerts">
-        <div class="alert low">
-          <div class="ic">!</div>
-          <div>
-            <h4>Stock bajo</h4>
-            <ul>
-              <li class="alert-empty">Sin vacunas con stock bajo.</li>
-            </ul>
+      <!-- Resumen de gestión: solo jefa de enfermería (mismos ids que antes) -->
+      <section class="ini-gestion jefa-only" aria-labelledby="iniGesTit">
+        <div class="ges-head">
+          <h2 id="iniGesTit">Resumen de gestión</h2>
+          <p class="ges-sub">Aplicaciones de la semana y descartes del último mes.</p>
+        </div>
+        <div class="ges-cuerpo">
+          <div class="ges-ind">
+            <p class="ges-lab">Aplicaciones esta semana</p>
+            <p class="ges-num" id="jefaApSem">…</p>
+            <p class="ges-det" id="jefaApSemDet">últimos 7 días</p>
+          </div>
+          <div class="ges-ind">
+            <p class="ges-lab">Descartes este mes</p>
+            <p class="ges-num" id="jefaDescMes">…</p>
+            <p class="ges-det" id="jefaDescMesDet">últimos 30 días</p>
+          </div>
+          <div class="ges-ind">
+            <p class="ges-lab">Descartes por vencimiento</p>
+            <p class="ges-num" id="jefaTasa">…</p>
+            <p class="ges-det" id="jefaTasaDet">del total de descartes</p>
+          </div>
+          <div class="ges-top">
+            <p class="ges-lab">Más aplicadas en el último mes</p>
+            <ol id="jefaTop"><li class="jefa-top-empty">Sin datos suficientes.</li></ol>
           </div>
         </div>
-        <div class="alert exp">
-          <div class="ic">⏱</div>
-          <div>
-            <h4>Por vencer</h4>
-            <ul>
-              <li class="alert-empty">Sin vacunas próximas a vencer.</li>
-            </ul>
-          </div>
-        </div>
-      </div>
+      </section>
 
-      <div class="kpis">
-        <div class="kpi"><div class="lab">Tipos de vacuna</div><div class="num">0</div><div class="delta">registradas en stock</div></div>
-        <div class="kpi"><div class="lab">Unidades totales</div><div class="num">0</div><div class="delta">dosis disponibles</div></div>
-        <div class="kpi warn"><div class="lab">Stock bajo</div><div class="num">0</div><div class="delta">requieren reposición</div></div>
-        <div class="kpi red"><div class="lab">Por vencer</div><div class="num">0</div><div class="delta">próximos 15 días</div></div>
-        <div class="kpi red hide-proveedora"><div class="lab">Vencidas</div><div class="num">0</div><div class="delta">descartar urgente</div></div>
-      </div>
+      <div class="ini-grid">
+        <div class="ini-col ini-col-main">
 
-      <!-- Panel de resumen de actividad — solo lo ve la jefa de enfermería.
-           Datos de gestión: aplicaciones de la semana, descartes del mes,
-           tasa de descarte por vencimiento y top 3 vacunas más aplicadas. -->
-      <div class="jefa-panel jefa-only">
-        <div class="jefa-panel-head">
-          <h3>Resumen de actividad</h3>
-          <span class="jefa-panel-sub">Indicadores de gestión</span>
-        </div>
-        <div class="jefa-panel-grid">
-          <div class="jefa-card">
-            <div class="jefa-lab">Aplicaciones esta semana</div>
-            <div class="jefa-num" id="jefaApSem">—</div>
-            <div class="jefa-delta" id="jefaApSemDet">últimos 7 días</div>
-          </div>
-          <div class="jefa-card">
-            <div class="jefa-lab">Descartes este mes</div>
-            <div class="jefa-num" id="jefaDescMes">—</div>
-            <div class="jefa-delta" id="jefaDescMesDet">últimos 30 días</div>
-          </div>
-          <div class="jefa-card">
-            <div class="jefa-lab">Tasa de descarte por vencimiento</div>
-            <div class="jefa-num" id="jefaTasa">—</div>
-            <div class="jefa-delta" id="jefaTasaDet">del total de descartes</div>
-          </div>
-        </div>
-        <div class="jefa-top">
-          <h4>Top 3 vacunas más aplicadas <span>(último mes)</span></h4>
-          <ol id="jefaTop">
-            <li class="jefa-top-empty">Sin datos suficientes.</li>
-          </ol>
-        </div>
-      </div>
+          <!-- HELADERA: una vacuna por frasco, el líquido muestra el stock vigente -->
+          <section class="ini-heladera" aria-labelledby="iniHelTit">
+            <div class="hel-head">
+              <div class="hel-head-txt">
+                <h2 id="iniHelTit">Heladera</h2>
+                <p class="hel-sub" id="iniHelSub"></p>
+              </div>
+              <div class="hel-tools">
+                <label class="hel-buscar">
+                  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10zM11 11l3 3"/></svg>
+                  <input id="iniBuscar" type="search" placeholder="Buscar vacuna" autocomplete="off" oninput="iniOnBuscar(this.value)" aria-label="Buscar vacuna en la heladera">
+                </label>
+                <div class="hel-orden" role="group" aria-label="Orden de las vacunas">
+                  <button type="button" data-orden="az" class="on" aria-pressed="true" onclick="iniSetOrden('az')">A-Z</button>
+                  <button type="button" data-orden="atencion" aria-pressed="false" onclick="iniSetOrden('atencion')">Atención primero</button>
+                </div>
+              </div>
+            </div>
+            <div class="hel-filtros" id="iniHelFiltros" role="group" aria-label="Filtrar por estado"></div>
+            <div class="hel-estantes" id="iniHelEstantes"></div>
+            <p class="hel-nota">"Para ~2 meses" es lo que alcanza el stock según lo aplicado en los últimos 30 días. La marca más baja de cada frasco es el límite de stock bajo. Tocá una vacuna para ver sus lotes.</p>
+          </section>
 
-      <!-- Panel exclusivo para proveedora: resumen de lo que hay que pedir,
-           con el total por prioridad y las primeras vacunas urgentes a la vista.
-           El Excel pasa a ser una acción secundaria en el encabezado. -->
-      <div class="proveedora-panel proveedora-only" id="proveedora-panel">
-        <div class="prov-head">
-          <div>
-            <h3>Pedido de reposición</h3>
-            <p class="prov-sub">Resumen de lo que necesita reponerse hoy en el CAPS.</p>
-          </div>
-          <button class="btn ghost sm" onclick="descargarReposicion()" title="Descargar el listado completo en Excel">⬇ Excel</button>
-        </div>
-        <div class="prov-conteo">
-          <div class="prov-ct prov-ct-urg"><span class="prov-ct-num" id="prov-urg">—</span><span class="prov-ct-lbl">Urgentes</span><span class="prov-ct-det">sin stock</span></div>
-          <div class="prov-ct prov-ct-alta"><span class="prov-ct-num" id="prov-alta">—</span><span class="prov-ct-lbl">Prioridad alta</span><span class="prov-ct-det">stock bajo o solo lotes por vencer</span></div>
-          <div class="prov-ct prov-ct-med"><span class="prov-ct-num" id="prov-med">—</span><span class="prov-ct-lbl">Prioridad media</span><span class="prov-ct-det">parcial por vencer</span></div>
-        </div>
-        <div class="prov-lista-head">
-          <h4>Primeras a reponer</h4>
-          <span class="prov-lista-nota" id="prov-lista-nota"></span>
-        </div>
-        <ul class="prov-lista" id="prov-lista"><li class="prov-lista-vacia">Cargando…</li></ul>
-      </div>
+          <!-- PRÓXIMOS VENCIMIENTOS: línea de tiempo de 60 días -->
+          <section class="ini-venc" aria-labelledby="iniVenTit">
+            <div class="ven-head">
+              <h2 id="iniVenTit">Próximos vencimientos</h2>
+              <p class="ven-sub" id="iniVenSub"></p>
+            </div>
+            <div class="ven-track" id="iniVenTrack"></div>
+            <ol class="ven-lista" id="iniVenLista"></ol>
+          </section>
 
+          <!-- FRASCOS ABIERTOS: multidosis en uso (no lo ve la proveedora) -->
+          <section class="ini-frascos hide-proveedora" aria-labelledby="iniFraTit">
+            <div class="fra-head">
+              <h2 id="iniFraTit">Frascos abiertos</h2>
+              <p class="fra-sub">Un frasco multidosis vence a los 30 días de abierto, o antes si vence el lote.</p>
+            </div>
+            <div class="fra-lista" id="iniFrascos"></div>
+          </section>
+        </div>
+
+        <div class="ini-col ini-col-side">
+
+          <!-- PARA RESOLVER: cada aviso trae su acción -->
+          <section class="ini-tareas hide-proveedora" aria-labelledby="iniTarTit">
+            <div class="tar-head">
+              <h2 id="iniTarTit">Para resolver</h2>
+              <span class="tar-total" id="iniTarTotal"></span>
+            </div>
+            <div id="iniTareas"></div>
+          </section>
+
+          <!-- PEDIDO DE REPOSICIÓN: solo proveedora (mismos ids que antes) -->
+          <section class="proveedora-panel proveedora-only" id="proveedora-panel">
+            <div class="prov-head">
+              <div>
+                <h3>Pedido de reposición</h3>
+                <p class="prov-sub">Lo que necesita reponerse hoy en el CAPS.</p>
+              </div>
+            </div>
+            <div class="prov-conteo">
+              <div class="prov-ct prov-ct-urg"><span class="prov-ct-num" id="prov-urg">…</span><span class="prov-ct-lbl">Urgentes</span><span class="prov-ct-det">sin stock</span></div>
+              <div class="prov-ct prov-ct-alta"><span class="prov-ct-num" id="prov-alta">…</span><span class="prov-ct-lbl">Prioridad alta</span><span class="prov-ct-det">stock bajo o solo lotes por vencer</span></div>
+              <div class="prov-ct prov-ct-med"><span class="prov-ct-num" id="prov-med">…</span><span class="prov-ct-lbl">Prioridad media</span><span class="prov-ct-det">parcial por vencer</span></div>
+            </div>
+            <div class="prov-lista-head">
+              <h4>Primeras a reponer</h4>
+              <span class="prov-lista-nota" id="prov-lista-nota"></span>
+            </div>
+            <ul class="prov-lista" id="prov-lista"><li class="prov-lista-vacia">Cargando…</li></ul>
+          </section>
+
+          <!-- ACTIVIDAD DE HOY (no lo ve la proveedora) -->
+          <section class="ini-actividad hide-proveedora" aria-labelledby="iniActTit">
+            <div class="act-head">
+              <h2 id="iniActTit">Actividad de hoy</h2>
+            </div>
+            <div class="act-serie" id="iniSerie"></div>
+            <ol class="act-lista" id="iniActividad"></ol>
+            <button type="button" class="act-ver" id="iniActVer" onclick="iniVerMovimientosHoy()">Ver los movimientos de hoy</button>
+          </section>
+        </div>
+
+      </div>
     </section>
 
     <!-- STOCK -->
@@ -749,6 +788,35 @@
     </div>
   </div>
 </div>
+
+<!-- MODAL Ficha de una vacuna (se abre desde la heladera del Inicio) -->
+<div class="overlay" id="ovFicha" onclick="if(event.target===this)closeOv('ovFicha')">
+  <div class="modal modal-ficha" role="dialog" aria-modal="true" aria-labelledby="fichaTit">
+    <div class="modal-head">
+      <h4 id="fichaTit">Vacuna</h4>
+      <button class="x" onclick="closeOv('ovFicha')" aria-label="Cerrar">×</button>
+    </div>
+    <div class="modal-body" id="fichaBody"></div>
+    <div class="modal-foot" id="fichaFoot"></div>
+  </div>
+</div>
+
+<!-- Tooltip compartido del Inicio (vencimientos y barras de actividad) -->
+<div class="ini-tip" id="iniTip" role="tooltip" hidden></div>
+
+<!-- Definiciones SVG compartidas por los frascos de la heladera.
+     Van fuera de las páginas para que sigan disponibles aunque el Inicio
+     esté oculto (por ejemplo, en la ficha de la vacuna). -->
+<svg class="svg-defs" width="0" height="0" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="liq-ok" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#63D6CB"/><stop offset="1" stop-color="#0C9A90"/></linearGradient>
+    <linearGradient id="liq-low" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F6D27C"/><stop offset="1" stop-color="#D4931A"/></linearGradient>
+    <linearGradient id="liq-exp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F5AA7C"/><stop offset="1" stop-color="#C85C22"/></linearGradient>
+    <linearGradient id="vial-alu" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#B9C7C5"/><stop offset=".45" stop-color="#E9EFEE"/><stop offset="1" stop-color="#AEBDBA"/></linearGradient>
+    <clipPath id="vclip-mono"><path d="M15 19L15 22C15 26 10 25 10 30L10 79Q10 86 17 86L31 86Q38 86 38 79L38 30C38 25 33 26 33 22L33 19Z"/></clipPath>
+    <clipPath id="vclip-multi"><path d="M13 19L13 22C13 26 6 25 6 30L6 79Q6 86 13 86L35 86Q42 86 42 79L42 30C42 25 35 26 35 22L35 19Z"/></clipPath>
+  </defs>
+</svg>
 
 <div class="toast-wrap" id="toasts"></div>
 
