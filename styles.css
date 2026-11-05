@@ -2463,3 +2463,79 @@ thead th{ text-transform:none; letter-spacing:0; font-size:12.5px; font-weight:6
   .busq-accs{ grid-column:2; }
   tbody td::before{ text-transform:none; letter-spacing:0; font-size:12px; }
 }
+
+/* =====================================================================
+   CARNET DE LA VISITA: la pieza protagonista de "Registrar aplicación".
+   Una hoja rayada con el sello del CAPS, donde cada vacuna se "pega"
+   con la etiqueta de su lote, como en el carnet de vacunación real.
+   ===================================================================== */
+.reg-side.carnet{
+  padding:0; overflow:hidden; border-color:#CFE0DD; background:#FAFDFC;
+  box-shadow:0 1px 0 rgba(7,104,98,.05), 0 10px 30px -18px rgba(7,60,56,.35);
+}
+.reg-side.carnet::before{ content:""; display:block; height:6px; background:linear-gradient(90deg, var(--teal-deep), var(--teal) 70%, var(--lime)); }
+.carnet-cab{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:18px 22px 10px; }
+.carnet-cab h2{ margin:4px 0 0; }
+.carnet-sello{
+  flex:none; display:flex; flex-direction:column; align-items:center; padding:5px 10px 6px;
+  border:2px solid rgba(10,122,114,.72); border-radius:8px; color:rgba(10,122,114,.88);
+  font-size:14px; font-weight:800; line-height:1.15; letter-spacing:-.01em; font-variant-numeric:tabular-nums;
+  transform:rotate(-4deg); background:rgba(255,255,255,.55);
+}
+.carnet-sello small{ font-size:10.5px; font-weight:600; }
+.carnet #visResumen{ padding:0 22px; }
+.carnet-cols{
+  display:flex; justify-content:space-between; padding:8px 0 6px; font-size:12px; color:var(--muted);
+  border-bottom:1px solid rgba(7,104,98,.28);
+}
+.carnet-filas{ list-style:none; }
+.carnet-fila{
+  display:grid; grid-template-columns:minmax(0,1fr) 62px; gap:0 12px; align-items:center;
+  padding:12px 0; border-bottom:1px solid rgba(7,104,98,.14);
+}
+.carnet-fila.is-vacia{ min-height:62px; }
+.carnet-dosis{
+  align-self:stretch; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  border-left:1px solid rgba(7,104,98,.14); font-size:11.5px; color:var(--muted);
+}
+.carnet-dosis b{ font-size:20px; font-weight:800; color:var(--ink); font-variant-numeric:tabular-nums; line-height:1.1; }
+.carnet-aviso{ grid-column:1 / -1; margin-top:7px; font-size:12.5px; line-height:1.4; color:var(--muted); }
+.carnet-fila.is-warn .carnet-aviso{ color:var(--warn); font-weight:600; }
+.carnet-fila.is-err .carnet-aviso{ color:var(--err); font-weight:600; }
+.carnet-fila.is-err .carnet-dosis b{ color:var(--err); }
+.carnet .res-total{ border-top:none; }
+.carnet .res-vacio{ margin-top:12px; font-size:13px; }
+.reg-side.carnet > .reg-btn, .reg-side.carnet > .reg-btn2{ width:calc(100% - 44px); margin-left:22px; margin-right:22px; }
+.reg-side.carnet > .reg-atajo{ padding-bottom:18px; }
+
+/* Etiqueta del lote (como el troquel que se pega en el carnet) */
+.etq{
+  position:relative; display:block; max-width:240px; padding:9px 11px 7px; overflow:hidden;
+  background:#fff; border:1px solid #D9E4E2; border-radius:7px;
+  box-shadow:0 1px 0 rgba(7,40,38,.07), 0 3px 8px -4px rgba(7,40,38,.18);
+}
+.etq::before{ content:""; position:absolute; inset:0 0 auto 0; height:3px; background:var(--teal); }
+.etq.is-warn::before{ background:var(--ambar-vivo, #D4931A); }
+.etq.is-err{ border-color:#EFC0B9; }
+.etq.is-err::before{ background:var(--err); }
+.etq-vac{ display:block; font-size:13px; font-weight:700; line-height:1.25; color:var(--ink); }
+.etq-datos{ display:flex; gap:14px; margin-top:4px; }
+.etq-dato{ display:flex; flex-direction:column; line-height:1.15; }
+.etq-dato span{ font-size:10.5px; color:var(--muted); }
+.etq-dato b{ font-size:12.5px; font-weight:700; color:var(--ink-soft); font-variant-numeric:tabular-nums; }
+.etq-barras{ display:block; width:100%; height:14px; margin-top:7px; fill:#26403D; opacity:.82; }
+.etq.pegada{ animation:etqPega .34s cubic-bezier(.2,.9,.3,1.25); }
+@keyframes etqPega{
+  from{ transform:translateY(-6px) scale(1.05) rotate(-1.5deg); box-shadow:0 12px 24px -10px rgba(7,40,38,.35); }
+  to{ transform:none; }
+}
+@media (prefers-reduced-motion:reduce){ .etq.pegada{ animation:none; } }
+
+/* La misma etiqueta en Descarte e Ingresar lote */
+.reg-etq{ position:relative; padding-bottom:14px; border-bottom:1px solid var(--line-soft); }
+.reg-etq .etq{ max-width:none; }
+.etq-sello{
+  position:absolute; right:10px; top:14px; padding:2px 9px; border:2px solid rgba(178,52,42,.8); border-radius:6px;
+  color:rgba(178,52,42,.9); font-size:13px; font-weight:800; transform:rotate(-8deg); background:rgba(255,255,255,.7);
+}
+.btn svg{ flex:none; }

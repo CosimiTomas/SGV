@@ -67,7 +67,7 @@ function fmtDisp(dosis, dosisPorFrasco){
   if (fr > 0) parts.push(`<b>${fr}</b> ${fr === 1 ? 'frasco' : 'frascos'}`);
   if (su > 0) parts.push(`<b>${su}</b> ${su === 1 ? 'dosis suelta' : 'dosis sueltas'}`);
   if (parts.length === 0) return '<b>0</b> frascos';
-  return parts.join(' · ');
+  return parts.join(' y ');
 }
 // Chip "Frasco x N" para marcar visualmente las multidosis al lado del nombre.
 // Ícono de frasco (SVG) — reemplaza al emoji en todo lo referido a frascos.
@@ -1258,8 +1258,8 @@ function renderStockRow(r, ETIQ) {
     const cls = dr < 0 ? 'frasco-info venc' : (dr <= 15 ? 'frasco-info porv' : 'frasco-info');
     const titulo = dr < 0 ? 'Frasco vencido' : 'Frasco abierto';
     const detalle = dr < 0
-      ? `Hace ${Math.abs(dr)} ${Math.abs(dr) === 1 ? 'día' : 'días'} · ${sob} dosis`
-      : `Vence en ${dr} ${dr === 1 ? 'día' : 'días'} · ${sob} dosis`;
+      ? `Hace ${Math.abs(dr)} ${Math.abs(dr) === 1 ? 'día' : 'días'}, quedan ${sob} dosis`
+      : `Vence en ${dr} ${dr === 1 ? 'día' : 'días'}, quedan ${sob} dosis`;
     venceCell += `<div class="${cls}">${ICON_FRASCO}<div><span class="frasco-info-tit">${titulo}</span><span class="frasco-info-det">${detalle}</span>${causaTxt}</div></div>`;
   }
   const payload = encodeURIComponent(JSON.stringify({
@@ -1458,9 +1458,9 @@ async function loadLotes(pref){
       sel.innerHTML = lotes.length
         ? '<option value="">Seleccionar…</option>' + lotes.map(l=>{
             const disp = d > 1
-              ? `${Math.floor(l.disponible/d)} fr · ${l.disponible%d} ds (${l.disponible} dosis)`
-              : `disp. ${l.disponible}`;
-            return `<option value="${l.id}" data-disp="${l.disponible}">${l.numero_lote} · vence ${fmtFecha(l.vencimiento)} · ${disp}</option>`;
+              ? `${l.disponible} dosis`
+              : `${l.disponible} dosis`;
+            return `<option value="${l.id}" data-disp="${l.disponible}">${l.numero_lote}, vence ${fmtFecha(l.vencimiento)}, ${disp}</option>`;
           }).join('')
         : '<option value="">Sin lotes disponibles</option>';
     }catch(err){ toast('err', err.message); }
@@ -1982,8 +1982,8 @@ function openEditLote(payloadEncoded) {
     // Encabezado con el nombre de la vacuna + número de lote actual
     const dpf = Number(data.dosis_por_frasco) || 1;
     const esMultidosis = dpf > 1;
-    const chip = esMultidosis ? ` · Frasco × ${dpf}` : '';
-    $('el-vacuna-txt').innerHTML = `${data.vacuna}<small style="color:var(--muted);font-weight:500">${chip} · Lote ${data.numero_lote}</small>`;
+    const chip = esMultidosis ? `, frasco × ${dpf}` : '';
+    $('el-vacuna-txt').innerHTML = `${data.vacuna}<small style="color:var(--muted);font-weight:500">Lote ${data.numero_lote}${chip}</small>`;
 
     // Bloque principal: dosis que hay ahora
     const dispActual = Number(data.disponible || 0);
@@ -2145,10 +2145,10 @@ function renderTrazabilidad(d) {
         <div class="traz-timeline-body">
           <div class="traz-timeline-line">
             <b>${m.cantidad} ${m.cantidad === 1 ? 'dosis' : 'dosis'}</b>
-            ${m.motivo ? ` · ${m.motivo}` : ''}
+            ${m.motivo ? `: ${m.motivo}` : ''}
           </div>
           <div class="traz-timeline-meta">
-            ${fmtFechaHora(m.fecha_mov)} · Registrado por ${m.responsable}
+            ${fmtFechaHora(m.fecha_mov)}, registrado por ${m.responsable}
           </div>
         </div>
       </div>`;
@@ -2178,7 +2178,7 @@ function renderTrazabilidad(d) {
     <div class="traz-header">
       <div>
         <div class="traz-vacuna">${lote.vacuna}</div>
-        <div class="traz-lote">Lote ${lote.numero_lote} · ${esMulti ? `Multidosis (frasco × ${dpf})` : 'Monodosis'}</div>
+        <div class="traz-lote">Lote ${lote.numero_lote}, ${esMulti ? `multidosis (frasco × ${dpf})` : 'monodosis'}</div>
       </div>
       <div class="traz-header-right">
         <div class="traz-venc-label">Vencimiento</div>
@@ -2240,7 +2240,7 @@ function fmtFechaHora(iso) {
   if (!iso) return '—';
   try {
     const d = new Date(iso);
-    return d.toLocaleDateString('es-AR') + ' · ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleDateString('es-AR') + ', ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
   } catch { return String(iso); }
 }
 
@@ -2251,7 +2251,7 @@ function fmtFechaHora(iso) {
 async function eliminarMovimiento(id, tipoLbl, vacuna, cantidad) {
   const ok = confirm(
     `¿Eliminar este movimiento?\n\n` +
-    `${tipoLbl} de ${cantidad} dosis · ${vacuna}\n\n` +
+    `${tipoLbl} de ${cantidad} dosis de ${vacuna}\n\n` +
     `Las ${cantidad} dosis van a volver al stock del lote. Esta acción no se puede deshacer.`
   );
   if (!ok) return;
@@ -2504,7 +2504,7 @@ function renderEstadisticas() {
   const d = EST_DATA; if (!d) return;
   const p = d.periodo;
   $('est-periodo-txt').textContent =
-    `Del ${fmtFecha(p.desde)} al ${fmtFecha(p.hasta)} · ${p.dias} ${p.dias === 1 ? 'día' : 'días'}. Las comparaciones son contra los ${p.dias} días anteriores.`;
+    `Del ${fmtFecha(p.desde)} al ${fmtFecha(p.hasta)}, ${p.dias} ${p.dias === 1 ? 'día' : 'días'}. Las comparaciones son contra los ${p.dias} días anteriores.`;
   estRenderKpis(d.kpis);
   estRenderSerie();
   estRenderBarras('est-top', d.top_vacunas.map(v => ({ label: v.vacuna, valor: v.dosis })), 8,
@@ -2708,7 +2708,7 @@ function estRenderCobertura(porVac) {
     return `<li>
       <div class="est-cob-txt">
         <b>${escHtml(v.vacuna)}</b>
-        <small>Stock ${nfmt(v.stock)} · consumo ${nfmt(v.consumo_diario, 1)}/día</small>
+        <small>Stock ${nfmt(v.stock)}, consumo ${nfmt(v.consumo_diario, 1)} por día</small>
       </div>
       <div class="est-cob-dias">${dias}</div>
       <span class="est-cob-pill ${e.cls}">${e.txt}</span>
@@ -2949,9 +2949,43 @@ function visLeer() {
   });
 }
 
+// Etiqueta de lote: la misma que se pega en el carnet de vacunación
+function fmtCorta(ymd) { const [y, m, d] = String(ymd).slice(0, 10).split('-'); return `${d}/${m}/${y.slice(2)}`; }
+function codigoBarras(txt) {
+  const t = String(txt || 'SGV');
+  let h = 2166136261, x = 0;
+  const barras = [];
+  for (let i = 0; i < 38; i++) {
+    h ^= t.charCodeAt(i % t.length) + i;
+    h = Math.imul(h, 16777619) >>> 0;
+    const w = 0.8 + (h % 3) * 0.75;
+    if (i % 2 === 0) barras.push(`<rect x="${x.toFixed(2)}" width="${w.toFixed(2)}" height="14"/>`);
+    x += w + 0.7;
+  }
+  return `<svg class="etq-barras" viewBox="0 0 ${x.toFixed(1)} 14" preserveAspectRatio="none" aria-hidden="true">${barras.join('')}</svg>`;
+}
+function etiquetaLote({ vacuna, numero, venc, estado = '', nueva = false }) {
+  return `<span class="etq${estado ? ' is-' + estado : ''}${nueva ? ' pegada' : ''}">
+      <span class="etq-vac">${escHtml(vacuna)}</span>
+      <span class="etq-datos">
+        <span class="etq-dato"><span>Lote</span><b>${numero ? escHtml(numero) : 'sin lote'}</b></span>
+        <span class="etq-dato"><span>Vence</span><b>${venc ? fmtCorta(venc) : '-'}</b></span>
+      </span>
+      ${codigoBarras(numero || vacuna)}
+    </span>`;
+}
+
+let VIS_PEGADAS = new Set();
 function visResumen() {
   const cont = $('visResumen');
   if (!cont) return;
+  // Sello del CAPS con la fecha de la visita
+  const f = $('ap-fecha').value;
+  if (f) {
+    const [y, m, d] = f.split('-');
+    $('visSello').innerHTML = `<small>San José Obrero</small>${Number(d)} ${INI_MESES_C[Number(m) - 1]} ${y}`;
+  } else $('visSello').innerHTML = '<small>San José Obrero</small>Sin fecha';
+
   const filas = visLeer().filter(f => f.v);
   const usoLote = new Map(), usoVac = new Map();
   filas.forEach(f => {
@@ -2959,30 +2993,39 @@ function visResumen() {
     usoVac.set(f.v.id, (usoVac.get(f.v.id) || 0) + f.cant);
   });
   let hayError = false;
+  const vistas = new Set();
   const items = filas.map(f => {
     let estado = '', txt;
-    if (!f.lote) { estado = 'is-err'; hayError = true; txt = 'No tiene lotes vigentes para aplicar.'; }
-    else if (f.cant < 1) { estado = 'is-err'; hayError = true; txt = 'Indicá cuántas dosis.'; }
+    if (!f.lote) { estado = 'err'; hayError = true; txt = 'No tiene lotes vigentes para aplicar.'; }
+    else if (f.cant < 1) { estado = 'err'; hayError = true; txt = 'Indicá cuántas dosis.'; }
     else {
       const quedanLote = Number(f.lote.disponible) - usoLote.get(f.lote.id);
       const quedanVac = f.v.stock - usoVac.get(f.v.id);
-      if (quedanLote < 0) { estado = 'is-err'; hayError = true; txt = `No alcanza: el lote tiene ${f.lote.disponible} dosis.`; }
-      else if (quedanVac <= iniUmbral()) { estado = 'is-warn'; txt = `Quedan ${quedanVac} dosis de esta vacuna: va a quedar con stock bajo.`; }
+      if (quedanLote < 0) { estado = 'err'; hayError = true; txt = `No alcanza: el lote tiene ${f.lote.disponible} dosis.`; }
+      else if (quedanVac <= iniUmbral()) { estado = 'warn'; txt = `Va a quedar con stock bajo: ${quedanVac} dosis de esta vacuna.`; }
       else txt = `Quedan ${quedanLote} dosis en el lote.`;
     }
-    f.li.classList.toggle('is-err', estado === 'is-err');
-    return `<li class="${estado}">
-        <span class="res-nom"><b>${escHtml(f.v.nombre)}</b>${f.lote ? `<small>Lote ${escHtml(f.lote.numero_lote)}</small>` : ''}</span>
-        <span class="res-cant">−${f.cant}</span>
-        <span class="res-txt">${txt}</span>
+    f.li.classList.toggle('is-err', estado === 'err');
+    const clave = `${f.li.dataset.n}-${f.lote ? f.lote.id : 0}`;
+    vistas.add(clave);
+    const nueva = !VIS_PEGADAS.has(clave);
+    return `<li class="carnet-fila${estado ? ' is-' + estado : ''}">
+        ${etiquetaLote({ vacuna: f.v.nombre, numero: f.lote?.numero_lote, venc: f.lote?.vencimiento, estado, nueva })}
+        <span class="carnet-dosis"><b>${Math.max(0, f.cant)}</b>${f.cant === 1 ? 'dosis' : 'dosis'}</span>
+        <p class="carnet-aviso">${txt}</p>
       </li>`;
   });
+  VIS_PEGADAS = vistas;
   visFilas().forEach(li => { if (!li.dataset.vac) li.classList.remove('is-err'); });
+  const vacias = Math.max(0, 3 - filas.length);
+  const renglones = Array.from({ length: vacias }, () => '<li class="carnet-fila is-vacia" aria-hidden="true"></li>').join('');
   const dosis = filas.reduce((s, f) => s + Math.max(0, f.cant), 0);
-  cont.innerHTML = filas.length
-    ? `<ul class="res-lista">${items.join('')}</ul>
-       <p class="res-total"><span>${filas.length} ${filas.length === 1 ? 'vacuna' : 'vacunas'}</span><b>${dosis} ${dosis === 1 ? 'dosis' : 'dosis'}</b></p>`
-    : '<p class="res-vacio">Buscá una vacuna para empezar. Podés agregar todas las que recibió el paciente.</p>';
+  cont.innerHTML = `
+    <div class="carnet-cols" aria-hidden="true"><span>Vacuna y lote</span><span>Dosis</span></div>
+    <ol class="carnet-filas">${items.join('')}${renglones}</ol>
+    ${filas.length
+      ? `<p class="res-total"><span>${filas.length} ${filas.length === 1 ? 'vacuna' : 'vacunas'}</span><b>${dosis} dosis</b></p>`
+      : '<p class="res-vacio">Las vacunas que agregues se pegan acá, con la etiqueta de su lote, como en el carnet.</p>'}`;
   const btn = $('visGuardar');
   btn.disabled = !filas.length || hayError;
   btn.textContent = filas.length > 1 ? `Registrar ${filas.length} vacunas` : 'Registrar aplicación';
@@ -3101,17 +3144,18 @@ function regResumenDescarte() {
   if (!v) { cont.innerHTML = '<p class="res-vacio">Elegí la vacuna y el lote a descartar.</p>'; return; }
   const d = dpf(vacId);
   const cant = esMulti(vacId) ? (Number($('de-cant').value) || 0) * d + (Number($('de-sueltas').value) || 0) : (Number($('de-cant').value) || 0);
-  let html = `<div class="reg-vac"><span class="reg-vac-vial">${iniVialSVG(v, iniEstado(v), iniNivel(v), false)}</span><b>${escHtml(v.nombre)}</b></div><dl class="reg-datos">`;
+  let html;
   if (lote) {
     const dias = Number(lote.dias_para_vencer);
     const quedan = Number(lote.disponible) - cant;
-    html += regFila('Lote', escHtml(lote.numero_lote));
+    html = `<div class="reg-etq">${etiquetaLote({ vacuna: v.nombre, numero: lote.numero_lote, venc: lote.vencimiento, estado: dias < 0 ? 'err' : '' })}${dias < 0 ? '<span class="etq-sello">Vencido</span>' : ''}</div><dl class="reg-datos">`;
     html += regFila(dias < 0 ? 'Venció' : 'Vence', `${fmtFecha(lote.vencimiento)}, ${fmtDias(dias)}`, dias < 0 ? 'is-err' : '');
     html += regFila('Hay en el lote', `${lote.disponible} dosis`);
     if (cant > 0) html += regFila('Después del descarte', quedan < 0 ? `No alcanza: hay ${lote.disponible} dosis` : `${quedan} dosis`, quedan < 0 ? 'is-err' : '');
     // Si el lote está vencido, se sugiere el motivo
     if (dias < 0 && !$('de-motivo').value) { $('de-motivo').value = 'Vencimiento'; $('de-motivo')._niceRefresh?.(); }
   } else {
+    html = `<div class="reg-vac"><span class="reg-vac-vial">${iniVialSVG(v, iniEstado(v), iniNivel(v), false)}</span><b>${escHtml(v.nombre)}</b></div><dl class="reg-datos">`;
     html += regFila('Stock vigente de la vacuna', `${v.stock} dosis`);
   }
   cont.innerHTML = html + '</dl>';
@@ -3126,9 +3170,9 @@ function regResumenLote() {
   const num = $('lo-num').value.trim();
   const cant = esMulti(vacId) ? (Number($('lo-cant').value) || 0) * dpf(vacId) : (Number($('lo-cant').value) || 0);
   const existente = num ? (STOCK_CACHE || []).find(r => Number(r.vacuna_id) === Number(vacId) && r.id && normTxt(r.numero_lote) === normTxt(num)) : null;
-  let html = `<div class="reg-vac"><span class="reg-vac-vial">${iniVialSVG(v, iniEstado(v), iniNivel(v), false)}</span><b>${escHtml(v.nombre)}</b></div><dl class="reg-datos">`;
+  let html = `<div class="reg-etq">${etiquetaLote({ vacuna: v.nombre, numero: existente ? existente.numero_lote : num, venc: $('lo-venc').value || (existente && existente.vencimiento) })}</div><dl class="reg-datos">`;
   html += regFila('Stock vigente hoy', `${v.stock} dosis`);
-  if (num) html += regFila('Lote', existente ? `${escHtml(existente.numero_lote)} (ya existe, se suman las dosis)` : `${escHtml(num)} (lote nuevo)`);
+  if (num) html += regFila('Lote', existente ? 'Ya existe: se suman las dosis' : 'Lote nuevo');
   if (cant > 0) html += regFila('Stock después de guardar', `${v.stock + cant} dosis`, 'is-ok');
   cont.innerHTML = html + '</dl>';
 }

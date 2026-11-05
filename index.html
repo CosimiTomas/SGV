@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SGV — CAPS San José Obrero</title>
+<title>SGV, CAPS San José Obrero</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -272,8 +272,8 @@
             <h4>Inventario</h4>
             <span id="st-contador" class="mov-contador" style="margin-left:10px">Mostrando 0 lotes</span>
             <div class="spacer"></div>
-            <button class="btn subtle sm" onclick="excelStockGeneral()">⬇ Excel · general</button>
-            <button class="btn subtle sm" onclick="openExcelEsp()">⬇ Excel · específico</button>
+            <button class="btn subtle sm" onclick="excelStockGeneral()"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Excel general</button>
+            <button class="btn subtle sm" onclick="openExcelEsp()"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Excel de una vacuna</button>
           </div>
           <div class="tabla-scroll">
           <table>
@@ -343,7 +343,7 @@
             <h4>Historial</h4>
             <span id="mv-contador" class="mov-contador">Mostrando 0 movimientos</span>
             <div class="spacer"></div>
-            <button class="btn subtle sm" onclick="excelMovimientosFiltrado()" title="Descarga los movimientos que se ven ahora en pantalla con los filtros aplicados">⬇ Excel</button>
+            <button class="btn subtle sm" onclick="excelMovimientosFiltrado()" title="Descarga los movimientos que se ven ahora en pantalla con los filtros aplicados"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Excel</button>
           </div>
           <div class="tabla-scroll">
           <table>
@@ -375,8 +375,11 @@
           </button>
           <div id="ap-msg"></div>
         </div>
-        <aside class="reg-side" aria-labelledby="visResTit">
-          <h2 id="visResTit">Resumen de la visita</h2>
+        <aside class="reg-side carnet" aria-labelledby="visResTit">
+          <div class="carnet-cab">
+            <h2 id="visResTit">Carnet de la visita</h2>
+            <span class="carnet-sello" id="visSello" aria-label="Fecha de la visita"></span>
+          </div>
           <div id="visResumen" class="reg-res"></div>
           <button type="button" class="btn reg-btn" id="visGuardar" onclick="visGuardar()">Registrar aplicación</button>
           <button type="button" class="btn ghost reg-btn2" onclick="visCancelar()">Cancelar visita</button>
@@ -481,7 +484,7 @@
           <input type="date" id="est-hasta" onchange="loadEstadisticas()">
         </div>
         <div class="spacer"></div>
-        <button class="btn subtle sm" onclick="excelEstadisticas()" title="Descargar el detalle por vacuna del período en Excel">⬇ Excel</button>
+        <button class="btn subtle sm" onclick="excelEstadisticas()" title="Descargar el detalle por vacuna del período en Excel"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Excel</button>
       </div>
 
       <div id="est-msg"></div>
@@ -661,7 +664,7 @@
 <!-- MODAL Excel específico (stock) -->
 <div class="overlay" id="ovExcel">
   <div class="modal">
-    <div class="modal-head"><h4>Excel · Stock específico</h4><button class="x" onclick="closeOv('ovExcel')">×</button></div>
+    <div class="modal-head"><h4>Excel del stock de una vacuna</h4><button class="x" onclick="closeOv('ovExcel')">×</button></div>
     <div class="modal-body">
       <label>Elegí la vacuna para descargar su stock</label>
       <select id="ex-vac" class="select-nice"><option value="">Seleccionar…</option></select>
