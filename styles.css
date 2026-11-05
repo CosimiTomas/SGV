@@ -3152,3 +3152,80 @@ tbody td{ padding-top:13px; padding-bottom:13px; }
 @media (max-width:760px){ .gate-entorno{ display:none; } }
 /* el entorno se achica con la pantalla para que siempre entre completo */
 .gate-entorno{ width:clamp(280px, calc((100vw - 430px) / 2 - 56px), 560px); height:auto; aspect-ratio:560 / 640; }
+
+/* =====================================================================
+   BARRA SUPERIOR (nov/2026): una sola barra verde con todo a mano
+   Marca a la izquierda, secciones en el medio, buscador y cuenta a la
+   derecha. Mismo verde que la pared del login; la sección activa es
+   una pastilla blanca.
+   ===================================================================== */
+.topbar{
+  --barra:#0A615B;
+  display:flex; align-items:center; flex-wrap:nowrap; gap:18px;
+  min-height:64px; padding:10px 24px;
+  background:var(--barra); border-bottom:0; box-shadow:0 1px 0 rgba(0,0,0,.08), 0 8px 20px -16px rgba(7,40,38,.6);
+}
+.topbar::after{ display:none; }
+.topbar-logo{ height:40px; padding:4px; border-radius:11px; background:#fff; box-shadow:0 2px 6px -2px rgba(0,0,0,.3); }
+.topbar-logo:hover{ background:#fff; }
+.topbar-brand{ display:flex; flex-direction:column; gap:1px; margin-right:8px; flex:none; }
+.topbar-title-main{ font-size:17px; font-weight:800; letter-spacing:.01em; color:#fff; line-height:1.1; }
+.topbar-title-sub{ margin:0; font-size:12px; font-weight:500; letter-spacing:0; color:rgba(255,255,255,.68); }
+
+.topbar .nav{
+  position:static; flex:1 1 auto; min-width:0; justify-content:center; gap:2px;
+  padding:4px; border:0; border-radius:12px; background:rgba(0,0,0,.14);
+  overflow-x:auto; scrollbar-width:none;
+}
+.topbar .nav::-webkit-scrollbar{ display:none; }
+.topbar .nav-item{
+  height:36px; padding:0 14px; border:0; border-radius:9px;
+  font-size:14px; font-weight:500; color:rgba(255,255,255,.78); background:transparent;
+  transition:background .15s, color .15s;
+}
+.topbar .nav-item:hover{ color:#fff; background:rgba(255,255,255,.09); }
+.topbar .nav-item.active{ color:var(--teal-deep); background:#fff; font-weight:650; box-shadow:0 2px 6px -2px rgba(0,0,0,.25); }
+.topbar .nav-item:focus-visible{ outline:2px solid #C3E26A; outline-offset:1px; }
+
+.topbar .busq-btn{
+  flex:none; margin:0; height:38px; padding:0 8px 0 12px; border-radius:10px;
+  background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.16); color:rgba(255,255,255,.82);
+}
+.topbar .busq-btn:hover{ background:rgba(255,255,255,.16); border-color:rgba(255,255,255,.3); color:#fff; }
+.topbar .busq-btn:focus-visible{ outline:2px solid #C3E26A; outline-offset:1px; box-shadow:none; }
+.topbar .busq-btn kbd{ background:rgba(0,0,0,.2); border-color:rgba(255,255,255,.14); color:rgba(255,255,255,.75); }
+
+.topbar .acct{
+  flex:none; height:auto; gap:9px; padding:4px 12px 4px 4px; border:0; border-radius:999px;
+  background:transparent; color:#fff;
+}
+.topbar .acct:hover{ background:rgba(255,255,255,.09); border:0; }
+.topbar .acct.active{ background:#fff; color:var(--teal-deep); box-shadow:0 2px 6px -2px rgba(0,0,0,.25); }
+.topbar .acct .av{
+  width:32px; height:32px; background:#C3E26A; color:#0B3B38; font-size:12px; font-weight:800; box-shadow:none;
+}
+.topbar .acct .name{ font-size:13.5px; font-weight:600; white-space:nowrap; }
+
+/* Pantallas medianas: las secciones bajan a una segunda fila dentro de la barra */
+@media (max-width:1180px){
+  .topbar{ flex-wrap:wrap; row-gap:10px; padding:10px 20px 10px; }
+  .topbar .nav{ order:10; flex:1 1 100%; justify-content:flex-start; }
+  .topbar-brand{ margin-right:auto; }
+}
+@media (max-width:760px){
+  .topbar{ padding:10px 12px; gap:10px; }
+  .topbar-logo{ height:36px; }
+  .topbar-brand{ display:flex; }
+  .topbar-title-sub{ display:none; }
+  .topbar .acct{ order:2; margin-left:0; padding:3px; }
+  .topbar .acct .name{ display:none; }
+  .topbar .busq-btn{ height:36px; padding:0 10px; }
+  .topbar .nav{ margin:0 -12px -10px; border-radius:0; padding:6px 8px; background:rgba(0,0,0,.16); }
+  .topbar .nav-item{ height:34px; padding:0 12px; font-size:13.5px; flex:none; }
+}
+/* lo que queda fijo al bajar, debajo de la barra */
+.reg-side{ top:84px; }
+@media (max-width:760px){
+  /* se nota que las secciones siguen hacia la derecha */
+  .topbar .nav{ -webkit-mask-image:linear-gradient(90deg, #000 85%, transparent); mask-image:linear-gradient(90deg, #000 85%, transparent); }
+}

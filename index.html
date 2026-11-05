@@ -68,31 +68,27 @@
       <div class="topbar-title-main">SGV</div>
       <div class="topbar-title-sub">CAPS San José Obrero</div>
     </div>
-    <div class="spacer"></div>
+    <nav class="nav" id="nav" aria-label="Secciones">
+      <button class="nav-item active" data-page="inicio" onclick="go('inicio')">Inicio</button>
+      <button class="nav-item" data-page="stock" onclick="go('stock')">Stock</button>
+      <button class="nav-item enfermeria-only" data-page="aplicar" onclick="go('aplicar')">Aplicación</button>
+      <button class="nav-item enfermeria-only" data-page="lote" onclick="go('lote')">Ingresar lote</button>
+      <button class="nav-item enfermeria-only" data-page="descarte" onclick="go('descarte')">Descarte</button>
+      <button class="nav-item hide-proveedora" data-page="mov" onclick="go('mov')">Movimientos</button>
+      <button class="nav-item coordinadora-only" data-page="estadisticas" onclick="go('estadisticas')">Estadísticas</button>
+      <button class="nav-item coordinadora-only" data-page="usuarios" onclick="go('usuarios')">Usuarios</button>
+      <button class="nav-item coordinadora-only" data-page="catalogo" onclick="go('catalogo')">Vacunas</button>
+    </nav>
     <button type="button" class="busq-btn" onclick="busqAbrir()" aria-label="Buscar vacuna (Ctrl + K)">
       <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10zM11 11l3 3"/></svg>
       <span class="busq-btn-txt">Buscar vacuna</span>
       <kbd>Ctrl K</kbd>
     </button>
-    <div class="acct" onclick="go('cuenta')">
-      <div class="av" id="acctAv">EN</div>
-      <span class="name" id="acctName" style="font-size:13.5px;font-weight:600">Enfermería</span>
-    </div>
+    <button type="button" class="acct nav-item" data-page="cuenta" onclick="go('cuenta')" aria-label="Mi cuenta">
+      <span class="av" id="acctAv">EN</span>
+      <span class="name" id="acctName">Enfermería</span>
+    </button>
   </header>
-
-  <nav class="nav" id="nav">
-    <button class="nav-item active" data-page="inicio" onclick="go('inicio')">Inicio</button>
-    <button class="nav-item" data-page="stock" onclick="go('stock')">Stock</button>
-    <button class="nav-item enfermeria-only" data-page="aplicar" onclick="go('aplicar')">Aplicación</button>
-    <button class="nav-item enfermeria-only" data-page="lote" onclick="go('lote')">Ingresar lote</button>
-    <button class="nav-item enfermeria-only" data-page="descarte" onclick="go('descarte')">Descarte</button>
-    <button class="nav-item hide-proveedora" data-page="mov" onclick="go('mov')">Movimientos</button>
-    <button class="nav-item coordinadora-only" data-page="estadisticas" onclick="go('estadisticas')">Estadísticas</button>
-    <button class="nav-item coordinadora-only" data-page="usuarios" onclick="go('usuarios')">Usuarios</button>
-    <button class="nav-item coordinadora-only" data-page="catalogo" onclick="go('catalogo')">Vacunas</button>
-    <button class="nav-item" data-page="cuenta" onclick="go('cuenta')">Mi cuenta</button>
-  </nav>
-
   <div class="content">
 
     <!-- INICIO · tablero del vacunatorio (rediseño nov/2026)
