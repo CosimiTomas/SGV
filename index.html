@@ -55,6 +55,11 @@
       </div>
     </div>
     <div class="spacer"></div>
+    <button type="button" class="busq-btn" onclick="busqAbrir()" aria-label="Buscar vacuna (Ctrl + K)">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10zM11 11l3 3"/></svg>
+      <span class="busq-btn-txt">Buscar vacuna</span>
+      <kbd>Ctrl K</kbd>
+    </button>
     <div class="acct" onclick="go('cuenta')">
       <div class="av" id="acctAv">EN</div>
       <span class="name" id="acctName" style="font-size:13.5px;font-weight:600">Enfermería</span>
@@ -222,7 +227,10 @@
     <!-- STOCK -->
     <section class="page" id="page-stock">
       <div class="page-head">
-        <h1>Stock</h1>
+        <div>
+          <h1>Stock</h1>
+          <div class="sub">Todos los lotes con su vencimiento y su estado. Tocá una vacuna en el buscador (Ctrl + K) para ver su ficha.</div>
+        </div>
       </div>
       <div class="readonly-note readonly-only hide-proveedora"><span class="ic">🔒</span><span>Estás en modo <b>solo lectura</b>: podés consultar el stock y descargar los Excel, pero no registrar movimientos.</span></div>
       <div class="mov-layout">
@@ -280,7 +288,10 @@
     <!-- MOVIMIENTOS -->
     <section class="page" id="page-mov">
       <div class="page-head">
-        <h1>Movimientos</h1>
+        <div>
+          <h1>Movimientos</h1>
+          <div class="sub">Todo lo que se registró: aplicaciones, descartes, ingresos y ediciones de lotes.</div>
+        </div>
       </div>
       <div class="readonly-note readonly-only hide-proveedora"><span class="ic">🔒</span><span>Modo <b>solo lectura</b>: podés consultar y descargar el historial, pero no registrar movimientos.</span></div>
 
@@ -345,77 +356,97 @@
     </section>
 
     <!-- APLICACIÓN (centrado) -->
-    <section class="page form-page enfermeria-only" id="page-aplicar">
-      <div class="form-card">
-        <div class="panel-head"><h4>Registrar aplicación de vacuna</h4></div>
-        <div class="form-body">
-          <div class="grid2">
-            <div><label>Vacuna <span class="req">*</span></label><select id="ap-vac" onchange="loadLotes('ap')" class="select-nice"><option value="">Seleccionar…</option></select></div>
-            <div><label>Lote <span class="req">*</span></label><select id="ap-lote" class="select-nice"><option value="">Seleccionar vacuna primero…</option></select></div>
-            <div><label>Cantidad <span class="req">*</span></label><input id="ap-cant" type="number" placeholder="0" min="1"></div>
-            <div><label>Fecha de aplicación <span class="req">*</span></label><input id="ap-fecha" type="date"></div>
+    <!-- APLICACIÓN · una visita: el mismo paciente puede recibir varias vacunas -->
+    <section class="page reg-page enfermeria-only" id="page-aplicar">
+      <div class="reg-head">
+        <h1>Registrar aplicación</h1>
+        <p>Cargá todas las vacunas que recibió el paciente en esta visita y registralas juntas. El lote que conviene usar se elige solo.</p>
+      </div>
+      <div class="reg-layout">
+        <div class="reg-card">
+          <div class="reg-fecha">
+            <label for="ap-fecha">Fecha de aplicación</label>
+            <input id="ap-fecha" type="date" onchange="visResumen()">
           </div>
+          <ol class="vis-lista" id="visLista" aria-label="Vacunas de la visita"></ol>
+          <button type="button" class="vis-agregar" onclick="visAgregar(null, null, true)">
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            Agregar otra vacuna
+          </button>
           <div id="ap-msg"></div>
-          <div style="display:flex;gap:10px;margin-top:22px">
-            <button class="btn" onclick="saveAplicacion('ap')">Registrar aplicación</button>
-            <button class="btn ghost" onclick="clearAplicacion('ap');go('inicio')">Cancelar</button>
-          </div>
         </div>
+        <aside class="reg-side" aria-labelledby="visResTit">
+          <h2 id="visResTit">Resumen de la visita</h2>
+          <div id="visResumen" class="reg-res"></div>
+          <button type="button" class="btn reg-btn" id="visGuardar" onclick="visGuardar()">Registrar aplicación</button>
+          <button type="button" class="btn ghost reg-btn2" onclick="visCancelar()">Cancelar visita</button>
+          <p class="reg-atajo">Atajo: Ctrl + Enter para registrar.</p>
+        </aside>
       </div>
     </section>
 
-    <!-- DESCARTE (centrado) -->
-    <section class="page form-page enfermeria-only" id="page-descarte">
-      <div class="form-card">
-        <div class="panel-head"><h4>Registrar descarte</h4></div>
-        <div class="form-body">
+    <!-- DESCARTE -->
+    <section class="page reg-page enfermeria-only" id="page-descarte">
+      <div class="reg-head">
+        <h1>Registrar descarte</h1>
+        <p>Dosis que no se pueden usar: vencidas, rotas o fuera de la cadena de frío.</p>
+      </div>
+      <div class="reg-layout">
+        <div class="reg-card">
           <div class="grid2">
-            <div><label>Vacuna <span class="req">*</span></label><select id="de-vac" onchange="loadLotes('de')" class="select-nice"><option value="">Seleccionar…</option></select></div>
-            <div><label>Lote <span class="req">*</span></label><select id="de-lote" class="select-nice"><option value="">Seleccionar vacuna primero…</option></select></div>
+            <div><label>Vacuna <span class="req">*</span></label><select id="de-vac" onchange="loadLotes('de');regResumenDescarte()" class="select-nice"><option value="">Seleccionar…</option></select></div>
+            <div><label>Lote <span class="req">*</span></label><select id="de-lote" class="select-nice" onchange="regResumenDescarte()"><option value="">Seleccionar vacuna primero…</option></select></div>
             <div>
               <label id="de-cant-lbl">Cantidad de dosis <span class="req">*</span></label>
-              <input id="de-cant" type="number" placeholder="0" min="0" oninput="toggleDescarteMulti()">
+              <input id="de-cant" type="number" placeholder="0" min="0" oninput="toggleDescarteMulti();regResumenDescarte()">
               <div id="de-multi-extra" style="display:none;margin-top:8px">
-                <input id="de-sueltas" type="number" placeholder="Dosis sueltas" min="0" oninput="toggleDescarteMulti()" style="width:100%">
+                <input id="de-sueltas" type="number" placeholder="Dosis sueltas" min="0" oninput="toggleDescarteMulti();regResumenDescarte()" style="width:100%">
                 <small id="de-total" style="display:block;color:var(--muted);margin-top:6px">Total: 0 dosis</small>
               </div>
             </div>
             <div><label>Motivo <span class="req">*</span></label><select id="de-motivo" class="select-nice"><option value="">Seleccionar…</option><option>Vencimiento</option><option>Cadena de frío</option><option>Rotura / derrame</option><option>Frasco abierto vencido</option><option>Otro</option></select></div>
           </div>
           <div id="de-msg"></div>
-          <div style="display:flex;gap:10px;margin-top:22px">
-            <button class="btn" onclick="saveDescarte()">Registrar descarte</button>
-            <button class="btn ghost" onclick="clearDescarte();go('inicio')">Cancelar</button>
-          </div>
         </div>
+        <aside class="reg-side" aria-labelledby="deResTit">
+          <h2 id="deResTit">Resumen</h2>
+          <div id="deResumen" class="reg-res"></div>
+          <button type="button" class="btn reg-btn reg-btn-err" onclick="saveDescarte()">Registrar descarte</button>
+          <button type="button" class="btn ghost reg-btn2" onclick="clearDescarte();go('inicio')">Cancelar</button>
+        </aside>
       </div>
     </section>
 
-    <!-- INGRESAR LOTE (centrado) -->
-    <section class="page form-page enfermeria-only" id="page-lote">
-      <div class="form-card">
-        <div class="panel-head"><h4>Ingresar lote nuevo</h4></div>
-        <div class="form-body">
+    <!-- INGRESAR LOTE -->
+    <section class="page reg-page enfermeria-only" id="page-lote">
+      <div class="reg-head">
+        <h1>Ingresar lote</h1>
+        <p>Cargá las dosis que llegaron. Si el lote ya existe, se suman a las que hay.</p>
+      </div>
+      <div class="reg-layout">
+        <div class="reg-card">
           <div class="grid2">
-            <div><label>Vacuna <span class="req">*</span></label><select id="lo-vac" onchange="toggleLoteMulti();checkLoteExistente()" class="select-nice"><option value="">Seleccionar…</option></select></div>
+            <div><label>Vacuna <span class="req">*</span></label><select id="lo-vac" onchange="toggleLoteMulti();checkLoteExistente();regResumenLote()" class="select-nice"><option value="">Seleccionar…</option></select></div>
             <div>
               <label>Número de lote <span class="req">*</span></label>
-              <input id="lo-num" placeholder="Ej: L-2026-A" oninput="checkLoteExistente()">
+              <input id="lo-num" placeholder="Ej: L-2026-A" oninput="checkLoteExistente();regResumenLote()">
               <div id="lo-existe-hint" class="lote-hint" style="display:none"></div>
             </div>
-            <div><label>Fecha de vencimiento <span class="req">*</span></label><input id="lo-venc" type="date" oninput="checkLoteExistente()"></div>
+            <div><label>Fecha de vencimiento <span class="req">*</span></label><input id="lo-venc" type="date" oninput="checkLoteExistente();regResumenLote()"></div>
             <div>
               <label id="lo-cant-lbl">Cantidad de dosis <span class="req">*</span></label>
-              <input id="lo-cant" type="number" placeholder="0" min="1" oninput="toggleLoteMulti()">
+              <input id="lo-cant" type="number" placeholder="0" min="1" oninput="toggleLoteMulti();regResumenLote()">
               <small id="lo-cant-hint" style="display:none;color:var(--muted);margin-top:6px">Total: 0 dosis</small>
             </div>
           </div>
           <div id="lo-msg"></div>
-          <div style="display:flex;gap:10px;margin-top:22px">
-            <button class="btn" onclick="saveLote()">Guardar lote</button>
-            <button class="btn ghost" onclick="clearLote();go('inicio')">Cancelar</button>
-          </div>
         </div>
+        <aside class="reg-side" aria-labelledby="loResTit">
+          <h2 id="loResTit">Resumen</h2>
+          <div id="loResumen" class="reg-res"></div>
+          <button type="button" class="btn reg-btn" onclick="saveLote()">Guardar lote</button>
+          <button type="button" class="btn ghost reg-btn2" onclick="clearLote();go('inicio')">Cancelar</button>
+        </aside>
       </div>
     </section>
 
@@ -798,6 +829,21 @@
     </div>
     <div class="modal-body" id="fichaBody"></div>
     <div class="modal-foot" id="fichaFoot"></div>
+  </div>
+</div>
+
+<!-- Buscador rápido de vacunas (Ctrl + K o "/") -->
+<div class="overlay busq-ov" id="ovBuscar" onclick="if(event.target===this)busqCerrar()">
+  <div class="busq" role="dialog" aria-modal="true" aria-label="Buscar vacuna">
+    <div class="busq-campo">
+      <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10zM11 11l3 3"/></svg>
+      <input id="busqInput" type="text" placeholder="Escribí el nombre de una vacuna" autocomplete="off"
+             role="combobox" aria-expanded="true" aria-controls="busqLista" aria-autocomplete="list"
+             oninput="busqRender()" onkeydown="busqTecla(event)">
+      <kbd>Esc</kbd>
+    </div>
+    <ul class="busq-lista" id="busqLista" role="listbox"></ul>
+    <p class="busq-pie" id="busqPie"></p>
   </div>
 </div>
 

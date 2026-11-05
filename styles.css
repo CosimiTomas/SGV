@@ -2257,3 +2257,209 @@ body.rol-sin-traz .traz-only{ display:none !important; }
   .vial-liq, .hel-slot .vial{ transition:none; }
   .ini-refresh.girando svg{ animation:none; }
 }
+
+/* =====================================================================
+   PANTALLAS DE REGISTRO (nov/2026): Aplicación (visita), Descarte e
+   Ingresar lote comparten el mismo esquema: formulario a la izquierda y
+   un resumen en vivo a la derecha, para revisar antes de guardar.
+   ===================================================================== */
+.reg-page{ max-width:1180px; margin:0 auto; }
+.reg-head{ margin-bottom:22px; }
+.reg-head h1{ font-size:30px; font-weight:800; letter-spacing:-.025em; line-height:1.15; color:var(--ink); }
+.reg-head p{ margin-top:8px; max-width:640px; font-size:15.5px; line-height:1.5; color:var(--ink-soft); }
+.reg-layout{ display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:22px; align-items:start; }
+.reg-card{ background:var(--card); border:1px solid var(--line); border-radius:18px; padding:26px 28px; }
+.reg-card .grid2{ gap:20px 22px; }
+.reg-card .nice-select-btn{
+  min-height:51px; padding:13px 40px 13px 16px; font-size:15px;
+  border:1.5px solid var(--line); border-radius:var(--r-md);
+}
+.reg-side{
+  position:sticky; top:20px; background:var(--card); border:1px solid var(--line);
+  border-radius:18px; padding:22px;
+}
+.reg-side h2{ font-size:17px; font-weight:700; letter-spacing:-.01em; color:var(--ink); margin-bottom:12px; }
+.reg-res{ min-height:60px; }
+.reg-btn{ width:100%; justify-content:center; margin-top:18px; padding:14px 18px; font-size:15px; }
+.reg-btn:disabled{ opacity:.5; cursor:not-allowed; }
+.reg-btn2{ width:100%; justify-content:center; margin-top:8px; }
+.reg-btn-err{ background:var(--err); border-color:var(--err); }
+.reg-btn-err:hover{ background:#922a22; }
+.reg-atajo{ margin-top:10px; font-size:12px; color:var(--muted); text-align:center; }
+.res-vacio{ font-size:14px; line-height:1.5; color:var(--muted); }
+
+/* Resumen de la visita */
+.res-lista{ list-style:none; }
+.res-lista li{
+  display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 10px;
+  padding:10px 0; border-top:1px solid var(--line-soft);
+}
+.res-lista li:first-child{ border-top:none; padding-top:0; }
+.res-nom{ min-width:0; display:flex; flex-direction:column; font-size:14px; line-height:1.3; }
+.res-nom b{ font-weight:600; }
+.res-nom small{ font-size:12.5px; color:var(--muted); }
+.res-cant{ font-size:15px; font-weight:800; color:var(--teal-deep); font-variant-numeric:tabular-nums; }
+.res-txt{ grid-column:1 / -1; font-size:12.5px; line-height:1.4; color:var(--muted); }
+.res-lista li.is-warn .res-txt{ color:var(--warn); font-weight:600; }
+.res-lista li.is-err .res-txt{ color:var(--err); font-weight:600; }
+.res-lista li.is-err .res-cant{ color:var(--err); }
+.res-total{
+  display:flex; justify-content:space-between; align-items:baseline; margin-top:6px; padding-top:12px;
+  border-top:1px solid var(--line); font-size:14px; color:var(--ink-soft);
+}
+.res-total b{ font-size:16px; color:var(--ink); }
+
+/* Datos de Descarte / Ingresar lote */
+.reg-vac{ display:flex; align-items:center; gap:12px; padding-bottom:12px; border-bottom:1px solid var(--line-soft); }
+.reg-vac b{ font-size:15px; font-weight:700; line-height:1.3; }
+.reg-vac-vial .vial{ width:30px; height:55px; display:block; }
+.reg-datos{ margin-top:4px; }
+.reg-dato{ display:flex; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--line-soft); font-size:13.5px; }
+.reg-dato:last-child{ border-bottom:none; }
+.reg-dato dt{ color:var(--muted); }
+.reg-dato dd{ font-weight:600; color:var(--ink); text-align:right; }
+.reg-dato.is-err dd{ color:var(--err); }
+.reg-dato.is-ok dd{ color:var(--teal-deep); }
+
+/* Fecha de la visita */
+.reg-fecha{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding-bottom:18px; border-bottom:1px solid var(--line-soft); }
+.reg-fecha label{ margin:0; }
+.reg-fecha input{ width:200px; padding:10px 14px; font-size:15px; }
+
+/* Filas de la visita */
+.vis-lista{ list-style:none; }
+.vis-fila{
+  position:relative; display:grid; align-items:start; gap:14px;
+  grid-template-columns:34px minmax(0,1.15fr) minmax(0,1.25fr) 132px 34px;
+  padding:18px 0; border-bottom:1px solid var(--line-soft);
+}
+.vis-fila.is-err::before{ content:""; position:absolute; left:-28px; top:12px; bottom:12px; width:3px; border-radius:0 3px 3px 0; background:var(--err); }
+.vis-vial{ padding-top:24px; }
+.vis-vial .vial{ width:30px; height:55px; display:block; }
+.vis-campo{ min-width:0; }
+.vis-campo label{ font-size:13px; margin-bottom:6px; }
+.vis-nota{ display:flex; flex-wrap:wrap; gap:6px; margin-top:7px; }
+.vis-nota:empty{ display:none; }
+.vis-tag{ display:inline-flex; align-items:center; height:22px; padding:0 8px; border-radius:6px; background:var(--teal-ghost); color:var(--teal-deep); font-size:12px; font-weight:600; }
+.vis-tag.is-sug{ background:var(--lime-tint); color:var(--lime-deep); }
+.vis-tag.is-err{ background:var(--err-tint); color:var(--err); }
+.vis-stepper{ display:flex; align-items:stretch; height:51px; border:1.5px solid var(--line); border-radius:var(--r-md); overflow:hidden; background:var(--card); }
+.vis-stepper:focus-within{ border-color:var(--teal); box-shadow:var(--ring); }
+.vis-stepper input, .vis-stepper input:hover, .vis-stepper input:focus{
+  width:100%; min-width:0; padding:0; border:none; border-radius:0; box-shadow:none; background:transparent;
+  text-align:center; font-size:17px; font-weight:700; font-variant-numeric:tabular-nums; -moz-appearance:textfield;
+}
+.vis-stepper input::-webkit-outer-spin-button, .vis-stepper input::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
+.vis-step{ flex:none; width:40px; font-size:20px; font-weight:600; color:var(--teal-deep); background:var(--teal-ghost); }
+.vis-step:hover{ background:var(--teal-tint); }
+.vis-quitar{ margin-top:30px; width:34px; height:34px; border-radius:8px; display:grid; place-items:center; color:var(--muted); }
+.vis-quitar:hover{ background:var(--err-tint); color:var(--err); }
+.vis-quitar:focus-visible, .vis-step:focus-visible{ outline:none; box-shadow:var(--ring); }
+.vis-agregar{
+  width:100%; margin-top:16px; height:48px; display:flex; align-items:center; justify-content:center; gap:8px;
+  border:1.5px dashed #B9D3CF; border-radius:12px; font-size:14.5px; font-weight:600; color:var(--teal-deep);
+  transition:background .15s, border-color .15s;
+}
+.vis-agregar:hover{ background:var(--teal-ghost); border-color:var(--teal); }
+.vis-agregar:focus-visible{ outline:none; box-shadow:var(--ring); }
+
+/* Buscador de vacuna dentro de la fila */
+.vb{ position:relative; }
+.vb-lista{
+  position:absolute; z-index:40; top:calc(100% + 6px); left:0; right:0; max-height:290px; overflow:auto;
+  list-style:none; padding:6px; background:var(--card); border:1px solid var(--line); border-radius:12px;
+  box-shadow:0 14px 34px rgba(7,40,38,.16);
+}
+.vb-op{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 10px; border-radius:8px; cursor:pointer; font-size:14px; }
+.vb-op.on{ background:var(--teal-ghost); }
+.vb-op-nom{ font-weight:600; min-width:0; }
+.vb-op-stock{ font-size:12.5px; color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.vb-op.is-sin{ cursor:default; opacity:.55; }
+.vb-vacio{ padding:10px; font-size:13.5px; color:var(--muted); }
+
+/* Aviso con botón "Deshacer" */
+.toast.toast-accion{ align-items:center; }
+.toast-txt{ flex:1; min-width:0; }
+.toast-btn{
+  flex:none; margin-left:6px; padding:7px 12px; border-radius:8px; font-size:13.5px; font-weight:700;
+  color:var(--teal-deep); background:var(--teal-ghost); border:1px solid var(--teal-tint);
+}
+.toast-btn:hover{ background:var(--teal-tint); }
+
+/* ---------- Buscador rápido ---------- */
+.busq-btn{
+  display:inline-flex; align-items:center; gap:8px; height:36px; padding:0 8px 0 12px; margin-right:12px;
+  border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--muted); font-size:13.5px;
+  transition:border-color .15s, color .15s;
+}
+.busq-btn:hover{ border-color:var(--teal); color:var(--teal-deep); }
+.busq-btn:focus-visible{ outline:none; box-shadow:var(--ring); }
+kbd{
+  display:inline-flex; align-items:center; height:22px; padding:0 6px; border-radius:6px;
+  border:1px solid var(--line); background:var(--teal-ghost); font-family:inherit; font-size:11.5px; font-weight:600; color:var(--muted);
+}
+.overlay.busq-ov.on{ align-items:flex-start; padding-top:10vh; }
+.busq{
+  width:100%; max-width:640px; background:var(--card); border-radius:18px; overflow:hidden;
+  box-shadow:0 24px 60px rgba(7,40,38,.28);
+}
+.busq-campo{ display:flex; align-items:center; gap:12px; padding:0 18px; border-bottom:1px solid var(--line); color:var(--muted); }
+.busq-campo input, .busq-campo input:hover, .busq-campo input:focus{
+  flex:1; padding:18px 0; border:none; border-radius:0; box-shadow:none; background:transparent; font-size:17px;
+}
+.busq-lista{ list-style:none; max-height:52vh; overflow:auto; padding:6px; }
+.busq-op{
+  display:grid; grid-template-columns:30px minmax(0,1fr) auto; gap:14px; align-items:center;
+  padding:8px 12px; border-radius:12px; cursor:pointer;
+}
+.busq-op.on{ background:var(--teal-ghost); }
+.busq-vial .vial{ width:24px; height:44px; display:block; }
+.busq-nom{ display:flex; flex-direction:column; min-width:0; font-size:14.5px; line-height:1.3; }
+.busq-nom b{ font-weight:600; }
+.busq-nom small{ font-size:12.5px; color:var(--muted); }
+.busq-nom small.is-low{ color:var(--warn); }
+.busq-nom small.is-exp{ color:#B4561C; }
+.busq-accs{ display:flex; gap:6px; opacity:0; transition:opacity .12s; }
+.busq-op.on .busq-accs, .busq-op:hover .busq-accs{ opacity:1; }
+.busq-acc{
+  height:30px; padding:0 11px; border-radius:8px; font-size:13px; font-weight:600; white-space:nowrap;
+  color:var(--teal-deep); background:var(--card); border:1px solid var(--teal-tint);
+}
+.busq-acc:hover{ background:var(--teal-tint); }
+.busq-vacio{ padding:18px 12px; font-size:14px; color:var(--muted); }
+.busq-pie{ padding:10px 18px; border-top:1px solid var(--line-soft); font-size:12.5px; color:var(--muted); }
+
+/* ---------- Ajustes generales de estilo (en línea con el Inicio) ----------
+   Títulos de tablas, etiquetas y estados en minúscula inicial: se leen mejor
+   y bajan el "ruido" de las mayúsculas en toda la web. */
+thead th{ text-transform:none; letter-spacing:0; font-size:12.5px; font-weight:600; }
+.pill{ text-transform:none; letter-spacing:0; font-size:12px; font-weight:600; }
+.mov-sidebar-head h4, .mov-campo label, .est-campo label, .frasco-info-tit, .est-kpi-lab, .prov-ct-lbl,
+.prov-lista-head h4, .el-vac-label, .est-cob-pill{ text-transform:none; letter-spacing:0; }
+.page-head .sub{ margin-top:6px; font-size:15px; color:var(--ink-soft); }
+.page-head h1{ letter-spacing:-.025em; }
+.form-card, .panel{ border-radius:18px; }
+
+@media (max-width:1000px){
+  .reg-layout{ grid-template-columns:minmax(0,1fr); }
+  .reg-side{ position:static; }
+}
+@media (max-width:760px){
+  .reg-head h1{ font-size:26px; }
+  .reg-card{ padding:18px 16px; border-radius:16px; }
+  .vis-fila{ grid-template-columns:30px minmax(0,1fr) 34px; gap:10px 12px; }
+  .vis-vial{ grid-row:1 / span 3; padding-top:26px; }
+  .vis-campo-vac{ grid-column:2; }
+  .vis-quitar{ grid-column:3; grid-row:1; }
+  .vis-campo-lote, .vis-campo-cant{ grid-column:2 / span 2; }
+  .vis-fila.is-err::before{ left:-16px; }
+  .reg-fecha input{ width:100%; }
+  .busq-btn{ padding:0 10px; margin-right:6px; }
+  .busq-btn-txt, .busq-btn kbd{ display:none; }
+  .overlay.busq-ov.on{ padding-top:16px; }
+  .busq-accs{ opacity:1; }
+  .reg-atajo{ display:none; }
+  .busq-op{ grid-template-columns:26px minmax(0,1fr); }
+  .busq-accs{ grid-column:2; }
+  tbody td::before{ text-transform:none; letter-spacing:0; font-size:12px; }
+}

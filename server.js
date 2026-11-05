@@ -1090,49 +1090,116 @@ app.delete('/api/lotes/:id', requireAuth, requireRole('enfermeria'), async (req,
   } finally { conn.release(); }
 });
 
+// Error con mensaje para mostrar al usuario (se responde con su status HTTP)
+class ErrorUsuario extends Error {
+  constructor(status, mensaje) { super(mensaje); this.status = status; }
+}
+const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Registra UNA aplicación dentro de una transacción ya abierta.
+ * Valida el lote (existe, alcanza el stock, no está vencido a la fecha de
+ * aplicación), descuenta las dosis, guarda el movimiento y gestiona el frasco
+ * abierto si la vacuna es multidosis. Lo usan /api/aplicaciones (una vacuna)
+ * y /api/aplicaciones/visita (varias vacunas del mismo paciente).
+ */
+async function registrarAplicacion(conn, { lote_id, cantidad, fecha_aplicacion }, usuarioId) {
+  const cant = Number(cantidad);
+  if (!lote_id || !Number.isInteger(cant) || cant <= 0) {
+    throw new ErrorUsuario(400, 'Cada vacuna necesita un lote y una cantidad de dosis mayor a 0.');
+  }
+  const [[lote]] = await conn.query(
+    `SELECT l.id, l.vacuna_id, l.numero_lote, l.disponible,
+            DATE_FORMAT(l.vencimiento, '%Y-%m-%d') AS vencimiento,
+            v.nombre AS vacuna, v.dosis_por_frasco
+       FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
+      WHERE l.id = ? FOR UPDATE`, [lote_id]
+  );
+  if (!lote) throw new ErrorUsuario(404, 'El lote no existe.');
+  if (lote.vencimiento < fecha_aplicacion) {
+    throw new ErrorUsuario(400, `El lote ${lote.numero_lote} de ${lote.vacuna} está vencido para esa fecha. Elegí otro lote.`);
+  }
+  if (cant > lote.disponible) {
+    throw new ErrorUsuario(400, `No alcanza el stock del lote ${lote.numero_lote} de ${lote.vacuna}: quedan ${lote.disponible} dosis.`);
+  }
+
+  await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [cant, lote.id]);
+  const [ins] = await conn.query(
+    `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, fecha_aplicacion, usuario_id)
+     VALUES ('aplicacion',?,?,?,?,?)`,
+    [lote.vacuna_id, lote.id, cant, fecha_aplicacion, usuarioId]
+  );
+  let frasco = null;
+  if (lote.dosis_por_frasco > 1) {
+    frasco = await gestionarFrascoAbierto(conn, lote.id, cant, lote.dosis_por_frasco);
+  }
+  return {
+    mov_id: ins.insertId, lote_id: lote.id, vacuna_id: lote.vacuna_id, vacuna: lote.vacuna,
+    numero_lote: lote.numero_lote, cantidad: cant, frasco,
+  };
+}
+
+function responderError(res, err, contexto) {
+  if (err instanceof ErrorUsuario) return res.status(err.status).json({ error: err.message });
+  console.error(contexto + ':', err.message);
+  return res.status(500).json({ error: 'Error del servidor.' });
+}
+
 app.post('/api/aplicaciones', requireAuth, requireRole('enfermeria'), async (req, res) => {
   const { lote_id, cantidad, fecha_aplicacion } = req.body;
-  if (!lote_id || !cantidad || !fecha_aplicacion)
+  if (!lote_id || !cantidad || !fecha_aplicacion || !FECHA_RE.test(String(fecha_aplicacion)))
     return res.status(400).json({ error: 'Completá todos los campos obligatorios.' });
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[lote]] = await conn.query(
-      `SELECT l.id, l.vacuna_id, l.disponible, v.dosis_por_frasco
-         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
-        WHERE l.id = ? FOR UPDATE`, [lote_id]
-    );
-    if (!lote) { await conn.rollback(); return res.status(404).json({ error: 'El lote no existe.' }); }
-    const cant = Number(cantidad);
-    if (cant > lote.disponible) { await conn.rollback(); return res.status(400).json({ error: 'La cantidad supera el stock disponible del lote.' }); }
-
-    // Descuento del stock general del lote
-    await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [cant, lote_id]);
-    await conn.query(
-      `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, fecha_aplicacion, usuario_id)
-       VALUES ('aplicacion',?,?,?,?,?)`,
-      [lote.vacuna_id, lote_id, cant, fecha_aplicacion, req.user.id]
-    );
-
-    // Gestión automática de frascos abiertos (solo multidosis).
-    // La función devuelve info detallada para armar un mensaje claro.
-    let frascoInfo = null;
-    if (lote.dosis_por_frasco > 1) {
-      frascoInfo = await gestionarFrascoAbierto(conn, lote_id, cant, lote.dosis_por_frasco);
-    }
-
+    const r = await registrarAplicacion(conn, { lote_id, cantidad, fecha_aplicacion }, req.user.id);
     await conn.commit();
-    const respuesta = {
-      ok: true,
-      mensaje: 'Aplicación registrada con éxito.',
-    };
-    if (frascoInfo) {
-      respuesta.frasco = frascoInfo;
-    }
+    const respuesta = { ok: true, mensaje: 'Aplicación registrada con éxito.', mov_id: r.mov_id };
+    if (r.frasco) respuesta.frasco = r.frasco;
     res.status(201).json(respuesta);
   } catch (err) {
-    await conn.rollback(); console.error('aplicaciones:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
+    await conn.rollback();
+    responderError(res, err, 'aplicaciones');
+  } finally { conn.release(); }
+});
+
+/**
+ * Visita: varias vacunas aplicadas al mismo paciente el mismo día.
+ * Body: { fecha_aplicacion: 'YYYY-MM-DD', items: [{ lote_id, cantidad }, ...] }
+ * Todo va en UNA transacción: si una vacuna falla, no se guarda ninguna.
+ * Cada vacuna queda como un movimiento de aplicación normal.
+ */
+app.post('/api/aplicaciones/visita', requireAuth, requireRole('enfermeria'), async (req, res) => {
+  const { fecha_aplicacion, items } = req.body || {};
+  if (!fecha_aplicacion || !FECHA_RE.test(String(fecha_aplicacion)))
+    return res.status(400).json({ error: 'Indicá la fecha de aplicación.' });
+  if (fecha_aplicacion > hoyYMD())
+    return res.status(400).json({ error: 'La fecha de aplicación no puede ser posterior a hoy.' });
+  if (!Array.isArray(items) || items.length === 0)
+    return res.status(400).json({ error: 'Agregá al menos una vacuna.' });
+  if (items.length > 15)
+    return res.status(400).json({ error: 'Una visita puede tener hasta 15 vacunas.' });
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const hechos = [];
+    for (const it of items) {
+      hechos.push(await registrarAplicacion(conn, { ...it, fecha_aplicacion }, req.user.id));
+    }
+    await conn.commit();
+    const dosis = hechos.reduce((s, h) => s + h.cantidad, 0);
+    res.status(201).json({
+      ok: true,
+      mensaje: hechos.length === 1
+        ? 'Aplicación registrada con éxito.'
+        : `Se registraron ${hechos.length} vacunas (${dosis} dosis).`,
+      items: hechos,
+      mov_ids: hechos.map(h => h.mov_id),
+    });
+  } catch (err) {
+    await conn.rollback();
+    responderError(res, err, 'aplicaciones/visita');
   } finally { conn.release(); }
 });
 
@@ -1239,13 +1306,13 @@ app.post('/api/descartes', requireAuth, requireRole('enfermeria'), async (req, r
     if (!lote) { await conn.rollback(); return res.status(404).json({ error: 'El lote no existe.' }); }
     if (Number(cantidad) > lote.disponible) { await conn.rollback(); return res.status(400).json({ error: 'La cantidad supera el stock disponible del lote.' }); }
     await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [cantidad, lote_id]);
-    await conn.query(
+    const [ins] = await conn.query(
       `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, motivo, usuario_id)
        VALUES ('descarte',?,?,?,?,?)`,
       [lote.vacuna_id, lote_id, cantidad, motivo, req.user.id]
     );
     await conn.commit();
-    res.status(201).json({ ok: true, mensaje: 'Descarte registrado.' });
+    res.status(201).json({ ok: true, mensaje: 'Descarte registrado.', mov_id: ins.insertId });
   } catch (err) {
     await conn.rollback(); console.error('descartes:', err.message);
     res.status(500).json({ error: 'Error del servidor.' });
@@ -1319,6 +1386,85 @@ app.get('/api/movimientos', requireAuth, async (req, res) => {
     res.json(rows);
   } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
 });
+
+/**
+ * "Deshacer" lo que se acaba de registrar (aplicaciones y descartes).
+ * Body: { ids: [mov_id, ...] }. Reglas, para que la vuelta atrás sea exacta:
+ *  - solo movimientos propios, registrados en los últimos 15 minutos;
+ *  - solo aplicaciones y descartes comunes (no el descarte de un frasco vencido);
+ *  - que no haya movimientos posteriores en el mismo lote.
+ * Devuelve las dosis al lote y, en multidosis, revierte el uso de los frascos.
+ */
+const DESHACER_MINUTOS = 15;
+app.post('/api/movimientos/deshacer', requireAuth, requireRole('enfermeria'), async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(Number).filter(Number.isInteger))] : [];
+  if (!ids.length || ids.length > 15) return res.status(400).json({ error: 'No hay nada para deshacer.' });
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [movs] = await conn.query(
+      `SELECT m.id, m.tipo, m.lote_id, m.cantidad, m.motivo, m.usuario_id,
+              (m.fecha_mov >= NOW() - INTERVAL ? MINUTE) AS reciente,
+              v.dosis_por_frasco
+         FROM movimientos m JOIN vacunas v ON v.id = m.vacuna_id
+        WHERE m.id IN (?) ORDER BY m.id DESC FOR UPDATE`,
+      [DESHACER_MINUTOS, ids]
+    );
+    if (movs.length !== ids.length) throw new ErrorUsuario(404, 'Alguno de esos registros ya no existe.');
+    for (const m of movs) {
+      if (m.usuario_id !== req.user.id) throw new ErrorUsuario(403, 'Solo podés deshacer lo que registraste vos.');
+      if (!Number(m.reciente)) throw new ErrorUsuario(400, `Pasaron más de ${DESHACER_MINUTOS} minutos: para corregirlo usá Movimientos.`);
+      if (!['aplicacion', 'descarte'].includes(m.tipo) || m.motivo === 'Frasco abierto vencido' || !m.lote_id)
+        throw new ErrorUsuario(400, 'Este registro no se puede deshacer.');
+      const [[{ n }]] = await conn.query(
+        'SELECT COUNT(*) AS n FROM movimientos WHERE lote_id = ? AND id > ? AND id NOT IN (?)',
+        [m.lote_id, m.id, ids]
+      );
+      if (Number(n) > 0) throw new ErrorUsuario(400, 'Después se registraron otros movimientos en ese lote, así que no se puede deshacer automáticamente.');
+    }
+    // De la más nueva a la más vieja, para revertir los frascos en el orden inverso
+    for (const m of movs) {
+      await conn.query('UPDATE lotes SET disponible = disponible + ? WHERE id = ?', [m.cantidad, m.lote_id]);
+      if (m.tipo === 'aplicacion' && m.dosis_por_frasco > 1) await revertirFrascos(conn, m.lote_id, m.cantidad);
+      await conn.query('DELETE FROM movimientos WHERE id = ?', [m.id]);
+    }
+    await conn.commit();
+    const dosis = movs.reduce((s, m) => s + m.cantidad, 0);
+    res.json({ ok: true, mensaje: `Listo, se deshizo. Volvieron ${dosis} dosis al stock.` });
+  } catch (err) {
+    await conn.rollback();
+    responderError(res, err, 'movimientos/deshacer');
+  } finally { conn.release(); }
+});
+
+/**
+ * Revierte el uso de frascos abiertos de un lote (inverso de gestionarFrascoAbierto).
+ * Como no hubo movimientos posteriores en el lote, las dosis salieron de los
+ * frascos más nuevos: se devuelven desde el último hacia atrás. Un frasco que
+ * queda con 0 dosis usadas lo había abierto esa aplicación, así que se borra.
+ */
+async function revertirFrascos(conn, loteId, cantidad) {
+  let resto = cantidad;
+  const [frascos] = await conn.query(
+    `SELECT id, dosis_usadas FROM frascos_abiertos
+      WHERE lote_id = ? AND estado IN ('activo','agotado')
+      ORDER BY id DESC FOR UPDATE`, [loteId]
+  );
+  for (const f of frascos) {
+    if (resto <= 0) break;
+    const quitar = Math.min(resto, f.dosis_usadas);
+    const usadas = f.dosis_usadas - quitar;
+    resto -= quitar;
+    if (usadas === 0) {
+      await conn.query('DELETE FROM frascos_abiertos WHERE id = ?', [f.id]);
+    } else {
+      await conn.query(
+        `UPDATE frascos_abiertos SET dosis_usadas = ?, estado = 'activo', fecha_cierre = NULL WHERE id = ?`,
+        [usadas, f.id]
+      );
+    }
+  }
+}
 
 /**
  * Elimina un movimiento (aplicación o descarte). Revierte el efecto en el stock:

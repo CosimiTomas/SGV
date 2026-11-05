@@ -208,7 +208,14 @@ function go(page){
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   $('page-'+page).classList.add('on');
   document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page===page));
-  if (page === 'aplicar' && !$('ap-fecha').value) $('ap-fecha').value = today();
+  if (page === 'aplicar') {
+    if (!$('ap-fecha').value) $('ap-fecha').value = today();
+    if (!visFilas().length) visAgregar(null, null, false);
+    visFilas().forEach(visRenderFila);
+    visResumen();
+  }
+  if (page === 'descarte') regResumenDescarte();
+  if (page === 'lote') regResumenLote();
   if (page === 'estadisticas') loadEstadisticas();
   if (page === 'inicio' && DASH) iniDibujarTrack(DASH.radar || []);
   iniTipOcultar();
@@ -219,7 +226,7 @@ function go(page){
 async function loadVacunas(){
   VACUNAS = await api('/vacunas');
   const opts = '<option value="">Seleccionar…</option>' + VACUNAS.map(v=>`<option value="${v.id}">${v.nombre}</option>`).join('');
-  ['ap-vac','de-vac','lo-vac','ex-vac'].forEach(id => {
+  ['de-vac','lo-vac','ex-vac'].forEach(id => {
     const el = $(id);
     if (el) {
       el.innerHTML = opts;
@@ -499,8 +506,8 @@ function iniRenderHeladera() {
   }).join('');
 
   let lista = vacs.slice();
-  const q = INI.q.trim().toLowerCase();
-  if (q) lista = lista.filter(v => v.nombre.toLowerCase().includes(q));
+  const q = normTxt(INI.q);
+  if (q) lista = lista.filter(v => normTxt(v.nombre).includes(q));
   if (INI.estado) lista = lista.filter(v => iniEstado(v) === INI.estado);
   if (INI.orden === 'atencion') {
     lista.sort((a, b) => (b.stock_vencido > 0) - (a.stock_vencido > 0)
@@ -631,21 +638,10 @@ function iniVerEnStock(vacId) {
 }
 
 /* ---------- Accesos rápidos a los formularios ---------- */
-async function iniAplicar(vacId, loteId) {
+// Lleva a la visita con esa vacuna (y ese lote) agregada
+function iniAplicar(vacId, loteId) {
   closeOv('ovFicha');
-  clearAplicacion('ap');
-  go('aplicar');
-  if (!vacId) return;
-  const sv = $('ap-vac');
-  sv.value = String(vacId);
-  if (sv._niceRefresh) sv._niceRefresh();
-  await loadLotes('ap');
-  const sl = $('ap-lote');
-  if (loteId && [...sl.options].some(o => o.value === String(loteId))) {
-    sl.value = String(loteId);
-    if (sl._niceRefresh) sl._niceRefresh();
-  }
-  $('ap-cant').focus();
+  visConVacuna(vacId, loteId);
 }
 function iniIngresarLote(vacId) {
   closeOv('ovFicha');
@@ -656,6 +652,7 @@ function iniIngresarLote(vacId) {
   if (s._niceRefresh) s._niceRefresh();
   toggleLoteMulti();
   checkLoteExistente();
+  regResumenLote();
   if (vacId) $('lo-num').focus();
 }
 function iniDescarte() { closeOv('ovFicha'); clearDescarte(); go('descarte'); }
@@ -1130,6 +1127,7 @@ async function irADescartarLote(lote){
     $('de-cant').value = disp;
   }
   toggleDescarteMulti();
+  regResumenDescarte();
 }
 
 /**
@@ -1517,50 +1515,6 @@ function checkFields(ids){
   return !bad;
 }
 
-async function saveAplicacion(pref){
-  if(!checkFields([pref+'-vac',pref+'-lote',pref+'-cant',pref+'-fecha'])) return msg(pref+'-msg','err','Completá todos los campos obligatorios.');
-  try{
-    const r = await api('/aplicaciones', { method:'POST', body: JSON.stringify({
-      lote_id: $(pref+'-lote').value,
-      cantidad: Number($(pref+'-cant').value),
-      fecha_aplicacion: $(pref+'-fecha').value,
-    })});
-    msg(pref+'-msg','');
-    // Toast enriquecido con info del frasco si aplica (multidosis)
-    let toastMsg = 'Aplicación registrada con éxito';
-    if (r.frasco) {
-      const f = r.frasco;
-      const nombreVac = $(pref+'-vac').selectedOptions[0]?.text || 'la vacuna';
-      // Si el frasco vence por el lote (antes que por los 30 días de apertura),
-      // lo aclaramos para que enfermería sepa por qué el margen es más corto.
-      const causaExtra = f.causaVencimiento === 'lote' ? ' (limitado por el vencimiento del lote)' : '';
-      if (f.abrioNuevo) {
-        toastMsg = `✓ Aplicación registrada. Se abrió un frasco nuevo de ${nombreVac} — vence el ${fmtFecha(f.fechaVencimientoFrasco)} (en ${f.diasParaVencer} días)${causaExtra}. Quedan ${f.dosisRestantes} dosis en el frasco.`;
-      } else if (f.agotado) {
-        toastMsg = `✓ Aplicación registrada. El frasco de ${nombreVac} se terminó (todas las dosis usadas).`;
-      } else {
-        toastMsg = `✓ Aplicación registrada. Quedan ${f.dosisRestantes} dosis en el frasco abierto de ${nombreVac} (vence en ${f.diasParaVencer} días)${causaExtra}.`;
-      }
-    }
-    toast('ok', toastMsg);
-    clearAplicacion(pref);
-    await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
-    go('mov');
-  }catch(err){ msg(pref+'-msg','err', err.message); }
-}
-function clearAplicacion(pref){
-  ['-vac','-lote','-cant'].forEach(s=>$(pref+s).value='');
-  $(pref+'-lote').innerHTML='<option value="">Seleccionar vacuna primero…</option>';
-  $(pref+'-fecha').value=today();
-  $(pref+'-msg').innerHTML='';
-  ['-vac','-lote','-cant','-fecha'].forEach(s=>$(pref+s).classList.remove('bad'));
-  // Refrescar los custom selects tras el reset
-  ['-vac','-lote'].forEach(s => {
-    const el = $(pref+s);
-    if (el && el._niceRefresh) el._niceRefresh();
-  });
-}
-
 async function saveDescarte(){
   // Validación condicional: en multidosis al menos uno de los dos campos numéricos debe tener valor;
   // en monodosis sólo `de-cant`.
@@ -1582,12 +1536,13 @@ async function saveDescarte(){
   }
   if (bad) return msg('de-msg','err','Completá todos los campos obligatorios.');
   try{
-    await api('/descartes', { method:'POST', body: JSON.stringify({
+    const r = await api('/descartes', { method:'POST', body: JSON.stringify({
       lote_id: $('de-lote').value,
       cantidad,
       motivo: $('de-motivo').value,
     })});
-    msg('de-msg',''); toast('ok','Descarte registrado');
+    msg('de-msg','');
+    toastAccion('ok', `Descarte registrado: ${cantidad} dosis.`, 'Deshacer', () => deshacerMovs([r.mov_id]));
     clearDescarte();
     await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
     go('mov');
@@ -1602,7 +1557,7 @@ function clearDescarte(){
   ['de-vac','de-lote','de-motivo'].forEach(id => {
     const e = $(id);
     if (e && e._niceRefresh) e._niceRefresh();
-  });
+  });  regResumenDescarte();
 }
 
 async function saveLote(){
@@ -1686,7 +1641,9 @@ function clearLote(){
   ['lo-vac','lo-num','lo-venc','lo-cant'].forEach(id=>{ $(id).value=''; $(id).classList.remove('bad'); });
   $('lo-msg').innerHTML='';
   const h = $('lo-existe-hint'); if (h) h.style.display = 'none';
+  const sv = $('lo-vac'); if (sv._niceRefresh) sv._niceRefresh();
   toggleLoteMulti();
+  regResumenLote();
 }
 
 /* ---------- Usuarios (coordinadora) ---------- */
@@ -2794,3 +2751,451 @@ function estRenderTabla() {
     </tr>`;
   }).join('') || '<tr><td colspan="7" class="est-vacio">Sin vacunas activas.</td></tr>';
 }
+
+/* ============================================================
+   APLICACIÓN · VISITA (nov/2026)
+   Una visita = un paciente, una fecha y una o más vacunas.
+   Cada fila tiene un buscador de vacuna, el lote (se sugiere solo el que
+   conviene usar) y las dosis. Se guarda todo junto con
+   POST /api/aplicaciones/visita, en una sola transacción.
+   ============================================================ */
+let VIS_SEQ = 0;
+
+const normTxt = s => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+// Vacunas activas con su resumen (del tablero); si todavía no cargó, del catálogo
+function visVacunas() {
+  if (DASH?.vacunas?.length) return DASH.vacunas;
+  return (VACUNAS || []).map(v => ({ id: v.id, nombre: v.nombre, dosis_por_frasco: Number(v.dosis_por_frasco) || 1, stock: 0 }));
+}
+function visVacuna(id) { return visVacunas().find(v => Number(v.id) === Number(id)); }
+// Lotes que se pueden aplicar: con dosis y sin vencer, el que vence antes primero
+function visLotes(vacId) {
+  return (STOCK_CACHE || [])
+    .filter(r => Number(r.vacuna_id) === Number(vacId) && r.id && Number(r.disponible) > 0 && Number(r.dias_para_vencer) >= 0)
+    .sort((a, b) => Number(a.dias_para_vencer) - Number(b.dias_para_vencer));
+}
+// Lote sugerido: el del frasco abierto y, si no hay, el que vence antes
+function visSugerido(vacId) {
+  const lotes = visLotes(vacId);
+  if (!lotes.length) return null;
+  const conFrasco = lotes.find(l => l.frasco_id && Number(l.frasco_dosis_sobrantes) > 0 && Number(l.frasco_dias_restantes) >= 0);
+  return conFrasco || lotes[0];
+}
+
+/* ---------- Filas ---------- */
+function visFilas() { return [...document.querySelectorAll('#visLista .vis-fila')]; }
+
+function visAgregar(vacId, loteId, enfocar) {
+  const n = ++VIS_SEQ;
+  const li = document.createElement('li');
+  li.className = 'vis-fila';
+  li.dataset.n = n;
+  li.innerHTML = `
+    <span class="vis-vial" aria-hidden="true"></span>
+    <div class="vis-campo vis-campo-vac">
+      <label for="visVac${n}">Vacuna</label>
+      <div class="vb">
+        <input id="visVac${n}" class="vb-input" type="text" placeholder="Buscar vacuna" autocomplete="off"
+               role="combobox" aria-expanded="false" aria-controls="visVacLista${n}" aria-autocomplete="list">
+        <ul class="vb-lista" id="visVacLista${n}" role="listbox" hidden></ul>
+      </div>
+    </div>
+    <div class="vis-campo vis-campo-lote">
+      <label for="visLote${n}">Lote</label>
+      <select id="visLote${n}" class="select-nice"><option value="">Elegí la vacuna primero</option></select>
+      <span class="vis-nota" id="visNota${n}"></span>
+    </div>
+    <div class="vis-campo vis-campo-cant">
+      <label for="visCant${n}">Dosis</label>
+      <div class="vis-stepper">
+        <button type="button" class="vis-step" data-d="-1" aria-label="Una dosis menos">−</button>
+        <input id="visCant${n}" type="number" min="1" value="1" inputmode="numeric">
+        <button type="button" class="vis-step" data-d="1" aria-label="Una dosis más">+</button>
+      </div>
+    </div>
+    <button type="button" class="vis-quitar" aria-label="Quitar esta vacuna de la visita" title="Quitar">
+      <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+    </button>`;
+  $('visLista').appendChild(li);
+
+  const input = li.querySelector('.vb-input');
+  const lista = li.querySelector('.vb-lista');
+  const sel = li.querySelector('select');
+  const cant = li.querySelector(`#visCant${n}`);
+  enhanceSelect(sel);
+  sel.addEventListener('change', () => { visNotaLote(li); visResumen(); });
+  cant.addEventListener('input', visResumen);
+  li.querySelectorAll('.vis-step').forEach(b => b.addEventListener('click', () => {
+    cant.value = Math.max(1, (Number(cant.value) || 0) + Number(b.dataset.d));
+    visResumen();
+  }));
+  li.querySelector('.vis-quitar').addEventListener('click', () => {
+    li.remove();
+    if (!visFilas().length) visAgregar(null, null, true);
+    visResumen();
+  });
+  vbConectar(input, lista, id => { visElegirVacuna(li, id); cant.focus(); cant.select(); });
+
+  if (vacId) visElegirVacuna(li, vacId, loteId);
+  else visRenderFila(li);
+  if (enfocar) input.focus();
+  visResumen();
+  return li;
+}
+
+function visElegirVacuna(li, vacId, loteId) {
+  const v = visVacuna(vacId);
+  if (!v) return;
+  li.dataset.vac = v.id;
+  li.querySelector('.vb-input').value = v.nombre;
+  const sel = li.querySelector('select');
+  const lotes = visLotes(v.id);
+  const sug = visSugerido(v.id);
+  sel.innerHTML = lotes.length
+    ? lotes.map(l => {
+        const [y, m, d] = String(l.vencimiento).slice(0, 10).split('-');
+        return `<option value="${l.id}">${escHtml(l.numero_lote)}, vence ${d}/${m}/${y.slice(2)}</option>`;
+      }).join('')
+    : '<option value="">No hay lotes vigentes</option>';
+  const elegido = loteId && lotes.some(l => Number(l.id) === Number(loteId)) ? loteId : sug?.id;
+  if (elegido) sel.value = String(elegido);
+  li.dataset.sug = sug ? sug.id : '';
+  if (sel._niceRefresh) sel._niceRefresh();
+  visRenderFila(li);
+  visNotaLote(li);
+  visResumen();
+}
+
+// Frasquito de la fila (mismo dibujo que la heladera)
+function visRenderFila(li) {
+  const v = visVacuna(li.dataset.vac);
+  const cont = li.querySelector('.vis-vial');
+  if (!v) { cont.innerHTML = iniVialSVG({ dosis_por_frasco: 1 }, 'nostock', 0, false); return; }
+  const est = iniEstado(v);
+  cont.innerHTML = iniVialSVG(v, est, iniNivel(v), false);
+}
+
+// Nota bajo el lote: sugerido / frasco abierto / se abre un frasco nuevo
+function visNotaLote(li) {
+  const nota = li.querySelector('.vis-nota');
+  const sel = li.querySelector('select');
+  const v = visVacuna(li.dataset.vac);
+  if (!v) { nota.innerHTML = ''; return; }
+  const lote = visLotes(v.id).find(l => String(l.id) === sel.value);
+  if (!lote) { nota.innerHTML = '<span class="vis-tag is-err">Sin lotes vigentes para aplicar</span>'; return; }
+  const partes = [];
+  if (String(lote.id) === li.dataset.sug) partes.push('<span class="vis-tag is-sug">Sugerido</span>');
+  partes.push(`<span class="vis-tag">${lote.disponible} dosis en el lote</span>`);
+  if (v.dosis_por_frasco > 1) {
+    partes.push(lote.frasco_id && Number(lote.frasco_dosis_sobrantes) > 0
+      ? `<span class="vis-tag">Frasco abierto: quedan ${lote.frasco_dosis_sobrantes} dosis</span>`
+      : '<span class="vis-tag">Se abre un frasco nuevo</span>');
+  }
+  nota.innerHTML = partes.join('');
+}
+
+/* ---------- Buscador de vacunas dentro de la fila ---------- */
+function vbConectar(input, lista, alElegir) {
+  let activo = -1;
+  const opciones = () => [...lista.querySelectorAll('[role="option"]:not([aria-disabled="true"])')];
+  const pintar = () => {
+    const q = normTxt(input.value);
+    const vacs = visVacunas().filter(v => !q || normTxt(v.nombre).includes(q))
+      .sort((a, b) => (b.stock > 0) - (a.stock > 0) || a.nombre.localeCompare(b.nombre));
+    lista.innerHTML = vacs.length ? vacs.map(v => {
+      const sin = v.stock <= 0;
+      return `<li role="option" data-id="${v.id}" ${sin ? 'aria-disabled="true"' : ''} class="vb-op${sin ? ' is-sin' : ''}">
+          <span class="vb-op-nom">${escHtml(v.nombre)}</span>
+          <span class="vb-op-stock">${sin ? 'Sin stock' : `${nfmt(v.stock)} dosis`}</span>
+        </li>`;
+    }).join('') : '<li class="vb-vacio">No hay vacunas con ese nombre.</li>';
+    activo = opciones().length ? 0 : -1;
+    marcar();
+    lista.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+  };
+  const marcar = () => opciones().forEach((o, i) => {
+    o.classList.toggle('on', i === activo);
+    if (i === activo) { o.scrollIntoView({ block: 'nearest' }); input.setAttribute('aria-activedescendant', ''); }
+  });
+  const cerrar = () => { lista.hidden = true; input.setAttribute('aria-expanded', 'false'); };
+  const elegir = op => { if (!op) return; cerrar(); alElegir(Number(op.dataset.id)); };
+
+  input.addEventListener('focus', () => { input.select(); pintar(); });
+  input.addEventListener('input', pintar);
+  input.addEventListener('keydown', e => {
+    const ops = opciones();
+    if (e.key === 'ArrowDown') { e.preventDefault(); if (lista.hidden) return pintar(); activo = Math.min(ops.length - 1, activo + 1); marcar(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); activo = Math.max(0, activo - 1); marcar(); }
+    else if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); elegir(ops[activo]); }
+    else if (e.key === 'Escape') cerrar();
+  });
+  input.addEventListener('blur', () => setTimeout(cerrar, 150));
+  lista.addEventListener('mousedown', e => {
+    const op = e.target.closest('[role="option"]');
+    if (op && op.getAttribute('aria-disabled') !== 'true') { e.preventDefault(); elegir(op); }
+  });
+}
+
+/* ---------- Resumen en vivo ---------- */
+function visLeer() {
+  return visFilas().map(li => {
+    const v = visVacuna(li.dataset.vac);
+    const sel = li.querySelector('select');
+    const lote = v ? visLotes(v.id).find(l => String(l.id) === sel.value) : null;
+    const cant = Math.floor(Number(li.querySelector('input[type="number"]').value) || 0);
+    return { li, v, lote, cant };
+  });
+}
+
+function visResumen() {
+  const cont = $('visResumen');
+  if (!cont) return;
+  const filas = visLeer().filter(f => f.v);
+  const usoLote = new Map(), usoVac = new Map();
+  filas.forEach(f => {
+    if (f.lote) usoLote.set(f.lote.id, (usoLote.get(f.lote.id) || 0) + f.cant);
+    usoVac.set(f.v.id, (usoVac.get(f.v.id) || 0) + f.cant);
+  });
+  let hayError = false;
+  const items = filas.map(f => {
+    let estado = '', txt;
+    if (!f.lote) { estado = 'is-err'; hayError = true; txt = 'No tiene lotes vigentes para aplicar.'; }
+    else if (f.cant < 1) { estado = 'is-err'; hayError = true; txt = 'Indicá cuántas dosis.'; }
+    else {
+      const quedanLote = Number(f.lote.disponible) - usoLote.get(f.lote.id);
+      const quedanVac = f.v.stock - usoVac.get(f.v.id);
+      if (quedanLote < 0) { estado = 'is-err'; hayError = true; txt = `No alcanza: el lote tiene ${f.lote.disponible} dosis.`; }
+      else if (quedanVac <= iniUmbral()) { estado = 'is-warn'; txt = `Quedan ${quedanVac} dosis de esta vacuna: va a quedar con stock bajo.`; }
+      else txt = `Quedan ${quedanLote} dosis en el lote.`;
+    }
+    f.li.classList.toggle('is-err', estado === 'is-err');
+    return `<li class="${estado}">
+        <span class="res-nom"><b>${escHtml(f.v.nombre)}</b>${f.lote ? `<small>Lote ${escHtml(f.lote.numero_lote)}</small>` : ''}</span>
+        <span class="res-cant">−${f.cant}</span>
+        <span class="res-txt">${txt}</span>
+      </li>`;
+  });
+  visFilas().forEach(li => { if (!li.dataset.vac) li.classList.remove('is-err'); });
+  const dosis = filas.reduce((s, f) => s + Math.max(0, f.cant), 0);
+  cont.innerHTML = filas.length
+    ? `<ul class="res-lista">${items.join('')}</ul>
+       <p class="res-total"><span>${filas.length} ${filas.length === 1 ? 'vacuna' : 'vacunas'}</span><b>${dosis} ${dosis === 1 ? 'dosis' : 'dosis'}</b></p>`
+    : '<p class="res-vacio">Buscá una vacuna para empezar. Podés agregar todas las que recibió el paciente.</p>';
+  const btn = $('visGuardar');
+  btn.disabled = !filas.length || hayError;
+  btn.textContent = filas.length > 1 ? `Registrar ${filas.length} vacunas` : 'Registrar aplicación';
+}
+
+/* ---------- Guardar / cancelar ---------- */
+async function visGuardar() {
+  const fecha = $('ap-fecha').value;
+  const filas = visLeer().filter(f => f.v);
+  $('ap-fecha').classList.toggle('bad', !fecha);
+  if (!fecha) return msg('ap-msg', 'err', 'Indicá la fecha de aplicación.');
+  if (fecha > today()) return msg('ap-msg', 'err', 'La fecha de aplicación no puede ser posterior a hoy.');
+  if (!filas.length) return msg('ap-msg', 'err', 'Agregá al menos una vacuna.');
+  if (filas.some(f => !f.lote || f.cant < 1)) return msg('ap-msg', 'err', 'Revisá las vacunas marcadas en rojo.');
+  const btn = $('visGuardar');
+  btn.disabled = true;
+  try {
+    const r = await api('/aplicaciones/visita', { method: 'POST', body: JSON.stringify({
+      fecha_aplicacion: fecha,
+      items: filas.map(f => ({ lote_id: f.lote.id, cantidad: f.cant })),
+    })});
+    msg('ap-msg', '');
+    // Aviso de frascos multidosis abiertos o terminados en esta visita
+    const extras = (r.items || []).filter(it => it.frasco).map(it => {
+      const f = it.frasco;
+      if (f.abrioNuevo) return ` Se abrió un frasco nuevo de ${it.vacuna}: vence el ${fmtFecha(f.fechaVencimientoFrasco)}.`;
+      if (f.agotado) return ` Se terminó el frasco de ${it.vacuna}.`;
+      return '';
+    }).join('');
+    toastAccion('ok', (r.mensaje || 'Aplicación registrada.') + extras, 'Deshacer', () => deshacerMovs(r.mov_ids));
+    visReiniciar();
+    await refrescarDatos();
+    visResumen();
+  } catch (err) {
+    msg('ap-msg', 'err', err.message);
+  } finally {
+    visResumen();
+  }
+}
+function visReiniciar() {
+  $('visLista').innerHTML = '';
+  $('ap-fecha').value = today();
+  $('ap-fecha').classList.remove('bad');
+  $('ap-msg').innerHTML = '';
+  visAgregar(null, null, true);
+}
+function visCancelar() { visReiniciar(); go('inicio'); }
+
+// Desde otras pantallas: agrega una vacuna a la visita en curso (o llena la fila vacía)
+function visConVacuna(vacId, loteId) {
+  go('aplicar');
+  if (!vacId) { visFilas()[0]?.querySelector('.vb-input')?.focus(); return; }
+  const vacia = visFilas().find(li => !li.dataset.vac);
+  if (vacia) visElegirVacuna(vacia, vacId, loteId);
+  else visAgregar(vacId, loteId);
+  const ultima = visFilas().find(li => Number(li.dataset.vac) === Number(vacId));
+  ultima?.querySelector('input[type="number"]')?.focus();
+}
+
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && $('page-aplicar')?.classList.contains('on')) {
+    e.preventDefault();
+    if (!$('visGuardar').disabled) visGuardar();
+  }
+});
+
+/* ============================================================
+   DESHACER: aviso con botón para revertir lo recién registrado
+   ============================================================ */
+function toastAccion(type, text, etiqueta, accion, ms = 12000) {
+  const ic = type === 'ok' ? '✓' : type === 'info' ? 'i' : '✕';
+  const el = document.createElement('div');
+  el.className = 'toast toast-accion ' + type;
+  el.setAttribute('role', 'status');
+  el.innerHTML = `<span class="ti">${ic}</span><span class="toast-txt"></span><button type="button" class="toast-btn">${etiqueta}</button>`;
+  el.querySelector('.toast-txt').textContent = text;
+  $('toasts').appendChild(el);
+  let timer;
+  const quitar = () => { el.style.opacity = '0'; el.style.transition = '.3s'; setTimeout(() => el.remove(), 300); };
+  const programar = () => { clearTimeout(timer); timer = setTimeout(quitar, ms); };
+  el.addEventListener('mouseenter', () => clearTimeout(timer));
+  el.addEventListener('mouseleave', programar);
+  el.querySelector('.toast-btn').addEventListener('click', async () => {
+    clearTimeout(timer);
+    el.remove();
+    await accion();
+  });
+  programar();
+}
+
+async function deshacerMovs(ids) {
+  try {
+    const r = await api('/movimientos/deshacer', { method: 'POST', body: JSON.stringify({ ids }) });
+    toast('ok', r.mensaje);
+    await refrescarDatos();
+    if ($('page-aplicar')?.classList.contains('on')) visResumen();
+  } catch (err) {
+    toast('err', err.message);
+  }
+}
+async function refrescarDatos() {
+  await Promise.all([loadStock(), loadMovimientos(), loadDashboard()]);
+}
+
+/* ============================================================
+   RESÚMENES EN VIVO de Descarte e Ingresar lote
+   ============================================================ */
+function regFila(lbl, val, cls) { return `<div class="reg-dato${cls ? ' ' + cls : ''}"><dt>${lbl}</dt><dd>${val}</dd></div>`; }
+
+function regResumenDescarte() {
+  const cont = $('deResumen');
+  if (!cont) return;
+  const vacId = $('de-vac').value;
+  const v = visVacuna(vacId);
+  const lote = (STOCK_CACHE || []).find(r => String(r.id) === $('de-lote').value);
+  if (!v) { cont.innerHTML = '<p class="res-vacio">Elegí la vacuna y el lote a descartar.</p>'; return; }
+  const d = dpf(vacId);
+  const cant = esMulti(vacId) ? (Number($('de-cant').value) || 0) * d + (Number($('de-sueltas').value) || 0) : (Number($('de-cant').value) || 0);
+  let html = `<div class="reg-vac"><span class="reg-vac-vial">${iniVialSVG(v, iniEstado(v), iniNivel(v), false)}</span><b>${escHtml(v.nombre)}</b></div><dl class="reg-datos">`;
+  if (lote) {
+    const dias = Number(lote.dias_para_vencer);
+    const quedan = Number(lote.disponible) - cant;
+    html += regFila('Lote', escHtml(lote.numero_lote));
+    html += regFila(dias < 0 ? 'Venció' : 'Vence', `${fmtFecha(lote.vencimiento)}, ${fmtDias(dias)}`, dias < 0 ? 'is-err' : '');
+    html += regFila('Hay en el lote', `${lote.disponible} dosis`);
+    if (cant > 0) html += regFila('Después del descarte', quedan < 0 ? `No alcanza: hay ${lote.disponible} dosis` : `${quedan} dosis`, quedan < 0 ? 'is-err' : '');
+    // Si el lote está vencido, se sugiere el motivo
+    if (dias < 0 && !$('de-motivo').value) { $('de-motivo').value = 'Vencimiento'; $('de-motivo')._niceRefresh?.(); }
+  } else {
+    html += regFila('Stock vigente de la vacuna', `${v.stock} dosis`);
+  }
+  cont.innerHTML = html + '</dl>';
+}
+
+function regResumenLote() {
+  const cont = $('loResumen');
+  if (!cont) return;
+  const vacId = $('lo-vac').value;
+  const v = visVacuna(vacId);
+  if (!v) { cont.innerHTML = '<p class="res-vacio">Elegí la vacuna que llegó.</p>'; return; }
+  const num = $('lo-num').value.trim();
+  const cant = esMulti(vacId) ? (Number($('lo-cant').value) || 0) * dpf(vacId) : (Number($('lo-cant').value) || 0);
+  const existente = num ? (STOCK_CACHE || []).find(r => Number(r.vacuna_id) === Number(vacId) && r.id && normTxt(r.numero_lote) === normTxt(num)) : null;
+  let html = `<div class="reg-vac"><span class="reg-vac-vial">${iniVialSVG(v, iniEstado(v), iniNivel(v), false)}</span><b>${escHtml(v.nombre)}</b></div><dl class="reg-datos">`;
+  html += regFila('Stock vigente hoy', `${v.stock} dosis`);
+  if (num) html += regFila('Lote', existente ? `${escHtml(existente.numero_lote)} (ya existe, se suman las dosis)` : `${escHtml(num)} (lote nuevo)`);
+  if (cant > 0) html += regFila('Stock después de guardar', `${v.stock + cant} dosis`, 'is-ok');
+  cont.innerHTML = html + '</dl>';
+}
+
+/* ============================================================
+   BUSCADOR RÁPIDO (Ctrl + K o "/"): encontrar una vacuna desde
+   cualquier pantalla, ver su stock y actuar.
+   ============================================================ */
+let BUSQ_ACT = 0;
+function busqAbrir() {
+  if (!TOKEN) return;
+  $('ovBuscar').classList.add('on');
+  const i = $('busqInput');
+  i.value = '';
+  busqRender();
+  i.focus();   // en el mismo momento, para no perder las primeras teclas
+}
+function busqCerrar() { $('ovBuscar').classList.remove('on'); }
+function busqResultados() {
+  const q = normTxt($('busqInput').value);
+  return visVacunas().filter(v => !q || normTxt(v.nombre).includes(q))
+    .sort((a, b) => {
+      if (q) { const pa = normTxt(a.nombre).startsWith(q), pb = normTxt(b.nombre).startsWith(q); if (pa !== pb) return pb - pa; }
+      return a.nombre.localeCompare(b.nombre);
+    });
+}
+function busqRender() {
+  const info = iniInfo();
+  const res = busqResultados();
+  if (BUSQ_ACT >= res.length) BUSQ_ACT = 0;
+  $('busqLista').innerHTML = res.length ? res.map((v, i) => {
+    const est = iniEstado(v);
+    const acc = info.write ? `
+        ${v.stock > 0 ? `<button type="button" class="busq-acc" onclick="event.stopPropagation();busqCerrar();visConVacuna(${v.id})">Aplicar</button>` : ''}
+        <button type="button" class="busq-acc" onclick="event.stopPropagation();busqCerrar();iniIngresarLote(${v.id})">Ingresar lote</button>` : '';
+    return `<li role="option" class="busq-op${i === BUSQ_ACT ? ' on' : ''}" aria-selected="${i === BUSQ_ACT}" onclick="busqCerrar();iniAbrirFicha(${v.id})" onmousemove="BUSQ_ACT=${i};busqMarcar()">
+        <span class="busq-vial" aria-hidden="true">${iniVialSVG(v, est, iniNivel(v), false)}</span>
+        <span class="busq-nom"><b>${escHtml(v.nombre)}</b><small class="is-${est}">${v.stock > 0 ? `${nfmt(v.stock)} dosis, ${INI_EST[est].lbl.toLowerCase()}` : 'Sin stock'}</small></span>
+        <span class="busq-accs">${acc}</span>
+      </li>`;
+  }).join('') : '<li class="busq-vacio">No hay vacunas con ese nombre.</li>';
+  $('busqPie').textContent = info.write
+    ? 'Enter abre la ficha. Con las flechas elegís otra vacuna.'
+    : 'Enter abre la ficha con los lotes. Con las flechas elegís otra vacuna.';
+}
+function busqMarcar() {
+  [...$('busqLista').querySelectorAll('.busq-op')].forEach((o, i) => {
+    o.classList.toggle('on', i === BUSQ_ACT);
+    o.setAttribute('aria-selected', String(i === BUSQ_ACT));
+  });
+}
+function busqTecla(e) {
+  const res = busqResultados();
+  if (e.key === 'ArrowDown') { e.preventDefault(); BUSQ_ACT = Math.min(res.length - 1, BUSQ_ACT + 1); busqMarcar(); busqVer(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); BUSQ_ACT = Math.max(0, BUSQ_ACT - 1); busqMarcar(); busqVer(); }
+  else if (e.key === 'Enter') { e.preventDefault(); const v = res[BUSQ_ACT]; if (v) { busqCerrar(); iniAbrirFicha(v.id); } }
+  else if (e.key === 'Escape') busqCerrar();
+}
+function busqVer() { $('busqLista').querySelectorAll('.busq-op')[BUSQ_ACT]?.scrollIntoView({ block: 'nearest' }); }
+
+document.addEventListener('keydown', e => {
+  if (!TOKEN) return;
+  const escribiendo = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); busqAbrir(); }
+  else if (e.key === '/' && !escribiendo && !$('ovBuscar').classList.contains('on')) { e.preventDefault(); busqAbrir(); }
+  else if (e.key === 'Escape') {
+    if ($('ovBuscar').classList.contains('on')) busqCerrar();
+    else if ($('ovFicha').classList.contains('on')) closeOv('ovFicha');
+  }
+});
