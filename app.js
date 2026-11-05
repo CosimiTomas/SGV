@@ -339,9 +339,10 @@ function iniRenderHead() {
       ? `${r.total} ${r.total === 1 ? 'vacuna necesita' : 'vacunas necesitan'} reposición${r.urg ? `, <b class="ini-res-urg">${r.urg} sin stock</b>` : ''}.`
       : 'No hay vacunas para reponer por ahora.';
   } else {
-    const urg = iniTareas().filter(x => x.sev === 'urg').length;
+    const al = iniAlertas();
     const ap = DASH.hoy?.aplicaciones || { dosis: 0 };
-    txt = urg ? `<b class="ini-res-urg">${urg} ${urg === 1 ? 'aviso urgente' : 'avisos urgentes'}</b> en la puerta de la heladera.` : 'Nada urgente para resolver.';
+    const n = al.venc.length;
+    txt = n ? `<b class="ini-res-urg">${n} ${n === 1 ? 'vencida' : 'vencidas'} para descartar.</b>` : 'No hay vencidas para descartar.';
     txt += ap.dosis > 0 ? ` Hoy se aplicaron ${nfmt(ap.dosis)} dosis.` : ' Todavía no hay aplicaciones hoy.';
   }
   $('iniResumen').innerHTML = `${fecha} ${txt}`;
@@ -730,7 +731,62 @@ function iniTareas() {
   return t;
 }
 
+// Las tres alertas de siempre, sin sugerencias
+function iniAlertas() {
+  if (!DASH) return { venc: [], porv: [], bajo: [] };
+  const U = iniDiasVenc();
+  const venc = [
+    ...(DASH.alertas?.vencidas || []).map(l => ({ tipo: 'lote', vacuna_id: l.vacuna_id, lote_id: l.lote_id, vacuna: l.vacuna, lote: l.numero_lote, dosis: l.disponible, dias: l.dias })),
+    ...(DASH.frascos || []).filter(f => f.dias_restantes < 0).map(f => ({ tipo: 'frasco', vacuna_id: f.vacuna_id, frasco_id: f.frasco_id, vacuna: f.vacuna, lote: f.numero_lote, dosis: f.dosis_sobrantes, dias: f.dias_restantes })),
+  ];
+  const porv = (DASH.radar || []).filter(l => l.dias >= 0 && l.dias <= U).sort((a, b) => a.dias - b.dias);
+  const bajo = (DASH.vacunas || []).filter(v => v.stock <= iniUmbral())
+    .sort((a, b) => a.stock - b.stock || a.nombre.localeCompare(b.nombre));
+  return { venc, porv, bajo };
+}
+
 function iniRenderTareas() {
+  const cont = $('iniTareas');
+  if (!cont) return;
+  const info = iniInfo();
+  const { venc, porv, bajo } = iniAlertas();
+  const total = venc.length + porv.length + bajo.length;
+  $('iniTarTotal').textContent = total ? String(total) : '';
+  INI.abiertos = INI.abiertos || {};
+  const LIM = 3;
+  const grupo = (k, titulo, items, fila, vacio) => {
+    const ver = INI.abiertos[k] ? items : items.slice(0, LIM);
+    return `<section class="alg alg-${k}">
+        <h3 class="alg-cinta"><span>${titulo}</span><b>${items.length}</b></h3>
+        ${items.length
+          ? `<ul class="alg-lista">${ver.map(fila).join('')}</ul>${items.length > LIM
+              ? `<button type="button" class="alg-mas" onclick="INI.abiertos['${k}']=!INI.abiertos['${k}'];iniRenderTareas()">${INI.abiertos[k] ? 'Ver menos' : `Ver las ${items.length}`}</button>` : ''}`
+          : `<p class="alg-vacio">${vacio}</p>`}
+      </section>`;
+  };
+  const fVenc = x => {
+    const acc = info.write
+      ? `<button type="button" class="alg-acc" onclick="event.stopPropagation();${x.tipo === 'lote' ? `iniDescartarLote(${x.lote_id})` : `descartarFrascoVencido(${x.frasco_id})`}">Descartar</button>` : '';
+    return `<li class="alg-fila" onclick="iniAbrirFicha(${x.vacuna_id})">
+        <span class="alg-txt"><b>${iniTxt(x.vacuna)}</b><small>${x.tipo === 'lote' ? 'Lote' : 'Frasco abierto del lote'} ${iniTxt(x.lote)}, ${x.dosis} dosis</small></span>
+        <span class="alg-dato">${x.tipo === 'lote' ? `Venció ${fmtDias(x.dias)}` : 'Vencido'}</span>${acc}
+      </li>`;
+  };
+  const fPorv = l => `<li class="alg-fila" onclick="iniAbrirFicha(${l.vacuna_id})">
+      <span class="alg-txt"><b>${iniTxt(l.vacuna)}</b><small>Lote ${iniTxt(l.numero_lote)}, ${l.disponible} dosis</small></span>
+      <span class="alg-dato">${l.dias === 0 ? 'Hoy' : `${l.dias} ${l.dias === 1 ? 'día' : 'días'}`}</span>
+    </li>`;
+  const fBajo = v => `<li class="alg-fila" onclick="iniAbrirFicha(${v.id})">
+      <span class="alg-txt"><b>${iniTxt(v.nombre)}</b><small>${v.stock <= 0 ? 'No quedan dosis vigentes' : iniCobertura(v)}</small></span>
+      <span class="alg-dato${v.stock <= 0 ? ' is-cero' : ''}">${v.stock <= 0 ? 'Sin stock' : `${v.stock} dosis`}</span>
+    </li>`;
+  cont.innerHTML =
+    grupo('venc', 'Vencidas', venc, fVenc, 'No hay dosis vencidas sin descartar.') +
+    grupo('porv', `Vencen en ${iniDiasVenc()} días`, porv, fPorv, 'Ningún lote vence en los próximos días.') +
+    grupo('bajo', 'Stock bajo', bajo, fBajo, 'Todas las vacunas tienen stock suficiente.');
+}
+
+function iniRenderTareasViejo() {
   const cont = $('iniTareas');
   if (!cont) return;
   const t = iniTareas();     // vienen ordenadas: primero lo urgente
@@ -2906,14 +2962,24 @@ function vbConectar(input, lista, alElegir) {
   const pintar = () => {
     const q = normTxt(input.value);
     const vacs = visVacunas().filter(v => !q || normTxt(v.nombre).includes(q))
-      .sort((a, b) => (b.stock > 0) - (a.stock > 0) || a.nombre.localeCompare(b.nombre));
-    lista.innerHTML = vacs.length ? vacs.map(v => {
-      const sin = v.stock <= 0;
-      return `<li role="option" data-id="${v.id}" ${sin ? 'aria-disabled="true"' : ''} class="vb-op${sin ? ' is-sin' : ''}">
-          <span class="vb-op-nom">${escHtml(v.nombre)}</span>
-          <span class="vb-op-stock">${sin ? 'Sin stock' : `${nfmt(v.stock)} dosis`}</span>
+      .sort((a, b) => a.nombre.localeCompare(b.nombre));
+    const con = vacs.filter(v => v.stock > 0), sin = vacs.filter(v => v.stock <= 0);
+    const ESTADO = { low: 'Stock bajo', exp: 'Por vencer' };
+    const op = v => {
+      const est = iniEstado(v);
+      const s0 = v.stock <= 0;
+      return `<li role="option" data-id="${v.id}" ${s0 ? 'aria-disabled="true"' : ''} class="vb-op is-${est}">
+          <span class="vb-op-vial" aria-hidden="true">${iniVialSVG(v, est, iniNivel(v), false)}</span>
+          <span class="vb-op-txt">
+            <span class="vb-op-nom">${escHtml(v.nombre)}</span>
+            <span class="vb-op-stock">${s0 ? 'Sin stock' : `${nfmt(v.stock)} dosis`}${ESTADO[est] ? `<em>${ESTADO[est]}</em>` : ''}</span>
+          </span>
         </li>`;
-    }).join('') : '<li class="vb-vacio">No hay vacunas con ese nombre.</li>';
+    };
+    let html = '';
+    if (con.length) html += `<li class="vb-grupo" role="presentation">Con stock <b>${con.length}</b></li>${con.map(op).join('')}`;
+    if (sin.length) html += `<li class="vb-grupo" role="presentation">Sin stock <b>${sin.length}</b></li>${sin.map(op).join('')}`;
+    lista.innerHTML = html || '<li class="vb-vacio">No hay vacunas con ese nombre.</li>';
     activo = opciones().length ? 0 : -1;
     marcar();
     lista.hidden = false;
@@ -3273,6 +3339,86 @@ function gateVerClave() {
     cont.innerHTML = filas[k].map(([d, est, nivel], i) =>
       `<span class="gate-frasco" style="--i:${k * 4 + i}">${iniVialSVG({ dosis_por_frasco: d }, est, nivel, false)}</span>`).join('');
   });
+})();
+
+// El vacunatorio alrededor de la heladera del login (solo decoración)
+(function gateEscena() {
+  const izq = $('gateIzq'), der = $('gateDer');
+  if (!izq || !der) return;
+  // frasco reutilizando el mismo dibujo de la heladera
+  const fr = (x, y, w, d, est, nivel) =>
+    iniVialSVG({ dosis_por_frasco: d }, est, nivel, false).replace('<svg ', `<svg x="${x}" y="${y - w * 88 / 48}" width="${w}" height="${w * 88 / 48}" `);
+  const estante = (x1, x2, y) => `<rect x="${x1}" y="${y}" width="${x2 - x1}" height="9" rx="2" class="gs-tabla"/>
+    <rect x="${x1}" y="${y}" width="${x2 - x1}" height="2.5" rx="1.2" class="gs-tabla-luz"/>
+    <rect x="${x1 + 6}" y="${y + 9}" width="${x2 - x1 - 12}" height="10" class="gs-sombra"/>
+    <path d="M${x1 + 24} ${y + 9}v16l14-16M${x2 - 24} ${y + 9}v16l-14-16" class="gs-soporte"/>`;
+  const caja = (x, y, w, h, txt) => `<rect x="${x}" y="${y - h}" width="${w}" height="${h}" rx="3" class="gs-caja"/>
+    <rect x="${x}" y="${y - h}" width="${w}" height="7" rx="3" class="gs-caja-tapa"/>
+    ${txt ? `<text x="${x + w / 2}" y="${y - h / 2 + 9}" class="gs-caja-txt">${txt}</text>` : ''}`;
+
+  // Izquierda: calendario en la pared, estante con cajas y la mesada con insumos
+  const filas = [0, 1, 2, 3, 4, 5].map(i => {
+    const y = 104 + i * 30;
+    const pts = [0, 1, 2, 3, 4].map(j => `<circle cx="${150 + j * 22}" cy="${y + 5}" r="5.5" class="${(i * 3 + j) % 4 === 0 ? 'gs-pto-on' : 'gs-pto'}"/>`).join('');
+    return `<rect x="78" y="${y}" width="${46 - (i % 3) * 8}" height="10" rx="3" class="gs-linea"/>${pts}`;
+  }).join('');
+  izq.innerHTML = `
+    <g class="gs-afiche">
+      <rect x="60" y="30" width="214" height="282" rx="6" class="gs-papel"/>
+      <rect x="60" y="30" width="214" height="46" rx="6" class="gs-papel-cab"/>
+      <text x="78" y="59" class="gs-afiche-tit">Calendario de vacunación</text>
+      ${filas}
+      <circle cx="167" cy="30" r="5" class="gs-chinche"/>
+    </g>
+    ${estante(318, 540, 262)}
+    ${caja(334, 262, 70, 54, 'Jeringas')}${caja(412, 262, 56, 40, 'Agujas')}${caja(476, 262, 52, 68, '')}
+    <g class="gs-mesada">
+      <rect x="70" y="440" width="490" height="200" class="gs-mueble"/>
+      <rect x="62" y="426" width="498" height="16" rx="3" class="gs-mesada-tapa"/>
+      <rect x="86" y="458" width="224" height="166" rx="4" class="gs-puertita"/>
+      <rect x="322" y="458" width="224" height="166" rx="4" class="gs-puertita"/>
+      <rect x="290" y="500" width="6" height="40" rx="3" class="gs-tirador"/><rect x="336" y="500" width="6" height="40" rx="3" class="gs-tirador"/>
+    </g>
+    <g class="gs-descartador">
+      <rect x="104" y="350" width="70" height="76" rx="6" class="gs-desc-cuerpo"/>
+      <path d="M98 350h82l-6-16H104z" class="gs-desc-tapa"/>
+      <rect x="126" y="334" width="26" height="6" rx="2" class="gs-desc-boca"/>
+    </g>
+    <g class="gs-frasco-algodon">
+      <rect x="200" y="356" width="62" height="70" rx="10" class="gs-vidrio"/>
+      <circle cx="217" cy="384" r="12" class="gs-algodon"/><circle cx="238" cy="378" r="13" class="gs-algodon"/><circle cx="226" cy="402" r="13" class="gs-algodon"/><circle cx="247" cy="400" r="11" class="gs-algodon"/>
+      <rect x="196" y="346" width="70" height="12" rx="4" class="gs-tapa"/>
+    </g>
+    <g>
+      <rect x="292" y="350" width="34" height="76" rx="7" class="gs-alcohol"/>
+      <rect x="301" y="330" width="16" height="22" rx="3" class="gs-alcohol-pico"/>
+      <rect x="292" y="374" width="34" height="26" class="gs-etiqueta"/>
+    </g>
+    <rect x="350" y="414" width="170" height="12" rx="4" class="gs-bandeja"/>
+    ${fr(362, 414, 30, 1, 'ok', .8)}${fr(398, 414, 30, 10, 'ok', .5)}${fr(440, 414, 30, 1, 'ok', .9)}${fr(476, 414, 30, 5, 'ok', .6)}`;
+
+  // Derecha: reloj, dos estantes con frascos y cajas, y una planta
+  const hoja = (d, r) => `<path d="${d}" class="gs-hoja" transform="rotate(${r} 470 520)"/>`;
+  der.innerHTML = `
+    <g class="gs-reloj">
+      <circle cx="440" cy="92" r="40" class="gs-reloj-cara"/>
+      <circle cx="440" cy="92" r="40" class="gs-reloj-aro"/>
+      <path d="M440 92V66M440 92l17 10" class="gs-reloj-aguja"/>
+      <circle cx="440" cy="92" r="3.5" class="gs-reloj-centro"/>
+    </g>
+    ${estante(30, 380, 196)}
+    ${fr(52, 196, 38, 1, 'ok', .85)}${fr(100, 196, 38, 10, 'ok', .55)}${fr(152, 196, 38, 1, 'low', .2)}${fr(200, 196, 38, 5, 'ok', .7)}
+    ${caja(262, 196, 104, 58, 'Jeringas')}
+    ${estante(30, 380, 360)}
+    ${caja(46, 360, 96, 70, 'Algodón')}${caja(150, 360, 72, 48, 'Guantes')}
+    <g>${[0, 1, 2, 3, 4].map(i => `<rect x="236" y="${352 - i * 8}" width="${92 - (i % 2) * 6}" height="7" rx="2" class="${i % 2 ? 'gs-carnet2' : 'gs-carnet'}"/>`).join('')}</g>
+    ${fr(338, 360, 30, 1, 'ok', .7)}
+    <g class="gs-planta">
+      ${hoja('M470 520c-30-40-34-90-8-130 18 40 20 90 8 130z', -32)}${hoja('M470 520c-30-40-34-90-8-130 18 40 20 90 8 130z', 6)}
+      ${hoja('M470 520c-30-40-34-90-8-130 18 40 20 90 8 130z', 38)}${hoja('M470 520c-20-30-24-64-6-92 13 28 14 64 6 92z', -60)}${hoja('M470 520c-20-30-24-64-6-92 13 28 14 64 6 92z', 64)}
+      <path d="M428 518h84l-10 122h-64z" class="gs-maceta"/>
+      <rect x="422" y="508" width="96" height="16" rx="4" class="gs-maceta-borde"/>
+    </g>`;
 })();
 
 // Abre la puerta y recién ahí entra a la web

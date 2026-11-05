@@ -3023,3 +3023,132 @@ tbody td{ padding-top:13px; padding-bottom:13px; }
   .hel-filtros::-webkit-scrollbar{ display:none; }
   .hel-chip{ flex:none; }
 }
+
+/* =====================================================================
+   Lista de vacunas de la visita: todas a la vista, en dos columnas
+   ===================================================================== */
+.vb-lista{
+  width:min(620px, calc(100vw - 48px)); right:auto; max-height:min(580px, 72vh);
+  padding:8px; border-radius:14px; display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:2px 6px; align-content:start;
+  box-shadow:0 18px 44px -10px rgba(7,40,38,.28), 0 0 0 1px rgba(7,104,98,.04);
+}
+.vb-lista[hidden]{ display:none; }
+.vb-grupo{
+  grid-column:1 / -1; display:flex; align-items:center; gap:6px; padding:8px 8px 4px;
+  font-size:12.5px; font-weight:650; color:var(--muted);
+}
+.vb-grupo b{ font-weight:600; color:#8A9A97; }
+.vb-grupo:not(:first-child){ margin-top:6px; border-top:1px solid var(--line-soft); padding-top:12px; }
+.vb-op{ display:flex; align-items:center; justify-content:flex-start; gap:10px; padding:7px 9px; border-radius:10px; }
+.vb-op:hover:not(.is-nostock), .vb-op.on{ background:var(--teal-ghost); box-shadow:inset 0 0 0 1px rgba(15,169,158,.25); }
+.vb-op-vial{ flex:none; width:18px; height:33px; display:block; }
+.vb-op-vial .vial{ width:18px; height:33px; display:block; }
+.vb-op-txt{ min-width:0; display:flex; flex-direction:column; gap:1px; }
+.vb-op-nom{ font-size:13.5px; font-weight:600; line-height:1.25; color:var(--ink); }
+.vb-op-stock{ display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.vb-op-stock em{ font-style:normal; font-size:11px; font-weight:650; padding:1px 6px; border-radius:999px; }
+.vb-op.is-low .vb-op-stock em{ color:var(--warn); background:var(--warn-tint); }
+.vb-op.is-exp .vb-op-stock em{ color:#B4561C; background:#FCEDE3; }
+.vb-op.is-nostock{ opacity:.5; cursor:default; }
+@media (max-width:760px){
+  .vb-lista{ width:100%; grid-template-columns:1fr; max-height:min(420px, 60vh); }
+}
+
+/* =====================================================================
+   Alertas en la puerta: vencidas, por vencer y stock bajo
+   Cada grupo lleva una cinta de etiquetadora del color de su alerta.
+   ===================================================================== */
+.refri-puerta #iniTareas{ display:flex; flex-direction:column; gap:20px; margin-top:16px; }
+.alg-cinta{
+  display:inline-flex; align-items:center; gap:10px; margin:0 0 8px -4px; padding:5px 10px 5px 12px;
+  border-radius:4px; transform:rotate(-1deg);
+  font-size:13px; font-weight:700; letter-spacing:.01em; color:#fff;
+  box-shadow:0 2px 0 rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.25);
+}
+.alg-cinta b{ min-width:22px; height:20px; padding:0 6px; border-radius:999px; display:grid; place-items:center; background:rgba(255,255,255,.22); font-size:12px; }
+.alg-venc .alg-cinta{ background:#B2342A; }
+.alg-porv .alg-cinta{ background:#C25A1F; transform:rotate(.8deg); }
+.alg-bajo .alg-cinta{ background:#A66A0F; transform:rotate(-.5deg); }
+.alg-lista{ list-style:none; border-radius:10px; background:#fff; box-shadow:inset 0 0 0 1px #E4EBE9; overflow:hidden; }
+.alg-fila{
+  display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:2px 10px;
+  padding:9px 12px; border-top:1px solid var(--line-soft); cursor:pointer; transition:background .15s;
+}
+.alg-fila:first-child{ border-top:none; }
+.alg-fila:hover{ background:var(--teal-ghost); }
+.alg-txt{ min-width:0; display:flex; flex-direction:column; }
+.alg-txt b{ font-size:13.5px; font-weight:650; line-height:1.3; color:var(--ink); }
+.alg-txt small{ font-size:12px; line-height:1.35; color:var(--muted); }
+.alg-dato{ font-size:12.5px; font-weight:700; white-space:nowrap; font-variant-numeric:tabular-nums; text-align:right; }
+.alg-venc .alg-dato{ color:var(--err); }
+.alg-porv .alg-dato{ color:#B4561C; }
+.alg-bajo .alg-dato{ color:var(--warn); }
+.alg-bajo .alg-dato.is-cero{ color:var(--err); }
+.alg-acc{
+  grid-column:1 / -1; justify-self:start; margin-top:6px; height:28px; padding:0 12px; border-radius:7px;
+  background:var(--err); color:#fff; font-size:12.5px; font-weight:650;
+}
+.alg-acc:hover{ background:#922a22; }
+.alg-acc:focus-visible, .alg-mas:focus-visible{ outline:none; box-shadow:var(--ring); }
+.alg-mas{ margin-top:6px; padding:4px 0; font-size:12.5px; font-weight:600; color:var(--teal-mid); }
+.alg-mas:hover{ text-decoration:underline; }
+.alg-vacio{ padding:2px 2px 0; font-size:12.5px; color:var(--muted); }
+@media (max-width:1000px){
+  .refri-puerta #iniTareas{ display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:16px; }
+}
+
+/* =====================================================================
+   Login: el vacunatorio alrededor de la heladera
+   Pared con calendario, estantes con frascos y cajas, mesada con
+   insumos y una planta. Tonos del fondo para no competir con la puerta.
+   ===================================================================== */
+.gate{ background:#0A615B; }
+.gate-piso{ position:absolute; z-index:-2; left:-100vw; right:-100vw; top:100%; height:100vh; background:#07514C; margin-top:12px; }
+.gate-entorno{ position:absolute; z-index:-1; bottom:-12px; width:560px; height:640px; pointer-events:none; }
+.gate-entorno-izq{ right:calc(100% + 34px); }
+.gate-entorno-der{ left:calc(100% + 34px); }
+.gs-tabla{ fill:#0F7D75; }
+.gs-tabla-luz{ fill:#3AA69C; }
+.gs-sombra{ fill:rgba(0,0,0,.14); }
+.gs-soporte{ fill:none; stroke:#0C6D66; stroke-width:4; stroke-linejoin:round; }
+.gs-caja{ fill:#C9DDD9; }
+.gs-caja-tapa{ fill:#B3CDC8; }
+.gs-caja-txt{ font:600 12px var(--font-sans); fill:#2F6A64; text-anchor:middle; }
+.gs-papel{ fill:#D7E7E4; }
+.gs-papel-cab{ fill:#BCD8D3; }
+.gs-afiche-tit{ font:700 13.5px var(--font-sans); fill:#0B4E49; }
+.gs-linea{ fill:#9DC0BA; }
+.gs-pto{ fill:none; stroke:#9DC0BA; stroke-width:2; }
+.gs-pto-on{ fill:#7FB29A; }
+.gs-chinche{ fill:#C3E26A; }
+.gs-mueble{ fill:#0C6B65; }
+.gs-mesada-tapa{ fill:#3AA69C; }
+.gs-puertita{ fill:#0E756E; stroke:#0A615B; stroke-width:2; }
+.gs-tirador{ fill:#5FB6AC; }
+.gs-desc-cuerpo{ fill:#D3A43C; }
+.gs-desc-tapa{ fill:#B5493E; }
+.gs-desc-boca{ fill:#7E2F28; }
+.gs-vidrio{ fill:rgba(255,255,255,.2); stroke:rgba(255,255,255,.45); stroke-width:2; }
+.gs-algodon{ fill:#EEF5F4; }
+.gs-tapa{ fill:#8FB9B3; }
+.gs-alcohol{ fill:#9FCBE0; opacity:.85; }
+.gs-alcohol-pico{ fill:#E4EEF2; }
+.gs-etiqueta{ fill:#F1F6F5; }
+.gs-bandeja{ fill:#B9D2CE; }
+.gs-reloj-cara{ fill:#E7F1EF; }
+.gs-reloj-aro{ fill:none; stroke:#0F7D75; stroke-width:6; }
+.gs-reloj-aguja{ fill:none; stroke:#0B4E49; stroke-width:4; stroke-linecap:round; }
+.gs-reloj-centro{ fill:#0B4E49; }
+.gs-carnet{ fill:#C3E26A; }
+.gs-carnet2{ fill:#9ED3CB; }
+.gs-hoja{ fill:#7FB04A; }
+.gs-maceta{ fill:#C9DDD9; }
+.gs-maceta-borde{ fill:#B3CDC8; }
+.gate-entorno .vial-vidrio{ fill:rgba(255,255,255,.55); }
+.gate-entorno .vial-borde{ stroke:rgba(255,255,255,.75); }
+.gate-entorno .vial-marca, .gate-entorno .vial-marca-baja{ stroke:rgba(7,104,98,.35); }
+.gate-entorno .vial-tapa{ fill:#B9D2CE; }
+@media (max-width:1100px){ .gate-entorno{ opacity:.55; } }
+@media (max-width:760px){ .gate-entorno{ display:none; } }
+/* el entorno se achica con la pantalla para que siempre entre completo */
+.gate-entorno{ width:clamp(280px, calc((100vw - 430px) / 2 - 56px), 560px); height:auto; aspect-ratio:560 / 640; }
