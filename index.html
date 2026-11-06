@@ -207,130 +207,102 @@
       <div class="page-head">
         <div>
           <h1>Stock</h1>
-          <div class="sub">Todos los lotes con su vencimiento y su estado. Tocá una vacuna en el buscador (Ctrl + K) para ver su ficha.</div>
+          <div class="sub">Cada vacuna con sus lotes, en el orden en que conviene usarlos.</div>
+        </div>
+        <div class="pg-acciones">
+          <div class="seg" role="group" aria-label="Cómo ver el stock">
+            <button type="button" data-vista="vacuna" class="on" aria-pressed="true" onclick="stSetVista('vacuna')">Por vacuna</button>
+            <button type="button" data-vista="lote" aria-pressed="false" onclick="stSetVista('lote')">Por lote</button>
+          </div>
+          <button class="btn ghost sm" onclick="excelStockGeneral()"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Excel general</button>
+          <button class="btn ghost sm" onclick="openExcelEsp()"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Excel de una vacuna</button>
         </div>
       </div>
       <div class="readonly-note readonly-only hide-proveedora"><span class="ic"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span><span>Estás en modo <b>solo lectura</b>: podés consultar el stock y descargar los Excel, pero no registrar movimientos.</span></div>
-      <div class="mov-layout">
-        <aside class="mov-sidebar">
-          <div class="mov-sidebar-head">
-            <h4>Filtros</h4>
-            <button type="button" id="st-limpiar" class="btn-limpiar" onclick="stClearFiltros()" style="display:none">Limpiar</button>
-          </div>
-          <div class="mov-campo">
-            <label>Buscar vacuna</label>
-            <input type="text" id="stock-search" placeholder="Buscar vacuna" oninput="renderStock()">
-          </div>
-          <div class="mov-campo">
-            <label>Estado</label>
-            <select id="stock-estado" class="select-nice" onchange="stOnEstadoManual()">
-              <option value="">Todos</option>
-              <option value="reposicion" class="proveedora-only">Necesita reposición</option>
-              <option value="vencida" class="hide-proveedora">Vencidas</option>
-              <option value="exp">Por vencer</option>
-              <option value="low">Stock bajo</option>
-              <option value="ok">OK</option>
-              <option value="nostock">Sin stock</option>
-            </select>
-          </div>
-          <div class="mov-campo">
-            <label>Ordenar por</label>
-            <select id="stock-orden" class="select-nice" onchange="renderStock()">
-              <option value="urgencia">Urgencia</option>
-              <option value="venc-asc">Vence más próximo</option>
-              <option value="venc-desc">Vence más lejano</option>
-              <option value="vacuna">Vacuna (A–Z)</option>
-              <option value="disp-asc">Menor stock</option>
-              <option value="disp-desc">Mayor stock</option>
-            </select>
-          </div>
-        </aside>
-        <div class="panel mov-main">
-          <div class="panel-head">
-            <h4>Inventario</h4>
-            <span id="st-contador" class="mov-contador" style="margin-left:10px">Mostrando 0 lotes</span>
-            <div class="spacer"></div>
-            <button class="btn subtle sm" onclick="excelStockGeneral()"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Excel general</button>
-            <button class="btn subtle sm" onclick="openExcelEsp()"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Excel de una vacuna</button>
-          </div>
-          <div class="tabla-scroll">
-          <table>
-            <thead><tr><th>Vacuna</th><th>Lote</th><th>Vencimiento</th><th>Dosis disponibles</th><th>Estado</th><th class="enfermeria-only"></th><th class="traz-only"></th></tr></thead>
-            <tbody id="stockBody"></tbody>
-          </table>
-          </div>
+
+      <div class="st-estados" id="stEstados" role="group" aria-label="Filtrar por estado"></div>
+
+      <div class="pg-barra">
+        <label class="pg-buscar"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10zM11 11l3 3"/></svg>
+          <input type="search" id="stock-search" placeholder="Buscar vacuna o lote" oninput="renderStock()" autocomplete="off" aria-label="Buscar vacuna o lote">
+        </label>
+        <span id="st-contador" class="pg-contador"></span>
+        <button type="button" id="st-limpiar" class="btn-limpiar" onclick="stClearFiltros()" style="display:none">Limpiar filtros</button>
+        <div class="spacer"></div>
+        <label class="pg-orden"><span>Ordenar por</span>
+          <select id="stock-orden" class="select-nice" onchange="renderStock()">
+            <option value="urgencia">Urgencia</option>
+            <option value="venc-asc">Vence más próximo</option>
+            <option value="venc-desc">Vence más lejano</option>
+            <option value="vacuna">Vacuna (A-Z)</option>
+            <option value="disp-asc">Menor stock</option>
+            <option value="disp-desc">Mayor stock</option>
+          </select>
+        </label>
+        <select id="stock-estado" hidden aria-hidden="true" tabindex="-1">
+          <option value="">Todos</option><option value="reposicion">Necesita reposición</option><option value="vencida">Vencidas</option>
+          <option value="exp">Por vencer</option><option value="low">Stock bajo</option><option value="ok">En orden</option><option value="nostock">Sin stock</option>
+        </select>
+      </div>
+
+      <div class="st-vacunas" id="stVacunas"></div>
+
+      <div class="panel st-tabla" id="stTabla" hidden>
+        <div class="tabla-scroll">
+        <table>
+          <thead><tr><th>Vacuna</th><th>Lote</th><th>Vencimiento</th><th>Dosis disponibles</th><th>Estado</th><th class="enfermeria-only"></th><th class="traz-only"></th></tr></thead>
+          <tbody id="stockBody"></tbody>
+        </table>
         </div>
       </div>
     </section>
 
-    <!-- MOVIMIENTOS -->
+    <!-- MOVIMIENTOS: un diario del vacunatorio, agrupado por día -->
     <section class="page" id="page-mov">
       <div class="page-head">
         <div>
           <h1>Movimientos</h1>
-          <div class="sub">Todo lo que se registró: aplicaciones, descartes, ingresos y ediciones de lotes.</div>
+          <div class="sub">El diario del vacunatorio: todo lo que entró, se aplicó o se descartó, día por día.</div>
+        </div>
+        <div class="pg-acciones">
+          <button class="btn ghost sm" onclick="excelMovimientosFiltrado()" title="Descarga los movimientos que se ven con los filtros de ahora"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Descargar Excel</button>
         </div>
       </div>
       <div class="readonly-note readonly-only hide-proveedora"><span class="ic"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span><span>Modo <b>solo lectura</b>: podés consultar y descargar el historial, pero no registrar movimientos.</span></div>
 
-      <div class="mov-layout">
-        <aside class="mov-sidebar">
-          <div class="mov-sidebar-head">
-            <h4>Filtros</h4>
-            <button type="button" id="mv-limpiar" class="btn-limpiar" onclick="mvClearFiltros()" style="display:none">Limpiar</button>
-          </div>
-          <div class="mov-campo">
-            <label>Rango</label>
-            <select id="mv-rango" class="select-nice" onchange="mvOnRangoChange()">
-              <option value="todo">Todo el historial</option>
-              <option value="hoy">Hoy</option>
-              <option value="7d">Últimos 7 días</option>
-              <option value="mes">Este mes</option>
-              <option value="custom">Personalizado…</option>
-            </select>
-          </div>
-          <div class="mov-campo">
-            <label>Tipo</label>
-            <select id="mv-tipo" class="select-nice" onchange="renderMovimientos()">
-              <option value="">Todos</option>
-              <option value="ingreso">Ingreso</option>
-              <option value="aplicacion">Aplicación</option>
-              <option value="descarte">Descarte</option>
-              <option value="edicion">Edición</option>
-              <option value="eliminacion">Eliminación</option>
-            </select>
-          </div>
-          <div class="mov-campo">
-            <label>Vacuna</label>
-            <select id="mv-vac" class="select-nice" onchange="renderMovimientos()">
-              <option value="">Todas</option>
-            </select>
-          </div>
-          <div class="mov-campo" id="mv-desde-wrap" style="display:none">
-            <label>Desde</label>
-            <input type="date" id="mv-desde" onchange="mvOnFechaManual()">
-          </div>
-          <div class="mov-campo" id="mv-hasta-wrap" style="display:none">
-            <label>Hasta</label>
-            <input type="date" id="mv-hasta" onchange="mvOnFechaManual()">
-          </div>
-        </aside>
-
-        <div class="panel mov-main">
-          <div class="panel-head">
-            <h4>Historial</h4>
-            <span id="mv-contador" class="mov-contador">Mostrando 0 movimientos</span>
-            <div class="spacer"></div>
-            <button class="btn subtle sm" onclick="excelMovimientosFiltrado()" title="Descarga los movimientos que se ven ahora en pantalla con los filtros aplicados"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 2.5v7.5M4.8 7 8 10.2 11.2 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Excel</button>
-          </div>
-          <div class="tabla-scroll">
-          <table>
-            <thead><tr><th>Fecha mov.</th><th>Fecha aplic.</th><th>Vacuna</th><th>Lote</th><th>Tipo</th><th>Motivo</th><th>Cant.</th><th>Resp.</th><th class="enfermeria-only col-acciones">Acciones</th></tr></thead>
-            <tbody id="movBody"></tbody>
-          </table>
-          </div>
+      <div class="pg-barra mv-barra">
+        <div class="seg" id="mvRangos" role="group" aria-label="Período">
+          <button type="button" data-rango="hoy" onclick="mvSetRango('hoy')">Hoy</button>
+          <button type="button" data-rango="7d" onclick="mvSetRango('7d')">7 días</button>
+          <button type="button" data-rango="mes" onclick="mvSetRango('mes')">Este mes</button>
+          <button type="button" data-rango="todo" class="on" onclick="mvSetRango('todo')">Todo</button>
+          <button type="button" data-rango="custom" onclick="mvSetRango('custom')">Elegir fechas</button>
         </div>
+        <div class="mv-fechas" id="mv-fechas" hidden>
+          <label><span>Desde</span><input type="date" id="mv-desde" onchange="mvOnFechaManual()"></label>
+          <label><span>Hasta</span><input type="date" id="mv-hasta" onchange="mvOnFechaManual()"></label>
+        </div>
+        <div class="spacer"></div>
+        <label class="pg-orden"><span>Vacuna</span>
+          <select id="mv-vac" class="select-nice" onchange="renderMovimientos()"><option value="">Todas</option></select>
+        </label>
+        <button type="button" id="mv-limpiar" class="btn-limpiar" onclick="mvClearFiltros()" style="display:none">Limpiar filtros</button>
+        <select id="mv-rango" hidden aria-hidden="true" tabindex="-1" onchange="mvOnRangoChange()">
+          <option value="todo">Todo</option><option value="hoy">Hoy</option><option value="7d">7 días</option><option value="mes">Este mes</option><option value="custom">Elegir fechas</option>
+        </select>
+        <select id="mv-tipo" hidden aria-hidden="true" tabindex="-1" onchange="renderMovimientos()">
+          <option value="">Todos</option><option value="ingreso">Ingreso</option><option value="aplicacion">Aplicación</option><option value="descarte">Descarte</option><option value="edicion">Edición</option><option value="eliminacion">Eliminación</option>
+        </select>
+        <span id="mv-desde-wrap" hidden></span><span id="mv-hasta-wrap" hidden></span>
       </div>
+
+      <!-- Totales del período: también filtran por tipo -->
+      <div class="mv-totales" id="mvTotales" role="group" aria-label="Filtrar por tipo de movimiento"></div>
+      <div class="mv-grafico" id="mvGrafico" aria-hidden="true"></div>
+
+      <div class="mv-diario" id="movBody"></div>
+      <div class="mv-mas" id="mvMas"></div>
+      <span id="mv-contador" hidden></span>
     </section>
 
     <!-- APLICACIÓN (centrado) -->

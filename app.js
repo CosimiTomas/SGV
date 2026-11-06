@@ -1225,61 +1225,166 @@ async function loadStock(){
 // (menos importantes que las alertas activas).
 const ESTADO_PRIO = { vencida: 0, exp: 1, low: 2, ok: 3, nostock: 4 };
 
-function renderStock(){
-  const ETIQ = {
-    ok: 'Disponible',
-    low: 'Stock bajo',
-    exp: 'Por vencer',
-    vencida: 'Vencida',
-    nostock: 'Sin stock',
-  };
+const ST_ETIQ = { ok: 'En orden', low: 'Stock bajo', exp: 'Por vencer', vencida: 'Vencida', nostock: 'Sin stock' };
+let ST_VISTA = (() => { try { return localStorage.getItem('sgv-stock-vista') || 'vacuna'; } catch (e) { return 'vacuna'; } })();
+
+function stSetVista(v) {
+  ST_VISTA = v;
+  try { localStorage.setItem('sgv-stock-vista', v); } catch (e) {}
+  renderStock();
+}
+
+// Filtra según buscador y estado (lo usan las dos vistas)
+function stFiltrar() {
   let rows = [...STOCK_CACHE];
-
-  // Filtros
-  const q = ($('stock-search')?.value || '').trim().toLowerCase();
+  const q = normTxt(($('stock-search')?.value || '').trim());
   const est = $('stock-estado')?.value || '';
-  if (q) rows = rows.filter(r => r.vacuna.toLowerCase().includes(q));
-  if (est === 'reposicion') {
-    // Filtro combinado para la proveedora: todo lo que hay que reponer
-    const necesitaReposicion = new Set(['nostock', 'low', 'exp']);
-    rows = rows.filter(r => necesitaReposicion.has(r.estado));
-  } else if (est) {
-    rows = rows.filter(r => r.estado === est);
-  }
+  if (q) rows = rows.filter(r => normTxt(r.vacuna).includes(q) || normTxt(r.numero_lote || '').includes(q));
+  if (est === 'reposicion') rows = rows.filter(r => ['nostock', 'low', 'exp'].includes(r.estado));
+  else if (est) rows = rows.filter(r => r.estado === est);
+  return { rows, q, est };
+}
 
-  // Orden — para vacunas sin stock (dias_para_vencer null), tratamos como infinito
+function stRenderEstados() {
+  const cont = $('stEstados');
+  if (!cont) return;
+  const prov = ROL_INFO[USER?.rol]?.esProveedora;
+  const est = $('stock-estado')?.value || '';
+  const vacsCon = e => new Set(STOCK_CACHE.filter(r => e === 'reposicion' ? ['nostock', 'low', 'exp'].includes(r.estado) : r.estado === e).map(r => r.vacuna_id)).size;
+  const total = new Set(STOCK_CACHE.map(r => r.vacuna_id)).size;
+  const ops = [['', 'Todas', total]];
+  if (prov) ops.push(['reposicion', 'Necesita reposición', vacsCon('reposicion')]);
+  else ops.push(['vencida', 'Vencidas', vacsCon('vencida')]);
+  ops.push(['exp', 'Por vencer', vacsCon('exp')], ['low', 'Stock bajo', vacsCon('low')], ['nostock', 'Sin stock', vacsCon('nostock')], ['ok', 'En orden', vacsCon('ok')]);
+  cont.innerHTML = ops.map(([v, l, n]) => `<button type="button" class="st-est est-${v || 'todas'}${est === v ? ' on' : ''}" aria-pressed="${est === v}" onclick="stSetEstado('${v}')">
+      <span class="st-est-n">${n}</span><span class="st-est-l">${l}</span></button>`).join('');
+}
+
+function renderStock(){
+  const { rows, q, est } = stFiltrar();
+  stRenderEstados();
+  document.querySelectorAll('#page-stock .seg [data-vista]').forEach(b => {
+    b.classList.toggle('on', b.dataset.vista === ST_VISTA); b.setAttribute('aria-pressed', b.dataset.vista === ST_VISTA);
+  });
+  const porLote = ST_VISTA === 'lote';
+  $('stTabla').hidden = !porLote;
+  $('stVacunas').hidden = porLote;
+
   const dias = r => (r.dias_para_vencer === null || r.dias_para_vencer === undefined) ? 999999 : Number(r.dias_para_vencer);
-  const disp = r => (r.disponible === null || r.disponible === undefined) ? 0 : Number(r.disponible);
-  const lote = r => r.numero_lote || '';
-
+  const disp = r => Number(r.disponible) || 0;
   const ord = $('stock-orden')?.value || 'urgencia';
-  const cmp = {
-    urgencia:   (a,b) => ESTADO_PRIO[a.estado] - ESTADO_PRIO[b.estado]
-                       || dias(a) - dias(b)
-                       || a.vacuna.localeCompare(b.vacuna),
-    'venc-asc': (a,b) => dias(a) - dias(b),
-    'venc-desc':(a,b) => dias(b) - dias(a),
-    vacuna:     (a,b) => a.vacuna.localeCompare(b.vacuna)
-                       || lote(a).localeCompare(lote(b)),
-    'disp-asc': (a,b) => disp(a) - disp(b),
-    'disp-desc':(a,b) => disp(b) - disp(a),
-  }[ord];
-  if (cmp) rows.sort(cmp);
+  let nVisibles;
 
-  $('stockBody').innerHTML = rows.length ? rows.map(r => renderStockRow(r, ETIQ)).join('')
-    : '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Sin resultados para los filtros aplicados.</td></tr>';
-
-  // Contador y botón limpiar
-  const total = STOCK_CACHE.length;
-  const contador = $('st-contador');
-  if (contador) {
-    contador.innerHTML = rows.length === total
-      ? `Mostrando <b>${total}</b> ${total === 1 ? 'vacuna' : 'vacunas'}`
-      : `Mostrando <b>${rows.length}</b> de <b>${total}</b>`;
+  if (porLote) {
+    const cmp = {
+      urgencia:   (a,b) => ESTADO_PRIO[a.estado] - ESTADO_PRIO[b.estado] || dias(a) - dias(b) || a.vacuna.localeCompare(b.vacuna),
+      'venc-asc': (a,b) => dias(a) - dias(b),
+      'venc-desc':(a,b) => dias(b) - dias(a),
+      vacuna:     (a,b) => a.vacuna.localeCompare(b.vacuna) || (a.numero_lote || '').localeCompare(b.numero_lote || ''),
+      'disp-asc': (a,b) => disp(a) - disp(b),
+      'disp-desc':(a,b) => disp(b) - disp(a),
+    }[ord];
+    rows.sort(cmp);
+    $('stockBody').innerHTML = rows.length ? rows.map(r => renderStockRow(r, ST_ETIQ)).join('')
+      : '<tr><td colspan="7" class="st-vacio">No hay lotes con esos filtros.</td></tr>';
+    nVisibles = `${rows.length} ${rows.length === 1 ? 'lote' : 'lotes'}`;
+  } else {
+    // Agrupar por vacuna; los lotes, en el orden en que se usan (vence primero, sale primero)
+    const grupos = new Map();
+    rows.forEach(r => {
+      if (!grupos.has(r.vacuna_id)) grupos.set(r.vacuna_id, { id: r.vacuna_id, vacuna: r.vacuna, dpf: r.dosis_por_frasco, lotes: [] });
+      if (r.numero_lote) grupos.get(r.vacuna_id).lotes.push(r);
+    });
+    const todos = id => STOCK_CACHE.filter(r => r.vacuna_id === id && r.numero_lote);
+    let gs = [...grupos.values()].map(g => {
+      const lotes = todos(g.id);
+      g.lotes.sort((a, b) => dias(a) - dias(b));
+      g.vigentes = lotes.filter(l => dias(l) >= 0).reduce((t, l) => t + disp(l), 0);
+      g.vencidas = lotes.filter(l => dias(l) < 0).reduce((t, l) => t + disp(l), 0);
+      g.prio = Math.min(...(lotes.length ? lotes.map(l => ESTADO_PRIO[l.estado]) : [ESTADO_PRIO.nostock]));
+      g.proxDias = Math.min(...(lotes.length ? lotes.map(dias) : [999999]));
+      g.todosLotes = lotes;
+      return g;
+    });
+    const cmp = {
+      urgencia:   (a,b) => a.prio - b.prio || a.proxDias - b.proxDias || a.vacuna.localeCompare(b.vacuna),
+      'venc-asc': (a,b) => a.proxDias - b.proxDias,
+      'venc-desc':(a,b) => b.proxDias - a.proxDias,
+      vacuna:     (a,b) => a.vacuna.localeCompare(b.vacuna),
+      'disp-asc': (a,b) => a.vigentes - b.vigentes,
+      'disp-desc':(a,b) => b.vigentes - a.vigentes,
+    }[ord];
+    gs.sort(cmp);
+    $('stVacunas').innerHTML = gs.length ? gs.map(stGrupo).join('')
+      : '<p class="st-vacio">No hay vacunas con esos filtros.</p>';
+    nVisibles = `${gs.length} ${gs.length === 1 ? 'vacuna' : 'vacunas'}`;
   }
+
   const hayFiltros = !!(q || est);
-  const btnLimpiar = $('st-limpiar');
-  if (btnLimpiar) btnLimpiar.style.display = hayFiltros ? '' : 'none';
+  $('st-contador').textContent = hayFiltros ? `Mostrando ${nVisibles}` : '';
+  $('st-limpiar').style.display = hayFiltros ? '' : 'none';
+}
+
+// Una vacuna: encabezado con su total y la barra de lotes, y debajo cada lote
+function stGrupo(g) {
+  const v = (DASH?.vacunas || []).find(x => Number(x.id) === Number(g.id)) || { id: g.id, stock: g.vigentes, dosis_por_frasco: g.dpf };
+  const vivos = g.todosLotes.filter(l => l.estado !== 'vencida' && l.estado !== 'nostock');
+  const peor = vivos.length ? vivos.map(l => l.estado).sort((a, b) => ESTADO_PRIO[a] - ESTADO_PRIO[b])[0] : 'nostock';
+  const est = peor === 'nostock' ? 'nostock' : peor;
+  const estG = g.vencidas > 0 && !ROL_INFO[USER?.rol]?.esProveedora ? 'vencida' : est;
+  const lbl = { ok: 'En orden', low: 'Stock bajo', exp: 'Por vencer', vencida: 'Con vencidas', nostock: 'Sin stock' }[estG];
+  const vigentes = g.todosLotes.filter(l => Number(l.dias_para_vencer) >= 0 && Number(l.disponible) > 0);
+  const barra = vigentes.length > 1 ? `<div class="st-barra" aria-hidden="true">${vigentes.map(l =>
+      `<span class="st-seg is-${l.estado}" style="flex-grow:${Number(l.disponible)}" title="Lote ${iniTxt(l.numero_lote)}: ${l.disponible} dosis, vence ${fmtFecha(l.vencimiento)}"></span>`).join('')}</div>` : '';
+  const primero = vigentes.length > 1 ? vigentes[0].id : null;
+  const sub = !g.todosLotes.length ? 'No hay lotes cargados'
+    : `${g.todosLotes.length} ${g.todosLotes.length === 1 ? 'lote' : 'lotes'}${DASH ? `, ${iniCobertura(v).toLowerCase()}` : ''}`;
+  return `<article class="st-vac is-${estG}">
+      <header class="st-vac-head" onclick="iniAbrirFicha(${g.id})" title="Ver la ficha de ${iniTxt(g.vacuna)}">
+        <span class="st-vac-vial">${iniVialSVG(v, g.todosLotes.length ? est : 'nostock', iniNivel(v), false)}</span>
+        <div class="st-vac-tit">
+          <h3>${escHtml(g.vacuna)}${chipMulti(g.dpf)}</h3>
+          <p>${sub}</p>
+        </div>
+        <div class="st-vac-total">
+          <b>${nfmt(g.vigentes)}</b><span>dosis vigentes</span>
+        </div>
+        <span class="pill ${estG}">${lbl}</span>
+      </header>
+      ${barra}
+      ${g.lotes.length ? `<ul class="st-lotes">${g.lotes.map(l => stLote(l, l.id === primero)).join('')}</ul>` : ''}
+    </article>`;
+}
+
+function stLote(r, primero) {
+  const d = Number(r.dias_para_vencer);
+  const multi = Number(r.dosis_por_frasco) > 1;
+  let frasco = '';
+  if (r.frasco_id) {
+    const dr = Number(r.frasco_dias_restantes), sob = Number(r.frasco_dosis_sobrantes);
+    frasco = `<span class="st-frasco${dr < 0 ? ' venc' : dr <= 15 ? ' porv' : ''}">${ICON_FRASCO}${dr < 0 ? `Frasco abierto vencido, ${sob} dosis` : `Frasco abierto: quedan ${sob} dosis, vence ${fmtDias(dr)}`}</span>`;
+  }
+  return `<li class="st-lote is-${r.estado}">
+      <span class="st-lote-num"><small>Lote</small>${escHtml(r.numero_lote)}${primero ? '<em class="st-primero">Se usa primero</em>' : ''}</span>
+      <span class="st-lote-venc"><b>${fmtFecha(r.vencimiento)}</b><small>${d < 0 ? 'Venció' : 'Vence'} ${fmtDias(d)}</small></span>
+      <span class="st-lote-dosis"><b>${nfmt(r.disponible)}</b> dosis${multi ? `<small>${fmtDisp(r.disponible, r.dosis_por_frasco)}</small>` : ''}</span>
+      <span class="st-lote-extra">${frasco}</span>
+      <span class="st-lote-est"><span class="pill ${r.estado}">${ST_ETIQ[r.estado]}</span></span>
+      <span class="st-lote-acc">${stAcciones(r)}</span>
+    </li>`;
+}
+
+function stAcciones(r) {
+  const payload = encodeURIComponent(JSON.stringify({
+    id: r.id, vacuna: r.vacuna, numero_lote: r.numero_lote, vencimiento: r.vencimiento,
+    cantidad_inicial: r.cantidad_inicial, disponible: r.disponible, dosis_por_frasco: r.dosis_por_frasco
+  }));
+  const esc = t => (t || '').replace(/'/g, '&apos;');
+  return `<span class="enfermeria-only">
+      <button class="btn subtle sm" onclick="openEditLote('${payload}')" title="Corregir número de lote, vencimiento o cantidad">Editar</button>
+      <button class="btn-eliminar-icon" onclick="eliminarLote(${r.id}, '${esc(r.vacuna)}', '${esc(r.numero_lote)}')" title="Eliminar el lote (solo si no tiene aplicaciones ni descartes)" aria-label="Eliminar el lote ${esc(r.numero_lote)}"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3 4h10M6 4V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1M4 4l1 9a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1l1-9M7 7v4M9 7v4"/></svg></button>
+    </span>
+    <button class="btn subtle sm traz-only" onclick="verTrazabilidad(${r.id})" title="Ver la información completa del lote">Detalles</button>`;
 }
 
 // Renderiza una fila de la tabla de stock. Maneja dos casos:
@@ -1347,8 +1452,8 @@ function renderStockRow(r, ETIQ) {
 
 // Setea el estado desde código (por ejemplo la vista por defecto de proveedora)
 function stSetEstado(est){
-  $('stock-estado').value = est;
-  if ($('stock-estado')._niceRefresh) $('stock-estado')._niceRefresh();
+  const sel = $('stock-estado');
+  sel.value = ($('stock-estado').value === est && est) ? '' : est;
   renderStock();
 }
 
@@ -1361,7 +1466,7 @@ function stClearFiltros(){
   $('stock-search').value = '';
   $('stock-estado').value = '';
   $('stock-orden').value = 'urgencia';
-  ['stock-estado','stock-orden'].forEach(id => {
+  ['stock-orden'].forEach(id => {
     const el = $(id);
     if (el && el._niceRefresh) el._niceRefresh();
   });
@@ -1399,63 +1504,166 @@ function toISODate(v){
   return isNaN(d) ? String(v).slice(0, 10) : ymdLocal(d);
 }
 
-function renderMovimientos(){
-  const TIPO = {
-    aplicacion: ['apl','Aplicación'],
-    descarte:   ['des','Descarte'],
-    ingreso:    ['ing','Ingreso lote'],
-    edicion:    ['edi','Edición'],
-    eliminacion:['eli','Eliminación'],
-  };
+const MV_TIPO = {
+  aplicacion:  { cls: 'apl', lbl: 'Aplicación', plural: 'Aplicadas', signo: '−' },
+  ingreso:     { cls: 'ing', lbl: 'Ingreso de lote', plural: 'Ingresadas', signo: '+' },
+  descarte:    { cls: 'des', lbl: 'Descarte', plural: 'Descartadas', signo: '−' },
+  edicion:     { cls: 'edi', lbl: 'Edición de lote', plural: 'Ediciones', signo: '' },
+  eliminacion: { cls: 'eli', lbl: 'Lote eliminado', plural: 'Lotes eliminados', signo: '' },
+};
+let MV_LIM = 150;
+const MV_ICON = {
+  apl: '<path d="M10.5 2.5l3 3M12 4l-6.5 6.5M4 9l3 3M3 13l2-2M6.5 7.5l2 2" />',
+  ing: '<path d="M8 3v10M3 8h10" />',
+  des: '<path d="M3 4.5h10M6 4.5V3h4v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5" />',
+  edi: '<path d="M3 13h3l7-7-3-3-7 7zM9 4l3 3" />',
+  eli: '<path d="M4 4l8 8M12 4l-8 8" />',
+};
+
+function mvFechaDia(iso) {
+  const hoy = ymdLocal(new Date());
+  const ay = new Date(); ay.setDate(ay.getDate() - 1);
+  const [y, m, d] = iso.split('-').map(Number);
+  const f = new Date(y, m - 1, d);
+  const largo = `${INI_DIAS[f.getDay()]} ${d} de ${INI_MESES[m - 1]}${y !== new Date().getFullYear() ? ` de ${y}` : ''}`;
+  if (iso === hoy) return { tit: 'Hoy', sub: largo };
+  if (iso === ymdLocal(ay)) return { tit: 'Ayer', sub: largo };
+  return { tit: largo.charAt(0).toUpperCase() + largo.slice(1), sub: '' };
+}
+
+function mvFiltrar(conTipo = true) {
   let rows = [...MOV_CACHE];
-
-  // Aplicar filtros
-  const fTipo  = $('mv-tipo')?.value || '';
-  const fVac   = $('mv-vac')?.value || '';
-  const fDesde = $('mv-desde')?.value || '';
-  const fHasta = $('mv-hasta')?.value || '';
-
-  if (fTipo)  rows = rows.filter(m => m.tipo === fTipo);
-  if (fVac)   rows = rows.filter(m => m.vacuna === fVac);
+  const fTipo = $('mv-tipo')?.value || '', fVac = $('mv-vac')?.value || '';
+  const fDesde = $('mv-desde')?.value || '', fHasta = $('mv-hasta')?.value || '';
+  if (conTipo && fTipo) rows = rows.filter(m => m.tipo === fTipo);
+  if (fVac) rows = rows.filter(m => m.vacuna === fVac);
   if (fDesde) rows = rows.filter(m => toISODate(m.fecha_mov) >= fDesde);
   if (fHasta) rows = rows.filter(m => toISODate(m.fecha_mov) <= fHasta);
+  return rows;
+}
 
-  // Renderizar cuerpo
-  $('movBody').innerHTML = rows.length ? rows.map(m=>{
-    const [cls,lbl] = TIPO[m.tipo];
-    // Solo mostramos "Eliminar" en aplicaciones y descartes.
-    // Los ingresos se eliminan borrando el lote desde Stock.
-    // Edición y eliminación son registros de auditoría, no se pueden borrar.
-    const puedeEliminar = m.tipo === 'aplicacion' || m.tipo === 'descarte';
-    const btnEliminar = puedeEliminar
-      ? `<button class="btn-eliminar-icon" onclick="eliminarMovimiento(${m.id}, '${lbl}', '${(m.vacuna || '').replace(/'/g, '&apos;')}', ${m.cantidad})" title="Eliminar movimiento y devolver las dosis al stock" aria-label="Eliminar movimiento">
-           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3 4h10M6 4V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1M4 4l1 9a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1l1-9M7 7v4M9 7v4"/></svg>
-         </button>`
-      : '<span class="muted-dash">—</span>';
-    return `<tr>
-       <td data-label="Fecha mov.">${fmtFecha(toISODate(m.fecha_mov))}</td>
-       <td data-label="Fecha aplic.">${fmtFecha(m.fecha_aplicacion)}</td>
-       <td data-label="Vacuna"><b>${m.vacuna}</b></td>
-       <td data-label="Lote">${m.numero_lote || '<span class="muted-dash">—</span>'}</td>
-       <td data-label="Tipo"><span class="pill ${cls}">${lbl}</span></td>
-       <td data-label="Motivo">${m.motivo || '<span class="muted-dash">—</span>'}</td>
-       <td data-label="Cant.">${m.cantidad}</td>
-       <td data-label="Resp.">${m.responsable}</td>
-       <td data-label="Acciones" class="enfermeria-only col-acciones">${btnEliminar}</td>
-     </tr>`; }).join('')
-    : '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">Sin movimientos que coincidan con los filtros.</td></tr>';
+function mvSetTipo(t) {
+  const sel = $('mv-tipo');
+  sel.value = sel.value === t ? '' : t;
+  MV_LIM = 150;
+  renderMovimientos();
+}
 
-  // Contador y botón de limpiar
-  const total = MOV_CACHE.length;
-  const contador = $('mv-contador');
-  if (contador) {
-    contador.innerHTML = rows.length === total
-      ? `Mostrando <b>${total}</b> ${total === 1 ? 'movimiento' : 'movimientos'}`
-      : `Mostrando <b>${rows.length}</b> de <b>${total}</b> movimientos`;
-  }
-  const hayFiltros = !!(fTipo || fVac || fDesde || fHasta);
-  const btnLimpiar = $('mv-limpiar');
-  if (btnLimpiar) btnLimpiar.style.display = hayFiltros ? '' : 'none';
+function mvSetRango(r) {
+  $('mv-rango').value = r;
+  mvOnRangoChange();
+}
+
+function renderMovimientos(){
+  const fTipo = $('mv-tipo')?.value || '';
+  const base = mvFiltrar(false);
+  const rows = mvFiltrar(true).sort((a, b) => new Date(b.fecha_mov) - new Date(a.fecha_mov) || b.id - a.id);
+
+  // Totales del período (sin el filtro de tipo, para poder cambiarlo)
+  const tot = {};
+  base.forEach(m => { tot[m.tipo] = tot[m.tipo] || { n: 0, dosis: 0 }; tot[m.tipo].n++; tot[m.tipo].dosis += Number(m.cantidad) || 0; });
+  const tipos = ['aplicacion', 'ingreso', 'descarte', 'edicion', 'eliminacion'].filter(t => tot[t] || ['aplicacion', 'ingreso', 'descarte'].includes(t));
+  $('mvTotales').innerHTML = tipos.map(t => {
+    const T = MV_TIPO[t], x = tot[t] || { n: 0, dosis: 0 };
+    const cifra = ['edicion', 'eliminacion'].includes(t) ? `<b>${nfmt(x.n)}</b>` : `<b>${nfmt(x.dosis)}</b><span>dosis</span>`;
+    const det = ['edicion', 'eliminacion'].includes(t) ? '' : `<small>${x.n} ${x.n === 1 ? 'registro' : 'registros'}</small>`;
+    return `<button type="button" class="mv-tot tipo-${T.cls}${fTipo === t ? ' on' : ''}${fTipo && fTipo !== t ? ' off' : ''}" aria-pressed="${fTipo === t}" onclick="mvSetTipo('${t}')">
+        <span class="mv-ic" aria-hidden="true"><svg viewBox="0 0 16 16" width="15" height="15">${MV_ICON[T.cls]}</svg></span>
+        <span class="mv-tot-txt"><span class="mv-tot-lbl">${T.plural}</span><span class="mv-tot-cifra">${cifra}</span>${det}</span>
+      </button>`;
+  }).join('');
+
+  mvRenderGrafico(base);
+
+  // Diario agrupado por día
+  const vis = rows.slice(0, MV_LIM);
+  const dias = [];
+  vis.forEach(m => {
+    const d = toISODate(m.fecha_mov);
+    if (!dias.length || dias[dias.length - 1].d !== d) dias.push({ d, items: [] });
+    dias[dias.length - 1].items.push(m);
+  });
+  const resumenDia = d => {
+    const delDia = rows.filter(m => toISODate(m.fecha_mov) === d);
+    const sum = t => delDia.filter(m => m.tipo === t).reduce((a, m) => a + (Number(m.cantidad) || 0), 0);
+    const p = [];
+    const ap = sum('aplicacion'), ing = sum('ingreso'), des = sum('descarte');
+    if (ap) p.push(`${nfmt(ap)} ${ap === 1 ? 'dosis aplicada' : 'dosis aplicadas'}`);
+    if (ing) p.push(`${nfmt(ing)} ${ing === 1 ? 'ingresada' : 'ingresadas'}`);
+    if (des) p.push(`${nfmt(des)} ${des === 1 ? 'descartada' : 'descartadas'}`);
+    return p.join(', ');
+  };
+  const write = ROL_INFO[USER?.rol]?.write;
+  const fila = m => {
+    const T = MV_TIPO[m.tipo] || MV_TIPO.edicion;
+    const f = new Date(m.fecha_mov);
+    const hora = isNaN(f) ? '' : `${String(f.getHours()).padStart(2, '0')}:${String(f.getMinutes()).padStart(2, '0')}`;
+    const apDistinta = m.tipo === 'aplicacion' && m.fecha_aplicacion && String(m.fecha_aplicacion).slice(0, 10) !== toISODate(m.fecha_mov);
+    const det = [m.numero_lote ? `Lote ${escHtml(m.numero_lote)}` : '', m.motivo ? escHtml(m.motivo) : '', apDistinta ? `aplicada el ${fmtFecha(m.fecha_aplicacion)}` : ''].filter(Boolean).join(', ');
+    const puedeEliminar = write && (m.tipo === 'aplicacion' || m.tipo === 'descarte');
+    const esc = t => (t || '').replace(/'/g, '&apos;');
+    return `<li class="mv-fila tipo-${T.cls}">
+        <span class="mv-hora">${hora}</span>
+        <span class="mv-ic" aria-hidden="true"><svg viewBox="0 0 16 16" width="15" height="15">${MV_ICON[T.cls]}</svg></span>
+        <span class="mv-que"><b>${escHtml(m.vacuna)}</b><small><span class="mv-tipo-lbl">${T.lbl}</span>${det ? `. ${det}` : ''}</small></span>
+        <span class="mv-cant">${T.signo ? `${T.signo}${nfmt(m.cantidad)}<small>dosis</small>` : ''}</span>
+        <span class="mv-quien">${ROL_INFO[m.responsable]?.name || escHtml(m.responsable || '')}</span>
+        <span class="mv-acc">${puedeEliminar ? `<button class="btn-eliminar-icon" onclick="eliminarMovimiento(${m.id}, '${T.lbl}', '${esc(m.vacuna)}', ${m.cantidad})" title="Eliminar el movimiento y devolver las dosis al stock" aria-label="Eliminar el movimiento"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3 4h10M6 4V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1M4 4l1 9a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1l1-9M7 7v4M9 7v4"/></svg></button>` : ''}</span>
+      </li>`;
+  };
+  $('movBody').innerHTML = dias.length ? dias.map(g => {
+    const t = mvFechaDia(g.d);
+    return `<section class="mv-dia">
+        <header class="mv-dia-head"><h3>${t.tit}${t.sub ? `<span>${t.sub}</span>` : ''}</h3><p>${resumenDia(g.d)}</p></header>
+        <ul class="mv-lista">${g.items.map(fila).join('')}</ul>
+      </section>`;
+  }).join('') : `<div class="mv-vacio"><b>No hay movimientos en este período.</b><span>Probá con otro rango de fechas o sacá los filtros.</span></div>`;
+
+  $('mvMas').innerHTML = rows.length > MV_LIM
+    ? `<button type="button" class="btn ghost" onclick="MV_LIM+=150;renderMovimientos()">Ver más movimientos (quedan ${nfmt(rows.length - MV_LIM)})</button>` : '';
+
+  const rango = $('mv-rango')?.value || 'todo';
+  document.querySelectorAll('#mvRangos [data-rango]').forEach(b => {
+    b.classList.toggle('on', b.dataset.rango === rango); b.setAttribute('aria-pressed', b.dataset.rango === rango);
+  });
+  const hayFiltros = !!(fTipo || $('mv-vac')?.value || rango !== 'todo');
+  $('mv-limpiar').style.display = hayFiltros ? '' : 'none';
+  $('mv-contador').textContent = `${rows.length}`;
+}
+
+// Barras de dosis aplicadas por día en el período (hasta 31 días)
+function mvRenderGrafico(rows) {
+  const cont = $('mvGrafico');
+  if (!cont) return;
+  const desde = $('mv-desde')?.value, hasta = $('mv-hasta')?.value || ymdLocal(new Date());
+  const fin = new Date(hasta + 'T12:00:00');
+  let ini = desde ? new Date(desde + 'T12:00:00') : new Date(fin.getTime() - 29 * 864e5);
+  if ((fin - ini) / 864e5 > 30) ini = new Date(fin.getTime() - 30 * 864e5);
+  const dias = [];
+  for (let d = new Date(ini); d <= fin; d.setDate(d.getDate() + 1)) dias.push(ymdLocal(d));
+  if (dias.length < 2) { cont.innerHTML = ''; cont.hidden = true; return; }
+  const por = {};
+  rows.forEach(m => {
+    const d = toISODate(m.fecha_mov);
+    por[d] = por[d] || { ap: 0, ing: 0, des: 0 };
+    if (m.tipo === 'aplicacion') por[d].ap += Number(m.cantidad) || 0;
+    if (m.tipo === 'ingreso') por[d].ing += Number(m.cantidad) || 0;
+    if (m.tipo === 'descarte') por[d].des += Number(m.cantidad) || 0;
+  });
+  const max = Math.max(1, ...dias.map(d => por[d]?.ap || 0));
+  const totalAp = dias.reduce((t, d) => t + (por[d]?.ap || 0), 0);
+  cont.hidden = false;
+  const corta = d => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+  cont.innerHTML = `<div class="mv-graf-head"><b>Dosis aplicadas por día</b><span>${corta(dias[0])} al ${corta(dias[dias.length - 1])}: ${nfmt(totalAp)} en total</span></div>
+    <div class="mv-barras">${dias.map(d => {
+      const x = por[d] || { ap: 0, ing: 0, des: 0 };
+      const extra = [x.ing ? `${x.ing} ingresadas` : '', x.des ? `${x.des} descartadas` : ''].filter(Boolean).join(', ');
+      return `<span class="mv-col${d === ymdLocal(new Date()) ? ' hoy' : ''}" title="${corta(d)}: ${x.ap} aplicadas${extra ? ', ' + extra : ''}">
+          <span class="mv-bar" style="height:${Math.round(x.ap / max * 100)}%"></span>
+          ${x.ing ? '<i class="mv-marca ing"></i>' : ''}${x.des ? '<i class="mv-marca des"></i>' : ''}
+        </span>`;
+    }).join('')}</div>
+    <div class="mv-graf-pie"><span>${corta(dias[0])}</span><span class="mv-ley"><i class="mv-marca ing"></i>Ingreso de lote<i class="mv-marca des"></i>Descarte</span><span>${corta(dias[dias.length - 1])}</span></div>`;
 }
 
 // Rangos rápidos: setean fechas y actualizan
@@ -1465,30 +1673,16 @@ function mvOnRangoChange(){
   const iso = d => ymdLocal(d);
   let desde = '', hasta = '';
   const custom = rango === 'custom';
-  if (rango === 'hoy') {
-    desde = hasta = iso(hoy);
-  } else if (rango === '7d') {
-    const ini = new Date(hoy); ini.setDate(ini.getDate() - 6);
-    desde = iso(ini); hasta = iso(hoy);
-  } else if (rango === 'mes') {
-    desde = iso(new Date(hoy.getFullYear(), hoy.getMonth(), 1));
-    hasta = iso(hoy);
-  }
-  // En 'todo' y 'custom' se dejan los campos vacíos (o los que el usuario haya cargado)
-  if (!custom) {
-    $('mv-desde').value = desde;
-    $('mv-hasta').value = hasta;
-  }
-  // Mostrar/ocultar los campos de fecha manual
-  $('mv-desde-wrap').style.display = custom ? '' : 'none';
-  $('mv-hasta-wrap').style.display = custom ? '' : 'none';
+  if (rango === 'hoy') desde = hasta = iso(hoy);
+  else if (rango === '7d') { const ini = new Date(hoy); ini.setDate(ini.getDate() - 6); desde = iso(ini); hasta = iso(hoy); }
+  else if (rango === 'mes') { desde = iso(new Date(hoy.getFullYear(), hoy.getMonth(), 1)); hasta = iso(hoy); }
+  if (!custom) { $('mv-desde').value = desde; $('mv-hasta').value = hasta; }
+  $('mv-fechas').hidden = !custom;
+  MV_LIM = 150;
   renderMovimientos();
 }
 
-// Si el usuario toca las fechas a mano estando en modo custom, solo re-render
-function mvOnFechaManual(){
-  renderMovimientos();
-}
+function mvOnFechaManual(){ MV_LIM = 150; renderMovimientos(); }
 
 function mvClearFiltros(){
   $('mv-tipo').value = '';
@@ -1496,13 +1690,9 @@ function mvClearFiltros(){
   $('mv-desde').value = '';
   $('mv-hasta').value = '';
   $('mv-rango').value = 'todo';
-  $('mv-desde-wrap').style.display = 'none';
-  $('mv-hasta-wrap').style.display = 'none';
-  // Sincronizar componentes custom si están activos
-  ['mv-tipo','mv-vac','mv-rango'].forEach(id => {
-    const el = $(id);
-    if (el && el._niceRefresh) el._niceRefresh();
-  });
+  $('mv-fechas').hidden = true;
+  if ($('mv-vac')._niceRefresh) $('mv-vac')._niceRefresh();
+  MV_LIM = 150;
   renderMovimientos();
 }
 
