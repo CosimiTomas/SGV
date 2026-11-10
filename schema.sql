@@ -1,86 +1,113 @@
--- Stella Maris Joyas — estructura de la base (solo referencia).
--- No hace falta importarlo: el servidor crea las tablas solo al arrancar.
+-- ============================================================
+-- SGV — Sistema de Gestión de Vacunas
+-- CAPS San José Obrero · Hurlingham
+-- Esquema de base de datos MySQL
+-- ============================================================
 
+CREATE DATABASE IF NOT EXISTS sgv_caps
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS `contadores` (
-  `nombre` varchar(20) NOT NULL,
-  `ultimo` int(10) unsigned NOT NULL DEFAULT 0,
-  PRIMARY KEY (`nombre`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+USE sgv_caps;
 
-CREATE TABLE IF NOT EXISTS `fotos` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `clave` char(32) NOT NULL,
-  `tipo` varchar(20) NOT NULL,
-  `datos` mediumblob NOT NULL,
-  `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `clave` (`clave`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- Limpieza (orden inverso por dependencias)
+DROP TABLE IF EXISTS movimientos;
+DROP TABLE IF EXISTS lotes;
+DROP TABLE IF EXISTS vacunas;
+DROP TABLE IF EXISTS usuarios;
 
-CREATE TABLE IF NOT EXISTS `pendientes` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `numero` int(10) unsigned NOT NULL,
-  `foto_id` int(11) NOT NULL,
-  `material` enum('oro','plata','acero','plata-oro') DEFAULT NULL,
-  `categoria` enum('anillo','cadena','pulsera','aros','colgante','reloj') DEFAULT NULL,
-  `precio` int(10) unsigned NOT NULL DEFAULT 0,
-  `nombre` varchar(120) NOT NULL DEFAULT '',
-  `detalle` varchar(200) NOT NULL DEFAULT '',
-  `borrada_en` datetime DEFAULT NULL,
-  `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`),
-  KEY `idx_borrada` (`borrada_en`),
-  KEY `fk_pend_foto` (`foto_id`),
-  CONSTRAINT `fk_pend_foto` FOREIGN KEY (`foto_id`) REFERENCES `fotos` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ------------------------------------------------------------
+-- USUARIOS (RF05 — 4 perfiles con permisos diferenciados)
+-- ------------------------------------------------------------
+CREATE TABLE usuarios (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  correo        VARCHAR(120) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  rol           ENUM('enfermeria','coordinadora','jefa','proveedora') NOT NULL,
+  activo        TINYINT(1) NOT NULL DEFAULT 1,
+  creado_en     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
-CREATE TABLE IF NOT EXISTS `piezas` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `codigo` varchar(12) NOT NULL,
-  `nombre` varchar(120) NOT NULL,
-  `material` enum('oro','plata','acero','plata-oro') NOT NULL,
-  `categoria` enum('anillo','cadena','pulsera','aros','colgante','reloj') NOT NULL,
-  `precio` int(10) unsigned NOT NULL,
-  `detalle` varchar(200) NOT NULL DEFAULT '',
-  `estado` enum('disponible','reservado','vendido') NOT NULL DEFAULT 'disponible',
-  `ingreso` date NOT NULL,
-  `foto_id` int(11) DEFAULT NULL,
-  `reserva_cliente` varchar(80) DEFAULT NULL,
-  `reserva_sena` int(10) unsigned DEFAULT NULL,
-  `reserva_fecha` date DEFAULT NULL,
-  `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
-  `actualizado_en` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `codigo` (`codigo`),
-  KEY `idx_estado` (`estado`),
-  KEY `fk_pieza_foto` (`foto_id`),
-  CONSTRAINT `fk_pieza_foto` FOREIGN KEY (`foto_id`) REFERENCES `fotos` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ------------------------------------------------------------
+-- VACUNAS (catálogo — lista real provista por el CAPS)
+-- ------------------------------------------------------------
+CREATE TABLE vacunas (
+  id               INT AUTO_INCREMENT PRIMARY KEY,
+  nombre           VARCHAR(120) NOT NULL UNIQUE,
+  dosis_por_frasco INT NOT NULL DEFAULT 1,
+  activa           TINYINT(1) NOT NULL DEFAULT 1
+);
 
-CREATE TABLE IF NOT EXISTS `usuarios` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `usuario` varchar(60) NOT NULL,
-  `password_hash` varchar(100) NOT NULL,
-  `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `usuario` (`usuario`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- ------------------------------------------------------------
+-- LOTES (RF04 — ingreso de lote nuevo)
+-- ------------------------------------------------------------
+CREATE TABLE lotes (
+  id                INT AUTO_INCREMENT PRIMARY KEY,
+  vacuna_id         INT NOT NULL,
+  numero_lote       VARCHAR(60) NOT NULL,
+  vencimiento       DATE NOT NULL,
+  cantidad_inicial  INT NOT NULL,
+  disponible        INT NOT NULL,
+  creado_en         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_lote_vacuna FOREIGN KEY (vacuna_id) REFERENCES vacunas(id),
+  CONSTRAINT chk_cantidad CHECK (cantidad_inicial > 0),
+  CONSTRAINT chk_disponible CHECK (disponible >= 0)
+);
 
-CREATE TABLE IF NOT EXISTS `ventas` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `pieza_id` int(11) NOT NULL,
-  `codigo` varchar(12) NOT NULL,
-  `nombre` varchar(120) NOT NULL,
-  `material` enum('oro','plata','acero','plata-oro') NOT NULL,
-  `categoria` enum('anillo','cadena','pulsera','aros','colgante','reloj') NOT NULL,
-  `precio` int(10) unsigned NOT NULL,
-  `sena` int(10) unsigned NOT NULL DEFAULT 0,
-  `medio_pago` varchar(20) NOT NULL,
-  `fecha` datetime NOT NULL,
-  PRIMARY KEY (`id`),
-  KEY `idx_fecha` (`fecha`),
-  KEY `fk_venta_pieza` (`pieza_id`),
-  CONSTRAINT `fk_venta_pieza` FOREIGN KEY (`pieza_id`) REFERENCES `piezas` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-INSERT IGNORE INTO contadores (nombre, ultimo) VALUES ('oro',0),('plata',0),('acero',0),('plata-oro',0),('foto',0);
+-- ------------------------------------------------------------
+-- MOVIMIENTOS (RF01 aplicación · RF03 descarte · RF04 ingreso)
+-- ------------------------------------------------------------
+CREATE TABLE movimientos (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  tipo            ENUM('aplicacion','descarte','ingreso','edicion','eliminacion') NOT NULL,
+  vacuna_id       INT NOT NULL,
+  lote_id         INT NULL,                   -- nullable: si se elimina un lote, sus movimientos quedan huérfanos pero con numero_lote_snap
+  numero_lote_snap VARCHAR(60) NULL,          -- copia del número de lote (para preservar el dato si el lote se elimina)
+  cantidad        INT NOT NULL,
+  motivo          VARCHAR(200) NULL,          -- descartes / detalles de edición / motivo de eliminación
+  fecha_aplicacion DATE NULL,                 -- solo aplicaciones
+  fecha_mov       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  usuario_id      INT NOT NULL,
+  CONSTRAINT fk_mov_vacuna  FOREIGN KEY (vacuna_id)  REFERENCES vacunas(id),
+  CONSTRAINT fk_mov_lote    FOREIGN KEY (lote_id)    REFERENCES lotes(id) ON DELETE SET NULL,
+  CONSTRAINT fk_mov_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
+  CONSTRAINT chk_mov_cantidad CHECK (cantidad > 0)
+);
+
+-- ------------------------------------------------------------
+-- ÍNDICES
+-- ------------------------------------------------------------
+CREATE INDEX idx_lotes_vacuna ON lotes(vacuna_id);
+CREATE INDEX idx_lotes_venc   ON lotes(vencimiento);
+CREATE INDEX idx_mov_tipo     ON movimientos(tipo);
+CREATE INDEX idx_mov_fecha    ON movimientos(fecha_mov);
+
+-- ============================================================
+-- DATOS SEMILLA
+-- ============================================================
+
+-- Usuarios: las contraseñas reales se insertan desde seed.js (con hash bcrypt).
+-- Acá quedan documentadas las cuentas; seed.js las crea con su hash.
+
+-- Catálogo de vacunas (lista real del CAPS).
+-- Las que vienen en frascos multidosis llevan dosis_por_frasco > 1.
+INSERT INTO vacunas (nombre, dosis_por_frasco) VALUES
+  ('Antigripal adyuvantada',                    1),
+  ('Antigripal trivalente adultos',             1),
+  ('Antigripal trivalente pediátrica',          1),
+  ('Antimeningocócica tetravalente conjugada',  1),
+  ('Doble bacteriana (dT)',                    10),
+  ('Doble viral (SR)',                          1),
+  ('Hepatitis A',                               1),
+  ('Hepatitis B',                              10),
+  ('Neumococo conjugada VCN 20',                1),
+  ('Quíntuple',                                 1),
+  ('Rotavirus monovalente',                     1),
+  ('Salk',                                      5),
+  ('Tetravalente contra el Dengue',             1),
+  ('Triple bacteriana acelular (dTpa)',         1),
+  ('Triple bacteriana celular (DPT)',          10),
+  ('Triple viral (SRP)',                        1),
+  ('VPH nonavalente',                           1),
+  ('Varicela',                                  1),
+  ('Virus Sincicial Respiratorio',              1);

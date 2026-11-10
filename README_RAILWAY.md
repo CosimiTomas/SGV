@@ -1,65 +1,123 @@
-# Subir Stella Maris Joyas a Railway
+# SGV — Deploy a Railway
 
-Son unos 10 minutos. No hace falta tocar código.
+Guía paso a paso para subir el Sistema de Gestión de Vacunas a Railway.
 
-## 1. Subir el proyecto a GitHub
+---
 
-1. En GitHub: **New repository** → nombre `stella-maris-stock` → **Private** → *Create repository*.
-2. En el repo vacío: **uploading an existing file** (o *Add file → Upload files*).
-3. Arrastrá **todo el contenido** de la carpeta descomprimida (no la carpeta en sí): `server.js`, `db.js`, `package.json`, la carpeta `public`, etc.
-   - Si ves una carpeta `node_modules`, **no la subas**.
-   - Asegurate de que `.gitignore` también se suba (en Mac/Windows a veces los archivos que empiezan con punto quedan ocultos).
-4. **Commit changes**.
+## Cambios respecto a la versión local
 
-## 2. Crear el proyecto en Railway
-
-1. Entrá a railway.com → **New Project** → **Deploy from GitHub repo** → elegí `stella-maris-stock`.
-2. El primer deploy puede fallar porque todavía no hay base de datos. Es normal, seguí.
-
-## 3. Agregar la base MySQL
-
-En el proyecto: **+ Create** (o *New*) → **Database** → **MySQL**. Esperá a que quede en verde.
-
-## 4. Cargar las variables
-
-Entrá al servicio **stella-maris-stock** (no al de MySQL) → pestaña **Variables** → **Raw Editor** y pegá:
-
-```
-MYSQL_URL=${{ MySQL.MYSQL_URL }}
-JWT_SECRET=escribí-acá-un-texto-largo-y-al-azar
-LOGIN_USUARIO=stellamaris
-LOGIN_PASSWORD=la-clave-que-van-a-usar-en-el-local
-DATOS_EJEMPLO=true
-```
-
-- `MYSQL_URL` conecta con la base. Si tu servicio MySQL tiene otro nombre, cambiá `MySQL` por ese nombre.
-- `JWT_SECRET`: cualquier texto largo (por ejemplo 40 letras y números al azar). Si falta, las sesiones se cierran cada vez que Railway reinicia.
-- `LOGIN_PASSWORD`: es la clave de ingreso. **Sin esta variable no se crea la cuenta** y nadie puede entrar (a propósito, para que no quede una clave de prueba).
-- `DATOS_EJEMPLO=true` carga 27 piezas y ventas de prueba si la base está vacía, para mostrarlo. Para el uso real, **no la pongas**. Si ya la usaste para una demo y querés empezar limpio: borrá la variable, eliminá el servicio MySQL, creá uno nuevo (paso 3) y volvé a desplegar.
-
-Guardá → Railway vuelve a desplegar solo.
-
-## 5. Generar el link
-
-Servicio → **Settings** → **Networking** → **Generate Domain**. Ese link es el sistema; se puede guardar en el inicio del celular.
-
-## 6. (Opcional) Chequeo de salud
-
-Settings → **Healthcheck Path**: `/api/health`.
-
-## Cambiar la clave
-
-Cambiá `LOGIN_PASSWORD` en Variables. Al reiniciar, la clave nueva queda activa y **todas las sesiones abiertas se cierran**.
-
-## Si algo falla
-
-Mirá **Deployments → View logs**.
-
-| Mensaje en los logs | Qué hacer |
+| Archivo | Qué cambió |
 |---|---|
-| `Falta la variable LOGIN_PASSWORD` (y no deja entrar) | Cargá la variable del paso 4. |
-| `ECONNREFUSED` o `ENOTFOUND` | `MYSQL_URL` mal escrita, o el nombre del servicio MySQL no coincide. |
-| `Falta JWT_SECRET` (aviso) | Cargá `JWT_SECRET`; funciona igual, pero se cierran las sesiones al reiniciar. |
-| La página dice *Application failed to respond* | Esperá a que el deploy termine; si sigue, revisá los logs. |
+| `server.js` | Lee variables `MYSQL*` (Railway) o `DB_*` (local). Hace bootstrap del esquema al arrancar (crea tablas + catálogo de vacunas si no existen). Auto-seed opcional de usuarios con `SEED_ON_BOOT=true`. `listen` ahora bindea a `0.0.0.0`. |
+| `seed.js` | También acepta variables `MYSQL*`. |
+| `package.json` | Agrega `engines.node >= 18`. |
+| `railway.json` | Nuevo. Define builder, start command, healthcheck en `/api/health` y restart policy. |
+| `.env.example` | Documenta ambas convenciones. |
+| `.gitignore` | Nuevo. |
 
-No hace falta `railway.json` ni Procfile: Railway detecta Node y usa `npm start`.
+No hace falta correr `schema.sql` a mano: el server lo crea solo al arrancar.
+
+---
+
+## Pasos
+
+### 1. Subir el código a GitHub
+
+```bash
+cd sgv
+git init
+git add .
+git commit -m "SGV: versión Railway"
+git branch -M main
+git remote add origin https://github.com/<tu-usuario>/sgv-caps.git
+git push -u origin main
+```
+
+### 2. Crear el proyecto en Railway
+
+1. Entrar a [railway.com/new](https://railway.com/new) e iniciar sesión con GitHub.
+2. Elegir **Deploy from GitHub repo** y seleccionar `sgv-caps`.
+3. Railway detecta Node.js automáticamente y empieza a buildear. Va a fallar el primer arranque porque todavía no hay base de datos — es normal.
+
+### 3. Agregar MySQL al proyecto
+
+1. En el dashboard del proyecto, click en **+ Create** → **Database** → **Add MySQL**.
+2. Railway provisiona el servicio y genera las variables `MYSQLHOST`, `MYSQLPORT`, `MYSQLUSER`, `MYSQLPASSWORD`, `MYSQLDATABASE` automáticamente.
+
+### 4. Vincular las variables al servicio web
+
+En el servicio del SGV (no en el de MySQL), ir a **Variables** y agregar referencias al servicio MySQL:
+
+```
+MYSQLHOST=${{ MySQL.MYSQLHOST }}
+MYSQLPORT=${{ MySQL.MYSQLPORT }}
+MYSQLUSER=${{ MySQL.MYSQLUSER }}
+MYSQLPASSWORD=${{ MySQL.MYSQLPASSWORD }}
+MYSQLDATABASE=${{ MySQL.MYSQLDATABASE }}
+```
+
+> Si el servicio MySQL en Railway aparece con otro nombre, reemplazar `MySQL` por el nombre real.
+
+Agregar además:
+
+```
+JWT_SECRET=<un string largo y aleatorio, p. ej. salida de `openssl rand -hex 32`>
+SEED_ON_BOOT=true
+```
+
+`SEED_ON_BOOT=true` hace que en el primer arranque se creen los 4 usuarios (enfermeria, coordinacion, jefa, proveedora). **Después del primer deploy exitoso, cambiar a `false`** para que no intente reseedar.
+
+### 5. Redeploy
+
+Railway redeploya solo al guardar variables. Mirar los logs del servicio: tendría que aparecer
+
+```
+› Verificando esquema de base de datos…
+✓ Esquema listo.
+  SGV en ejecución  ->  puerto XXXX
+```
+
+### 6. Generar el dominio público
+
+En el servicio del SGV → **Settings** → **Networking** → **Generate Domain**.
+
+Eso devuelve una URL tipo `sgv-caps-production.up.railway.app`. Abrirla y entrar con cualquiera de los 4 usuarios:
+
+| Usuario | Contraseña | Rol |
+|---|---|---|
+| `enfermeria@caps.gob.ar` | `enfermeria123` | enfermeria |
+| `coordinacion@caps.gob.ar` | `coordinacion123` | coordinadora |
+| `jefa@caps.gob.ar` | `jefa123` | jefa |
+| `proveedora@caps.gob.ar` | `proveedora123` | proveedora |
+
+### 7. (Opcional) Cargar lotes de ejemplo
+
+Si querés también los lotes de prueba del `seed.js`, instalar la CLI de Railway y correr:
+
+```bash
+npm i -g @railway/cli
+railway login
+railway link        # elegir el proyecto
+railway run npm run seed
+```
+
+> **Atención:** `seed.js` borra todo lo previo en `usuarios`, `lotes` y `movimientos`. Sólo correr en bases vacías o de prueba.
+
+---
+
+## Cómo seguir trabajando local con XAMPP
+
+Nada cambia. El `.env` local sigue usando `DB_HOST`, `DB_USER`, etc. El server detecta cuál convención está disponible y usa la que corresponda.
+
+---
+
+## Troubleshooting
+
+**El deploy falla con `ECONNREFUSED` en el log:**
+las variables `MYSQL*` no están vinculadas. Revisar el paso 4.
+
+**Login dice "Correo o contraseña incorrectos" después del primer deploy:**
+`SEED_ON_BOOT` no estaba en `true` cuando arrancó por primera vez. Ponerlo en `true`, redeploy, esperar el log "Creando usuarios iniciales", y después volver a `false`.
+
+**Quiero resetear todo:**
+en el servicio MySQL → **Data** → eliminar los registros o dropear las tablas. Al próximo arranque del SGV se vuelven a crear vacías.

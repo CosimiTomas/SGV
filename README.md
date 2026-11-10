@@ -1,73 +1,246 @@
-# Stella Maris Joyas — Stock y ventas
+# SGV — Sistema de Gestión de Vacunas
+### CAPS San José Obrero · Hurlingham · Equipo N° 01 (ILM)
 
-Sistema de stock y ventas del local de Av. Libertador San Martín 2038, Caseros.
-Cada pieza es única: se carga con foto, se vende (o se reserva con seña) y queda registrada en el ticket del día.
+Aplicación full stack para el control interno del stock de vacunas del Centro de Atención Primaria de la Salud (CAPS) San José Obrero, Hurlingham. Cubre el flujo completo de trazabilidad de un lote desde su ingreso hasta su aplicación o descarte, con alertas operativas y control de acceso por rol.
 
-**Para subirlo a internet:** ver [README_RAILWAY.md](README_RAILWAY.md).
+---
 
-## Qué hace
+## El problema que resuelve
 
-- **Stock:** grilla con foto, filtros por categoría y material, búsqueda por código.
-- **Vender:** medio de pago (efectivo, débito, crédito, transferencia, Mercado Pago) y **Deshacer** el mismo día.
-- **Reservas:** nombre de la clienta y seña; al venderla se descuenta la seña.
-- **Por completar:** se suben muchas fotos juntas y después se completan de a una (material, tipo, precio). Al guardar, la pieza recibe su código (`ORO-020`, `PLA-031`…).
-- **Ventas:** ticket del día y resumen de la semana.
-- **Ingreso:** una cuenta compartida. La clave se valida en el servidor (bcrypt) y la sesión usa JWT.
+En el CAPS, cada vacuna aplicada se anota hoy en tres registros paralelos: la Hoja 10 interna, la Historia Clínica del paciente, y los sistemas nacionales NOMIVAC/SISA. Ninguno de los tres da en tiempo real una respuesta a preguntas básicas de gestión: ¿cuántas dosis quedan de cada vacuna?, ¿qué lotes están por vencerse?, ¿cuándo conviene pedir reposición?
 
-## Estructura
+El SGV no reemplaza a esos registros — son obligatorios y externos al CAPS. Lo que hace es cubrir el **vacío de control interno de stock**: lleva el inventario por lote, descuenta automáticamente las aplicaciones y descartes, y avisa cuándo algo está por vencer o cuándo el stock baja del umbral acordado con enfermería.
+
+---
+
+## Alcance
+
+**Incluye:**
+- Ingreso de lotes nuevos (vacuna, número de lote, vencimiento, cantidad).
+- Registro de aplicaciones, con descuento automático del stock.
+- Registro de descartes (con motivo).
+- Consulta de stock en vivo, con estado calculado (OK / stock bajo / por vencer).
+- Dashboard con KPIs y alertas operativas.
+- Historial completo de movimientos con filtro por tipo.
+- Gestión de usuarios (alta, baja, reset de contraseña) por la coordinadora.
+- Autenticación con cuatro perfiles y permisos diferenciados.
+
+**No incluye (fuera de alcance, definido con la clienta):**
+- Sincronización con la Historia Clínica del municipio (sin acceso técnico).
+- Sincronización con NOMIVAC / SISA (sistemas nacionales, no municipales).
+- Reemplazo de la Hoja 10.
+
+---
+
+## Requerimientos funcionales
+
+| RF | Caso de uso | Vista (Frontend) | Endpoint (Backend) |
+|---|---|---|---|
+| RF01 | CU03 — Registrar aplicación | Registrar aplicación | `POST /api/aplicaciones` |
+| RF02 | CU04 — Alertas operativas | Dashboard | `GET /api/dashboard` |
+| RF03 | — Registrar descarte | Registrar descarte | `POST /api/descartes` |
+| RF04 | CU02 — Ingresar lote | Ingresar lote | `POST /api/lotes` |
+| RF05 | CU01 — Autenticación + control de roles | Login | `POST /api/login` |
+| RF07 | CU04 — Consulta de stock | Stock | `GET /api/stock` |
+| RF08 | — Historial de movimientos | Historial | `GET /api/movimientos` |
+
+**Trazabilidad:** cada RF tiene un caso de uso, una pantalla validada con la clienta, una vista codificada, una tabla y un endpoint. El flujo de integración va de punta a punta: ningún dato del frontend está hardcodeado.
+
+---
+
+## Reglas de negocio
+
+Definidas con Mariana Touzon (Lic. en Enfermería) durante el relevamiento:
+
+- **Stock bajo:** un lote queda marcado como "stock bajo" cuando le quedan **10 dosis o menos** disponibles. Este umbral fue elegido para que la alerta funcione igual de bien en vacunas monodosis (10 unidades para reponer) y en multidosis (1 frasco de 10 dosis, o 2 frascos de Salk de 5 dosis).
+- **Por vencer:** un lote queda marcado como "por vencer" cuando el vencimiento es a **15 días o menos** desde hoy y todavía no pasó la fecha.
+- **Vencida:** un lote queda marcado como "vencida" cuando ya pasó la fecha de vencimiento y todavía tiene stock disponible (no se hizo el descarte). Es una alerta más grave que "por vencer" porque la vacuna no se puede aplicar y requiere descarte inmediato.
+- **Días para vencer:** tanto en la lista de stock como en las alertas del dashboard, junto a la fecha se muestra el plazo restante en texto ("vence en 5 días", "vence hoy", "venció hace 3 días").
+- **Prioridad de alertas:** si un lote cumple varias condiciones, prevalece "vencida" sobre "por vencer" sobre "stock bajo".
+- **Sin stock negativo:** una aplicación o descarte nunca puede dejar el disponible debajo de cero. Se valida en el servidor con `FOR UPDATE` dentro de transacción.
+
+---
+
+## Vacunas multidosis
+
+Cuatro vacunas del catálogo vienen en frascos con más de una dosis cada uno:
+
+| Vacuna | Dosis por frasco |
+|---|:-:|
+| Hepatitis B | 10 |
+| Doble bacteriana (dT) | 10 |
+| Triple bacteriana acelular (dTpa) | 10 |
+| Salk | 5 |
+
+**El sistema cuenta siempre en dosis por dentro.** La presentación en frascos es una vista derivada que se calcula al mostrar:
 
 ```
-server.js      API (Express) + sirve la carpeta public/
-db.js          conexión MySQL, creación de tablas, cuenta del local
-ejemplo.js     datos de prueba
-seed.js        reinicia la base con los datos de prueba
-schema.sql     estructura de las tablas (solo referencia: el servidor las crea solo)
-public/        la app: index.html, styles.css, app.js, img/
+frascos enteros disponibles = floor(disponible / dosis_por_frasco)
+dosis sueltas               = disponible mod dosis_por_frasco
 ```
 
-Las fotos se guardan **en la base** (no en disco), así no se pierden cuando Railway reinicia.
+Esto se refleja en cada pantalla:
 
-## Correrlo en tu compu (XAMPP)
+- **Ingreso de lote:** cuando enfermería elige una vacuna multidosis, el campo cambia automáticamente de "Cantidad de dosis" a "Cantidad de frascos", y debajo se muestra el total calculado en dosis.
+- **Aplicación:** sin cambios, siempre se ingresa en dosis (que es la unidad clínica).
+- **Descarte:** cuando es multidosis aparece un segundo campo "Dosis sueltas", para poder descartar frascos cerrados y dosis sobrantes de frascos abiertos en una sola operación. El total se calcula como `frascos × dosis_por_frasco + sueltas`.
+- **Stock y dashboard:** las multidosis se identifican con un chip "Frasco × N" al lado del nombre, y la cantidad disponible se muestra en frascos (con dosis sueltas si corresponde) más el total en dosis entre paréntesis.
 
-1. Prendé **MySQL** en XAMPP.
-2. En la carpeta del proyecto:
-   ```
-   npm install
-   cp .env.example .env      (en Windows: copy .env.example .env)
-   ```
-3. Editá `.env` (usuario/clave de MySQL, `LOGIN_PASSWORD`, `JWT_SECRET`).
-4. `npm start` → abrí http://localhost:3000
+Las 14 vacunas monodosis se comportan exactamente igual que antes — el sistema usa por debajo `dosis_por_frasco = 1` y no muestra nada extra en pantalla.
 
-La base y las tablas se crean solas. Con `DATOS_EJEMPLO=true` carga piezas de prueba si está vacía.
+---
 
-Para borrar todo y volver a los datos de prueba: `npm run seed -- --si`
-(no toca la cuenta; sin `--si` no hace nada).
+## Roles y permisos
 
-## API
+Cuatro perfiles, cada uno con sus permisos. La validación de permisos se hace **en el servidor**: aunque el frontend oculte botones según el rol, el backend rechaza con HTTP 403 cualquier acción no autorizada.
 
-Todas menos `/api/health`, `/api/login` y `/api/fotos/:clave` piden `Authorization: Bearer <token>`.
+| Rol | Lectura | Escritura de stock | Gestión de usuarios |
+|---|:-:|:-:|:-:|
+| **Enfermería** | ✓ | ✓ | — |
+| **Coordinadora** | ✓ | — | ✓ |
+| **Jefa** | ✓ | — | — |
+| **Proveedora** | ✓ | — | — |
 
-| Método | Ruta | Para qué |
+> "Escritura de stock" = ingresar lote, registrar aplicación, registrar descarte.
+> Por decisión de la clienta, la gestión de usuarios recae en la **coordinadora**, no en la jefa.
+
+---
+
+## Catálogo de vacunas
+
+18 vacunas, lista real provista por el CAPS:
+
+Antigripal adyuvantada · Antigripal trivalente adultos · Antigripal trivalente pediátrica · Antimeningocócica tetravalente conjugada · Doble bacteriana (dT) · Doble viral (SR) · Hepatitis A · Hepatitis B · Neumococo conjugada VCN 20 · Quíntuple · Rotavirus monovalente · Salk · Tetravalente contra el Dengue · Triple bacteriana acelular (dTpa) · Triple viral (SRP) · VPH nonavalente · Varicela · Virus Sincicial Respiratorio.
+
+---
+
+## Pantallas
+
+| Pantalla | Quién la ve | Qué hace |
 |---|---|---|
-| GET | `/api/health` | chequeo del servidor |
-| POST | `/api/login` | `{usuario, password, recordar}` → token (30 días con recordar, si no 12 h) |
-| GET | `/api/estado` | stock, por completar, ventas de hoy, semana |
-| POST | `/api/piezas/:codigo/vender` | `{medio}` |
-| POST | `/api/ventas/:id/deshacer` | anula una venta del día |
-| POST | `/api/piezas/:codigo/reserva` | `{cliente, sena}` |
-| DELETE | `/api/piezas/:codigo/reserva` | quita la reserva |
-| PATCH | `/api/piezas/:codigo` | `{nombre, precio, categoria, detalle}` |
-| PUT | `/api/piezas/:codigo/foto` | cambia la foto (imagen en el cuerpo) |
-| POST | `/api/pendientes` | sube una foto por completar |
-| PATCH | `/api/pendientes/:id` | guarda datos; con material, tipo y precio pasa al stock |
-| DELETE | `/api/pendientes/:id` | la borra (se puede restaurar 2 días) |
-| POST | `/api/pendientes/:id/restaurar` | deshace el borrado |
-| GET | `/api/fotos/:clave` | la imagen |
+| **Login** | Todos | Autenticación con correo + contraseña. Devuelve un JWT firmado con el rol. |
+| **Dashboard** | Todos | KPIs (tipos de vacuna con stock, unidades totales, lotes con stock bajo, lotes por vencer) + listas de alertas. |
+| **Stock** | Todos | Tabla de lotes con vacuna, número de lote, vencimiento, cantidad inicial, disponible y estado calculado (OK / stock bajo / por vencer). |
+| **Ingresar lote** | Enfermería | Formulario para cargar un lote nuevo. Valida que la fecha de vencimiento no sea anterior a hoy y que la cantidad sea positiva. |
+| **Registrar aplicación** | Enfermería | Selección de vacuna → lote → cantidad → fecha. Descuenta del disponible dentro de transacción. |
+| **Registrar descarte** | Enfermería | Igual al anterior pero con motivo obligatorio (vencido, rotura, falla de cadena de frío, etc.). |
+| **Historial** | Todos | Últimos 200 movimientos con filtro por tipo (ingreso / aplicación / descarte). |
+| **Usuarios** | Coordinadora | Alta de usuario, activar/desactivar, resetear contraseña. |
+
+---
+
+## Modelo de datos
+
+Cuatro tablas en MySQL con relaciones por clave foránea:
+
+```
+usuarios       (id, correo, password_hash, rol, activo, creado_en)
+vacunas        (id, nombre, dosis_por_frasco, activa)
+lotes          (id, vacuna_id→vacunas, numero_lote, vencimiento,
+                cantidad_inicial, disponible, creado_en)
+movimientos    (id, tipo, vacuna_id→vacunas, lote_id→lotes,
+                cantidad, motivo, fecha_aplicacion, fecha_mov,
+                usuario_id→usuarios)
+```
+
+**Decisiones de diseño:**
+
+- **`dosis_por_frasco` vive en `vacunas`** (no en `lotes`), porque la presentación está atada a la vacuna y no varía lote a lote en las que maneja el CAPS. Default 1 para monodosis.
+- **`cantidad_inicial` y `disponible` siempre se miden en dosis**, nunca en frascos. La lectura en frascos es derivada. Esto mantiene la lógica de transacciones, validaciones y movimientos exactamente igual para monodosis y multidosis.
+- **`tipo` en `movimientos`** es un ENUM con tres valores (`ingreso`, `aplicacion`, `descarte`). Una sola tabla unifica el historial.
+- **`disponible` en `lotes`** se mantiene materializado (no se recalcula desde movimientos cada vez). Cada aplicación o descarte lo decrementa dentro de una transacción con `FOR UPDATE`, garantizando que dos operaciones simultáneas no dejen el stock inconsistente.
+- **Constraints CHECK** previenen cantidades inválidas a nivel de base: `cantidad_inicial > 0`, `disponible >= 0`, `cantidad > 0`.
+- **`motivo`** y **`fecha_aplicacion`** son `NULL` por defecto: solo el descarte usa la primera, solo la aplicación usa la segunda.
+- **Índices** en `lotes(vacuna_id)`, `lotes(vencimiento)`, `movimientos(tipo)` y `movimientos(fecha_mov)` para que las consultas del dashboard y el historial sean rápidas.
+
+---
 
 ## Seguridad
 
-- Clave con bcrypt; la sesión se invalida sola si se cambia `LOGIN_PASSWORD`.
-- Máximo 8 intentos fallidos de ingreso cada 15 minutos por IP.
-- Encabezados de seguridad (CSP, anti-iframe, HSTS en producción).
-- Solo se sirve `public/`: el código del servidor y el `.env` no son accesibles desde el navegador.
-- Las fotos se verifican por contenido (JPG, PNG, WebP), no por extensión.
+- **Contraseñas con hash bcrypt** (factor 10). En la base nunca se guarda el texto plano.
+- **JWT** firmado con `JWT_SECRET`, expiración de 8 horas. Lleva `id`, `correo` y `rol` del usuario.
+- **Validación de permisos en el servidor**, no solo en el frontend. Cada endpoint de escritura pasa por `requireAuth` + `requireRole`.
+- **Transacciones** en todas las operaciones que tocan el stock (ingreso, aplicación, descarte), con bloqueo de fila (`SELECT ... FOR UPDATE`) para evitar condiciones de carrera.
+- **Mensajes de error genéricos** en el login ("Correo o contraseña incorrectos") para no revelar si el correo existe o no.
+
+---
+
+## Stack
+
+- **Backend:** Node.js 18+ con Express.
+- **Base de datos:** MySQL 8 (compatible con MariaDB).
+- **Autenticación:** JWT (`jsonwebtoken`) + bcrypt (`bcryptjs`).
+- **Driver DB:** `mysql2/promise` con pool de conexiones.
+- **Frontend:** HTML + CSS + JavaScript vanilla, SPA sin framework, consumo de la API por `fetch`.
+- **Identidad visual:** paleta del Municipio de Hurlingham (teal `#0FA99E` + lima `#A6CE39`), tipografía DM Sans.
+
+---
+
+## Endpoints
+
+| Método | Ruta | Rol | Descripción |
+|---|---|---|---|
+| POST | `/api/login` | público | Autenticación, devuelve JWT |
+| GET | `/api/me` | autenticado | Datos del usuario actual |
+| GET | `/api/vacunas` | autenticado | Catálogo de vacunas activas |
+| GET | `/api/vacunas/:id/lotes` | autenticado | Lotes disponibles de una vacuna |
+| GET | `/api/stock` | autenticado | Stock actual con estado calculado |
+| GET | `/api/dashboard` | autenticado | KPIs + alertas |
+| GET | `/api/movimientos` | autenticado | Historial (filtro opcional `?tipo=`) |
+| POST | `/api/lotes` | enfermería | Ingresar lote nuevo |
+| POST | `/api/aplicaciones` | enfermería | Registrar aplicación |
+| POST | `/api/descartes` | enfermería | Registrar descarte |
+| GET | `/api/usuarios` | coordinadora | Listar usuarios |
+| POST | `/api/usuarios` | coordinadora | Crear usuario |
+| PATCH | `/api/usuarios/:id/estado` | coordinadora | Activar / desactivar |
+| PATCH | `/api/usuarios/:id/password` | coordinadora | Resetear contraseña |
+| GET | `/api/health` | público | Verificación de estado (uso interno) |
+
+---
+
+## Estructura del proyecto
+
+```
+sgv/
+├── server.js              Backend completo: conexión MySQL, auth JWT, roles, rutas
+├── seed.js                Carga inicial opcional de usuarios y lotes de ejemplo
+├── schema.sql             Esquema de la base de datos (referencia)
+├── index.html             Frontend — estructura de la SPA
+├── styles.css             Frontend — estilos
+├── app.js                 Frontend — lógica e integración con la API
+├── package.json           Dependencias y scripts
+├── railway.json           Configuración de deploy en Railway
+├── .env.example           Plantilla de variables de entorno
+├── README.md              Este documento
+└── README_RAILWAY.md      Guía de deploy (separada)
+```
+
+---
+
+## Usuarios iniciales
+
+| Rol | Correo | Contraseña |
+|---|---|---|
+| Enfermería | `enfermeria@caps.gob.ar` | `enfermeria123` |
+| Coordinadora | `coordinacion@caps.gob.ar` | `coordinacion123` |
+| Jefa | `jefa@caps.gob.ar` | `jefa123` |
+| Proveedora | `proveedora@caps.gob.ar` | `proveedora123` |
+
+> Credenciales de demo, deben rotarse en producción.
+
+---
+
+## Equipo
+
+**Equipo N° 01 — 7° Informática — Instituto Leonardo Murialdo (2026)**
+
+| Integrante | Rol |
+|---|---|
+| More Aloia Touzon | Project Manager + Base de datos |
+| Agustín Aloia Mircovich | Frontend 1 + Backend 2 |
+| Tomás Cosimi | Backend 1 |
+| Felipe Dellepiane | Frontend 2 + UX + Diseño multimedial |
+| Mateo Scorza | ADO (documentación, presupuesto, análisis económico) |
+
+**Clienta:** Lic. Mariana Touzon — Enfermería, CAPS San José Obrero (Hurlingham).
+**Materia:** Evaluación de Proyectos — Profesores Pedaci y Lourdes.
