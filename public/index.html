@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stella Maris Joyas</title>
+<meta name="description" content="Stock y ventas de Stella Maris Joyas">
+<meta name="theme-color" content="#F2F0EE">
+<meta name="robots" content="noindex">
+<link rel="icon" href="/img/icono.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Jost:wght@300..600&family=Kaushan+Script&display=swap">
+<link rel="stylesheet" href="/styles.css">
+<script src="/app.js" defer></script>
+</head>
+<body>
+<div class="cargando" id="cargando" role="status">
+  <p class="logo"><span class="logo-script">Stella Maris</span><span class="logo-sub">Joyas</span></p>
+  <p class="cargando-t">Cargando…</p>
+</div>
+
+<section class="login intro" id="login" aria-labelledby="loginT" hidden>
+  <div class="calle" id="calle">
+    <div class="edificio" aria-hidden="true"></div>
+    <div class="local">
+      <p class="letrero logo"><span class="logo-script">Stella Maris</span><span class="logo-sub">Joyas</span></p>
+      <div class="toldo" aria-hidden="true"></div>
+      <div class="frente">
+        <div class="vidriera" aria-hidden="true"><div class="vid-vidrio"><div class="vid-exhib"></div></div><div class="vid-base"></div></div>
+        <span class="farol" aria-hidden="true"></span>
+        <div class="entrada">
+          <div class="dintel" aria-hidden="true">2038</div>
+          <div class="puertas">
+            <div class="adentro" aria-hidden="true">
+              <div class="adentro-fila" style="--y:8px"></div>
+              <div class="adentro-fila" style="--y:46%"></div>
+              <div class="adentro-mostrador"></div>
+            </div>
+            <span class="hoja hoja-izq" aria-hidden="true"><span class="tirador"></span></span>
+            <span class="hoja hoja-der" aria-hidden="true"><span class="tirador"></span></span>
+            <form class="cartel" id="loginForm" novalidate>
+              <span class="cartel-estado" id="lgEstado" aria-hidden="true">Cerrado</span>
+              <h1 class="login-t" id="loginT">Hola de nuevo</h1>
+              <p class="login-sub">Ingresá para abrir el local.</p>
+              <div class="lform">
+                <div class="lfield">
+                  <label for="lgUser">Usuario</label>
+                  <div class="lbox">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M5 19.5c1.3-3.3 3.9-5.2 7-5.2s5.7 1.9 7 5.2"/></svg>
+                    <input id="lgUser" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next">
+                  </div>
+                </div>
+                <div class="lfield">
+                  <label for="lgPass">Contraseña</label>
+                  <div class="lbox">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2.6"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
+                    <input id="lgPass" name="password" type="password" autocomplete="current-password" enterkeyhint="go">
+                    <button type="button" class="eye" id="lgEye" aria-pressed="false" aria-label="Mostrar la contraseña">
+                      <svg class="eye-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg>
+                      <svg class="eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M10.6 5.6c.5-.1.9-.1 1.4-.1 6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-3 3.7M6.6 6.6C3.9 8.4 2.5 12 2.5 12s3.5 6.5 9.5 6.5c1.6 0 3-.4 4.2-1.1M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+                    </button>
+                  </div>
+                  <p class="lhint" id="lgCaps" aria-live="polite"></p>
+                </div>
+                <p class="err" id="lgErr" role="alert"></p>
+                <label class="check" for="lgKeep"><input type="checkbox" id="lgKeep" name="keep"><span class="box" aria-hidden="true"></span>Mantener la sesión iniciada</label>
+                <button type="submit" class="btn btn-primary btn-lg btn-block" id="lgGo"><span id="lgGoText">Entrar al local</span><span class="spin" aria-hidden="true"></span></button>
+              </div>
+            </form>
+          </div>
+          <div class="zocalo" aria-hidden="true"></div>
+        </div>
+        <span class="farol" aria-hidden="true"></span>
+        <div class="vidriera" aria-hidden="true"><div class="vid-vidrio"><div class="vid-exhib"></div></div><div class="vid-base"></div></div>
+      </div>
+    </div>
+    <div class="vereda">
+      <svg class="maceta maceta-izq" viewBox="-10 10 120 150" aria-hidden="true"><path d="M50 100c-4-30 4-60 20-80-2 26-8 54-20 80z" fill="#7C8A58"/><path d="M48 100c-14-24-34-40-56-44 18 12 36 26 56 44z" fill="#5F6B42"/><path d="M52 100c10-26 30-46 54-54-14 16-32 34-54 54z" fill="#6E7C4D"/><path d="M46 100c-10-34-6-62 6-88 4 30 2 60-6 88z" fill="#5F6B42"/><path d="M42 100c-20-12-36-28-44-48 16 10 30 26 44 48z" fill="#7C8A58"/><rect x="14" y="98" width="72" height="10" rx="3" fill="#3D3839"/><path d="M20 108l8 52h44l8-52z" fill="#2A2627"/><path d="M22.5 122h55" stroke="#BDB7B6" stroke-width="3"/></svg>
+      <svg class="maceta maceta-der" viewBox="-10 10 120 150" aria-hidden="true"><path d="M50 100c-4-30 4-60 20-80-2 26-8 54-20 80z" fill="#7C8A58"/><path d="M48 100c-14-24-34-40-56-44 18 12 36 26 56 44z" fill="#5F6B42"/><path d="M52 100c10-26 30-46 54-54-14 16-32 34-54 54z" fill="#6E7C4D"/><path d="M46 100c-10-34-6-62 6-88 4 30 2 60-6 88z" fill="#5F6B42"/><path d="M42 100c-20-12-36-28-44-48 16 10 30 26 44 48z" fill="#7C8A58"/><rect x="14" y="98" width="72" height="10" rx="3" fill="#3D3839"/><path d="M20 108l8 52h44l8-52z" fill="#2A2627"/><path d="M22.5 122h55" stroke="#BDB7B6" stroke-width="3"/></svg>
+    </div>
+  </div>
+</section>
+
+<div id="app" hidden>
+  <a class="skip" href="#contenido">Saltar al contenido</a>
+  <header class="top">
+    <div class="top-in">
+      <p class="brand logo"><span class="logo-script">Stella Maris</span><span class="logo-sub">Joyas</span></p>
+      <nav class="nav" aria-label="Secciones">
+        <div class="tabs" id="tabs" role="tablist">
+          <span class="bubble" aria-hidden="true"></span>
+          <button type="button" class="tab" role="tab" id="tab-stock" data-view="stock" aria-selected="true" aria-controls="view-stock"><svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4.5h10l3.5 4.5L12 20 3.5 9z"/><path d="M3.5 9h17M9.5 4.5 8 9l4 11 4-11-1.5-4.5"/></svg><span class="tab-l">Stock</span></button>
+          <button type="button" class="tab" role="tab" id="tab-pend" data-view="pend" aria-selected="false" aria-controls="view-pend" tabindex="-1"><svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5h3.2l1.8-2.7h7l1.8 2.7h3.2v10.7h-17z"/><circle cx="12" cy="13.6" r="3.6"/></svg><span class="tab-l">Por completar</span> <span class="tab-n" id="pendCount"></span></button>
+          <button type="button" class="tab" role="tab" id="tab-ventas" data-view="ventas" aria-selected="false" aria-controls="view-ventas" tabindex="-1"><svg class="tab-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16M7 16.5v-5M12 16.5V6.5M17 16.5v-8"/></svg><span class="tab-l">Ventas</span></button>
+        </div>
+      </nav>
+      <div class="top-end">
+        <button type="button" class="logout" id="btnLogout"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4.5h3.5a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H14"/><path d="M10 8l-4 4 4 4M6 12h9.5"/></svg><span class="logout-l">Salir</span></button>
+      </div>
+    </div>
+  </header>
+
+  <main id="contenido" tabindex="-1">
+    <section class="view" id="view-stock" role="tabpanel" aria-labelledby="tab-stock">
+      <div class="wrap">
+        <div class="head">
+          <div class="head-main">
+            <div class="title-row"><h1 class="title">Vitrina</h1></div>
+            <p class="subtitle">Todo lo que hay en el local. Cada pieza es única: cuando se vende, sale de la vitrina.</p>
+          </div>
+          <div class="actions actions-end">
+            <button type="button" class="btn btn-primary btn-icon" id="btnAdd"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Subir fotos</button>
+          </div>
+        </div>
+
+        <div class="mueble">
+          <span class="cornisa" aria-hidden="true"></span>
+          <div class="mueble-panel">
+            <dl class="placa" id="facts"></dl>
+            <div class="search" id="searchBox">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
+              <input id="q" name="q" type="search" placeholder="Nombre o código…" autocomplete="off" spellcheck="false" enterkeyhint="search" aria-label="Buscar piezas">
+              <button type="button" class="search-x" id="qClear" aria-label="Borrar la búsqueda" hidden><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+            </div>
+          </div>
+          <div class="mueble-cuerpo">
+            <div class="vidrio">
+              <div class="filters">
+                <div class="mats" id="mats" role="group" aria-label="Material"></div>
+                <label class="sort" for="sort">Ordenar
+                  <select id="sort" name="sort">
+                    <option value="recent">Más recientes</option>
+                    <option value="price-asc">Menor precio</option>
+                    <option value="price-desc">Mayor precio</option>
+                    <option value="code">Código</option>
+                  </select>
+                </label>
+                <div class="cats" id="cats" role="group" aria-label="Categoría"></div>
+              </div>
+              <div class="grid" id="grid"></div>
+            </div>
+          </div>
+          <span class="patas" aria-hidden="true"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-pend" role="tabpanel" aria-labelledby="tab-pend" hidden>
+      <div class="wrap">
+        <div class="head">
+          <div class="head-main">
+            <div class="title-row"><h1 class="title">Por completar</h1></div>
+            <p class="subtitle" id="pendLead"></p>
+          </div>
+          <div class="actions actions-end">
+            <button type="button" class="btn btn-quiet btn-icon" id="btnUpload2"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Subir fotos</button>
+          </div>
+        </div>
+        <div class="pp" id="pendStart">
+          <div class="pp-txt">
+            <h2 class="pp-t">Cómo se completa cada foto</h2>
+            <ol class="pp-pasos">
+              <li><span class="pp-n" aria-hidden="true">1</span>Elegí el material</li>
+              <li><span class="pp-n" aria-hidden="true">2</span>Elegí el tipo de pieza</li>
+              <li><span class="pp-n" aria-hidden="true">3</span>Escribí el precio</li>
+            </ol>
+            <p class="pp-sub">Al guardar, la pieza pasa sola al stock con su código y aparece la foto siguiente.</p>
+          </div>
+          <button type="button" class="btn btn-primary btn-xl" id="btnComplete">Empezar a completar</button>
+        </div>
+        <h2 class="pend-h" id="pendInfo"></h2>
+        <div class="pgrid" id="pgrid"></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-ventas" role="tabpanel" aria-labelledby="tab-ventas" hidden>
+      <div class="wrap">
+        <div class="title-row"><h1 class="title">Ventas del día</h1></div>
+        <p class="subtitle" id="vDate"></p>
+        <div class="caja-grid">
+          <div class="caja">
+            <div class="registradora">
+              <div class="display">
+                <span class="hero-l">Facturado hoy</span>
+                <span class="hero-v" id="hTotal"></span>
+                <span class="hero-d" id="hDelta"></span>
+              </div>
+              <dl class="teclas" id="vFacts"></dl>
+            </div>
+            <div class="ticket-wrap">
+              <section class="ticket ledger" aria-labelledby="ledgerT">
+                <div class="ticket-head">
+                  <p class="ticket-shop logo"><span class="logo-script">Stella Maris</span><span class="logo-sub">Joyas</span></p>
+                  <p>Av. Libertador San Martín 2038, Caseros</p>
+                  <p id="tkDate"></p>
+                </div>
+                <div class="ledger-top"><h2 class="h2" id="ledgerT">Movimientos</h2><span class="muted" id="ledgerCount"></span></div>
+                <div role="table" aria-labelledby="ledgerT">
+                  <div class="ledger-h" role="row"><span role="columnheader">Hora</span><span role="columnheader">Pieza</span><span role="columnheader">Material</span><span role="columnheader">Pago</span><span role="columnheader">Importe</span></div>
+                  <div id="ledger" role="rowgroup"></div>
+                </div>
+                <div class="ticket-total"><span>Total del día</span><b id="tkTotal"></b></div>
+                <p class="ticket-gracias">Gracias por su compra</p>
+              </section>
+            </div>
+          </div>
+          <aside class="v-side">
+            <section class="panel" aria-labelledby="wkT">
+              <h2 class="h3" id="wkT">Últimos 7 días</h2>
+              <p class="panel-sub" id="wkSub"></p>
+              <div class="week" id="week">
+                <div class="wk-plot" id="wkPlot" role="list" aria-label="Facturación por día"></div>
+                <div class="wk-axis" id="wkAxis" aria-hidden="true"></div>
+                <div class="tip" id="wkTip" aria-hidden="true"></div>
+              </div>
+              <details class="wk-table"><summary>Ver valores por día</summary><table><tbody id="wkRows"></tbody></table></details>
+            </section>
+            <section class="panel" aria-labelledby="payT">
+              <h2 class="h3" id="payT">Medios de pago</h2>
+              <div class="mrows" id="byPay"></div>
+            </section>
+            <section class="panel" aria-labelledby="matT">
+              <h2 class="h3" id="matT">Por material</h2>
+              <div class="mrows" id="byMat"></div>
+            </section>
+          </aside>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap">
+      <span>Stella Maris Joyas, Av. Libertador San Martín 2038, Caseros</span>
+    </div>
+  </footer>
+
+</div>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="sheet" id="sheet" role="dialog" tabindex="-1">
+    <div class="grab" aria-hidden="true"></div>
+    <button type="button" class="x" id="sheetClose" aria-label="Cerrar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    <div id="sheetBody"></div>
+    <div class="sr-only" id="sheetLive" aria-live="polite"></div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

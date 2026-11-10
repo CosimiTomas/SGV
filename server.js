@@ -1,2598 +1,471 @@
 /**
  * ============================================================
- * SGV — Sistema de Gestión de Vacunas
- * CAPS San José Obrero · Hurlingham · Equipo N° 01 (ILM)
+ * Stella Maris Joyas — Sistema de stock y ventas
+ * Av. Libertador San Martín 2038, Caseros
  * ------------------------------------------------------------
- * Servidor completo en un solo archivo: conexión a MySQL,
- * autenticación JWT, control de roles y todas las rutas de la API.
+ * Servidor: API con Express, base MySQL, ingreso con JWT + bcrypt
+ * (una sola cuenta para todo el local) y fotos guardadas en la base.
+ * La página (carpeta public/) se sirve desde acá mismo.
  *
- * Compatible con XAMPP local y con Railway (lee MYSQL* o DB_*).
- * Al arrancar crea las tablas si no existen (idempotente).
+ * Funciona con XAMPP (variables DB_*) y con Railway (MYSQL_URL o MYSQL*).
  * ============================================================
  */
 require('dotenv').config();
-const express = require('express');
 const path = require('path');
-const mysql = require('mysql2/promise');
+const crypto = require('crypto');
+const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const XLSX = require('xlsx-js-style');
+const {
+  pool, PROD, MATERIALES, CATEGORIAS, PAGOS, nombreAuto,
+  asegurarBase, crearEsquema, sincronizarContadores, siguiente, siguienteCodigo, asegurarCuenta, purgar,
+} = require('./db');
+const { cargarEjemplo } = require('./ejemplo');
 
 const PORT = process.env.PORT || 3000;
-const SECRET = process.env.JWT_SECRET || 'dev_secret';
-
-// Reglas de negocio definidas con enfermería
-// Umbral en DOSIS. Coincide en los tres casos definidos con la clienta:
-//   monodosis        → 10 dosis
-//   Salk (5/frasco)  → 2 frascos = 10 dosis
-//   x 10/frasco      → 1 frasco  = 10 dosis
-// La lectura visual (dosis vs. frascos) la maneja el frontend.
-const UMBRAL_STOCK_BAJO = 10;
-const DIAS_VENCIMIENTO = 15;     // por vencer: dentro de 15 días
-
-// Normaliza cualquier valor DATE que devuelve mysql2 (Date, string ISO,
-// string "YYYY-MM-DD") a "YYYY-MM-DD" en hora local, sin shift por UTC.
-function toYMD(v) {
-  if (!v) return '';
-  if (typeof v === 'string') return v.slice(0, 10);
-  const d = v instanceof Date ? v : new Date(v);
-  if (isNaN(d.getTime())) return '';
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+let SECRET = process.env.JWT_SECRET;
+if (!SECRET) {
+  SECRET = crypto.randomBytes(32).toString('hex');
+  console.warn('! Falta JWT_SECRET: se usa una clave temporal y las sesiones se cierran cada vez que reinicia el servidor.');
 }
+let VERSION_CLAVE = '';   // cambia cuando cambia la contraseña: invalida las sesiones viejas
 
 /* ------------------------------------------------------------
- * Conexión a MySQL
- * Acepta variables de Railway (MYSQL*) y locales (DB_*).
+ * Arranque de la base: tablas, cuenta del local y contadores
  * ---------------------------------------------------------- */
-const TZ_AR = process.env.DB_TIMEZONE || '-03:00';
-
-const dbConfig = {
-  host:     process.env.MYSQLHOST     || process.env.DB_HOST     || 'localhost',
-  port:     process.env.MYSQLPORT     || process.env.DB_PORT     || 3306,
-  user:     process.env.MYSQLUSER     || process.env.DB_USER     || 'root',
-  password: process.env.MYSQLPASSWORD || process.env.DB_PASSWORD || '',
-  database: process.env.MYSQLDATABASE || process.env.DB_NAME     || 'sgv_caps',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  charset: 'utf8mb4_unicode_ci',
-  // Le decimos a mysql2 que interprete TIMESTAMP <-> Date en TZ AR.
-  timezone: TZ_AR,
-};
-
-const pool = mysql.createPool(dbConfig);
-
-// Setear TZ en cada conexión nueva del pool. Se escucha en los DOS
-// niveles (promise pool y callback pool subyacente) porque según la
-// versión de mysql2 el evento se emite en uno u otro.
-function setTZ(conn) { conn.query(`SET time_zone='${TZ_AR}'`); }
-pool.on('connection', setTZ);
-if (pool.pool && pool.pool.on) pool.pool.on('connection', setTZ);
-
-/* ------------------------------------------------------------
- * Bootstrap del esquema y catálogo de vacunas
- * Se ejecuta al arrancar el server. Es idempotente: usa
- * CREATE TABLE IF NOT EXISTS e INSERT IGNORE.
- * ---------------------------------------------------------- */
-async function bootstrapDatabase() {
+async function prepararBase() {
+  await asegurarBase();
   const conn = await pool.getConnection();
   try {
-    console.log('› Verificando esquema de base de datos…');
-
-    // Intentar setear la TZ a nivel GLOBAL (afecta también al panel de
-    // Railway y a cualquier otro cliente). Requiere privilegio SUPER,
-    // que Railway puede o no dar. Si falla, seguimos con el SET de
-    // sesión del pool.on que igual cubre las queries de la app.
-    try {
-      await conn.query(`SET GLOBAL time_zone = '${TZ_AR}'`);
-      console.log(`✓ TZ del servidor MySQL fijada a ${TZ_AR} (GLOBAL)`);
-    } catch (e) {
-      console.log(`› SET GLOBAL time_zone falló (${e.code || e.message}). Se usa solo TZ de sesión.`);
-    }
-    // SET de sesión en la conexión actual del bootstrap
-    await conn.query(`SET time_zone = '${TZ_AR}'`);
-
-    await conn.query(`
-      CREATE TABLE IF NOT EXISTS usuarios (
-        id            INT AUTO_INCREMENT PRIMARY KEY,
-        correo        VARCHAR(120) NOT NULL UNIQUE,
-        password_hash VARCHAR(255) NOT NULL,
-        rol           ENUM('enfermeria','coordinadora','jefa','proveedora') NOT NULL,
-        activo        TINYINT(1) NOT NULL DEFAULT 1,
-        creado_en     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-
-    await conn.query(`
-      CREATE TABLE IF NOT EXISTS vacunas (
-        id               INT AUTO_INCREMENT PRIMARY KEY,
-        nombre           VARCHAR(120) NOT NULL UNIQUE,
-        dosis_por_frasco INT NOT NULL DEFAULT 1,
-        activa           TINYINT(1) NOT NULL DEFAULT 1
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-
-    await conn.query(`
-      CREATE TABLE IF NOT EXISTS lotes (
-        id                INT AUTO_INCREMENT PRIMARY KEY,
-        vacuna_id         INT NOT NULL,
-        numero_lote       VARCHAR(60) NOT NULL,
-        vencimiento       DATE NOT NULL,
-        cantidad_inicial  INT NOT NULL,
-        disponible        INT NOT NULL,
-        creado_en         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        CONSTRAINT fk_lote_vacuna FOREIGN KEY (vacuna_id) REFERENCES vacunas(id),
-        CONSTRAINT chk_cantidad CHECK (cantidad_inicial > 0),
-        CONSTRAINT chk_disponible CHECK (disponible >= 0)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-
-    await conn.query(`
-      CREATE TABLE IF NOT EXISTS movimientos (
-        id              INT AUTO_INCREMENT PRIMARY KEY,
-        tipo            ENUM('aplicacion','descarte','ingreso') NOT NULL,
-        vacuna_id       INT NOT NULL,
-        lote_id         INT NOT NULL,
-        cantidad        INT NOT NULL,
-        motivo          VARCHAR(120) NULL,
-        fecha_aplicacion DATE NULL,
-        fecha_mov       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        usuario_id      INT NOT NULL,
-        CONSTRAINT fk_mov_vacuna  FOREIGN KEY (vacuna_id)  REFERENCES vacunas(id),
-        CONSTRAINT fk_mov_lote    FOREIGN KEY (lote_id)    REFERENCES lotes(id),
-        CONSTRAINT fk_mov_usuario FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
-        CONSTRAINT chk_mov_cantidad CHECK (cantidad > 0)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-
-    // Frascos multidosis abiertos: un frasco se abre al aplicar la primera
-    // dosis y vence 30 días después. Solo puede haber uno activo por lote.
-    await conn.query(`
-      CREATE TABLE IF NOT EXISTS frascos_abiertos (
-        id              INT AUTO_INCREMENT PRIMARY KEY,
-        lote_id         INT NOT NULL,
-        fecha_apertura  DATE NOT NULL,
-        dosis_totales   INT NOT NULL,
-        dosis_usadas    INT NOT NULL DEFAULT 0,
-        estado          ENUM('activo','agotado','vencido') NOT NULL DEFAULT 'activo',
-        fecha_cierre    DATE NULL,
-        motivo_cierre   VARCHAR(80) NULL,
-        CONSTRAINT fk_frasco_lote FOREIGN KEY (lote_id) REFERENCES lotes(id),
-        CONSTRAINT chk_frasco_dosis CHECK (dosis_usadas >= 0 AND dosis_usadas <= dosis_totales)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-
-    // Índices (se intentan crear; si ya existen se ignora)
-    const indices = [
-      'CREATE INDEX idx_lotes_vacuna ON lotes(vacuna_id)',
-      'CREATE INDEX idx_lotes_venc   ON lotes(vencimiento)',
-      'CREATE INDEX idx_mov_tipo     ON movimientos(tipo)',
-      'CREATE INDEX idx_mov_fecha    ON movimientos(fecha_mov)',
-      'CREATE INDEX idx_frasco_lote  ON frascos_abiertos(lote_id)',
-      'CREATE INDEX idx_frasco_estado ON frascos_abiertos(estado)',
-    ];
-    for (const sql of indices) {
-      try { await conn.query(sql); }
-      catch (e) { if (e.code !== 'ER_DUP_KEYNAME') throw e; }
-    }
-
-    // Catálogo de vacunas (lista real del CAPS)
-    const catalogo = [
-      'Antigripal adyuvantada',
-      'Antigripal trivalente adultos',
-      'Antigripal trivalente pediátrica',
-      'Antimeningocócica tetravalente conjugada',
-      'Doble bacteriana (dT)',
-      'Doble viral (SR)',
-      'Hepatitis A',
-      'Hepatitis B',
-      'Neumococo conjugada VCN 20',
-      'Quíntuple',
-      'Rotavirus monovalente',
-      'Salk',
-      'Tetravalente contra el Dengue',
-      'Triple bacteriana acelular (dTpa)',
-      'Triple bacteriana celular (DPT)',
-      'Triple viral (SRP)',
-      'VPH nonavalente',
-      'Varicela',
-      'Virus Sincicial Respiratorio',
-    ];
-    for (const nombre of catalogo) {
-      await conn.query('INSERT IGNORE INTO vacunas (nombre) VALUES (?)', [nombre]);
-    }
-
-    // Migración: agregar columna dosis_por_frasco a bases que ya existían
-    // sin ella (deploy previo a esta versión). Idempotente.
-    try {
-      await conn.query('ALTER TABLE vacunas ADD COLUMN dosis_por_frasco INT NOT NULL DEFAULT 1');
-    } catch (e) {
-      if (e.code !== 'ER_DUP_FIELDNAME') throw e;
-    }
-
-    // Vacunas multidosis (confirmadas con la clienta).
-    // El UPDATE es idempotente: si ya tienen el valor correcto no hace nada.
-    // dTpa es MONODOSIS. DPT es la que viene multidosis (10). Son dos
-    // vacunas distintas y en deploys previos se habían confundido.
-    const monodosis = [
-      ['Triple bacteriana acelular (dTpa)',  1],
-    ];
-    const multidosis = [
-      ['Hepatitis B',                        10],
-      ['Doble bacteriana (dT)',              10],
-      ['Triple bacteriana celular (DPT)',    10],
-      ['Salk',                                5],
-    ];
-    for (const [nombre, dpf] of [...monodosis, ...multidosis]) {
-      await conn.query('UPDATE vacunas SET dosis_por_frasco = ? WHERE nombre = ?', [dpf, nombre]);
-    }
-    // Si la dTpa quedó mal en una base vieja y tiene frascos abiertos,
-    // los cerramos para que no sigan apareciendo alertas inválidas.
-    await conn.query(
-      `UPDATE frascos_abiertos f
-         JOIN lotes l ON l.id = f.lote_id
-         JOIN vacunas v ON v.id = l.vacuna_id
-          SET f.estado = 'agotado',
-              f.fecha_cierre = CURDATE(),
-              f.motivo_cierre = 'Cerrado por cambio a monodosis'
-        WHERE v.nombre = 'Triple bacteriana acelular (dTpa)'
-          AND v.dosis_por_frasco = 1
-          AND f.estado = 'activo'`
-    );
-
-    // Migración idempotente: fusionar lotes duplicados (misma vacuna +
-    // mismo número de lote + mismo vencimiento). El pedido original de
-    // la clienta: dos cargas del mismo lote tienen que acumularse.
-    // Para cada grupo duplicado, nos quedamos con el id más chico,
-    // sumamos cantidades, movemos movimientos y frascos al "superviviente"
-    // y borramos los demás. Si no hay duplicados no hace nada.
-    const [duplicados] = await conn.query(
-      `SELECT vacuna_id, numero_lote, vencimiento,
-              MIN(id) AS keeper_id,
-              GROUP_CONCAT(id) AS ids,
-              SUM(cantidad_inicial) AS suma_inicial,
-              SUM(disponible) AS suma_disponible
-         FROM lotes
-        GROUP BY vacuna_id, numero_lote, vencimiento
-       HAVING COUNT(*) > 1`
-    );
-    for (const g of duplicados) {
-      const todos = g.ids.split(',').map(Number);
-      const perdedores = todos.filter(id => id !== g.keeper_id);
-      // Mover movimientos y frascos al lote que sobrevive
-      await conn.query(
-        `UPDATE movimientos SET lote_id = ? WHERE lote_id IN (?)`,
-        [g.keeper_id, perdedores]
-      );
-      await conn.query(
-        `UPDATE frascos_abiertos SET lote_id = ? WHERE lote_id IN (?)`,
-        [g.keeper_id, perdedores]
-      );
-      // Sumar cantidades al superviviente (reemplazamos con la suma total)
-      await conn.query(
-        `UPDATE lotes SET cantidad_inicial = ?, disponible = ? WHERE id = ?`,
-        [Number(g.suma_inicial), Number(g.suma_disponible), g.keeper_id]
-      );
-      // Borrar los duplicados
-      await conn.query(`DELETE FROM lotes WHERE id IN (?)`, [perdedores]);
-      console.log(`[migracion] Fusionados ${perdedores.length} lote(s) duplicado(s) en id ${g.keeper_id} (${g.numero_lote})`);
-    }
-
-    // Auto-seed de usuarios si la tabla está vacía y SEED_ON_BOOT=true
-    if (process.env.SEED_ON_BOOT === 'true') {
-      const [[{ n }]] = await conn.query('SELECT COUNT(*) AS n FROM usuarios');
-      if (n === 0) {
-        console.log('› Creando usuarios iniciales (SEED_ON_BOOT=true)…');
-        const USUARIOS = [
-          { correo: 'enfermeria@caps.gob.ar',   pass: 'enfermeria123',   rol: 'enfermeria'   },
-          { correo: 'coordinacion@caps.gob.ar', pass: 'coordinacion123', rol: 'coordinadora' },
-          { correo: 'jefa@caps.gob.ar',         pass: 'jefa123',         rol: 'jefa'         },
-          { correo: 'proveedora@caps.gob.ar',   pass: 'proveedora123',   rol: 'proveedora'   },
-        ];
-        for (const u of USUARIOS) {
-          const hash = await bcrypt.hash(u.pass, 10);
-          await conn.query('INSERT INTO usuarios (correo, password_hash, rol, activo) VALUES (?,?,?,1)',
-            [u.correo, hash, u.rol]);
-          console.log(`   · ${u.correo}  (${u.rol})`);
-        }
+    console.log('› Verificando la base de datos…');
+    await crearEsquema(conn);
+    VERSION_CLAVE = await asegurarCuenta(conn);
+    if (process.env.DATOS_EJEMPLO === 'true') {
+      const [[{ n }]] = await conn.query('SELECT COUNT(*) AS n FROM piezas');
+      if (Number(n) === 0) {
+        console.log('› Cargando los datos de ejemplo (DATOS_EJEMPLO=true)…');
+        await cargarEjemplo(conn);
       }
     }
-
-    console.log('✓ Esquema listo.');
+    await sincronizarContadores(conn);
+    await purgar(conn);
+    console.log('✓ Base lista.');
   } finally {
     conn.release();
   }
 }
 
 /* ------------------------------------------------------------
- * Middleware de autenticación y roles (RF05)
+ * Ayudas
  * ---------------------------------------------------------- */
-function requireAuth(req, res, next) {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  if (!token) return res.status(401).json({ error: 'No autenticado.' });
-  try {
-    req.user = jwt.verify(token, SECRET);
-    next();
-  } catch {
-    return res.status(401).json({ error: 'Sesión inválida o expirada.' });
-  }
-}
-function requireRole(...roles) {
-  return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.rol)) {
-      return res.status(403).json({ error: 'No tenés permisos para esta acción.' });
-    }
-    next();
-  };
-}
-
-/* ------------------------------------------------------------
- * App
- * ---------------------------------------------------------- */
-const app = express();
-app.use(express.json());
-// Servir HTML/JS/CSS con cache-control no-cache para que el browser
-// revalide siempre antes de usar la copia en caché. Sin esto, después
-// de un deploy nuevo el usuario sigue viendo los assets viejos por
-// horas (o hasta que vacíe caché a mano).
-app.use(express.static(__dirname, {
-  setHeaders: (res, filePath) => {
-    if (/\.(html|js|css)$/.test(filePath)) {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-    }
-  }
-}));
-
-app.get('/api/health', (req, res) => res.json({ ok: true, servicio: 'SGV API' }));
-
-/* ===========================================================
- * AUTENTICACIÓN — CU01 / RF05
- * ========================================================= */
-app.post('/api/login', async (req, res) => {
-  const { correo, password } = req.body;
-  if (!correo || !password) {
-    return res.status(400).json({ error: 'Completá todos los campos obligatorios.' });
-  }
-  try {
-    const [rows] = await pool.query(
-      'SELECT id, correo, password_hash, rol, activo FROM usuarios WHERE correo = ?',
-      [correo.trim().toLowerCase()]
-    );
-    const user = rows[0];
-    if (!user || !user.activo) return res.status(401).json({ error: 'Correo o contraseña incorrectos.' });
-    const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: 'Correo o contraseña incorrectos.' });
-
-    const token = jwt.sign({ id: user.id, correo: user.correo, rol: user.rol }, SECRET, { expiresIn: '8h' });
-    res.json({ token, usuario: { id: user.id, correo: user.correo, rol: user.rol } });
-  } catch (err) {
-    console.error('login:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  }
-});
-
-app.get('/api/me', requireAuth, (req, res) => res.json({ usuario: req.user }));
-
-/* ===========================================================
- * CONSULTAS — CU04 / RF07 (dashboard) · RF02 (alertas)
- * ========================================================= */
-app.get('/api/vacunas', requireAuth, async (req, res) => {
-  try {
-    const [rows] = await pool.query('SELECT id, nombre, dosis_por_frasco FROM vacunas WHERE activa = 1 ORDER BY nombre');
-    res.json(rows);
-  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
-});
-
-app.get('/api/vacunas/:id/lotes', requireAuth, async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      `SELECT id, numero_lote, vencimiento, disponible
-         FROM lotes WHERE vacuna_id = ? AND disponible > 0 ORDER BY vencimiento`,
-      [req.params.id]
-    );
-    res.json(rows);
-  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
-});
-
-app.get('/api/stock', requireAuth, async (req, res) => {
-  try {
-    // LEFT JOIN doble: vacunas → lotes → frasco abierto activo (si existe).
-    // Así traemos también las vacunas sin lotes y sabemos si un lote
-    // multidosis tiene un frasco abierto en curso.
-    const [rows] = await pool.query(
-      `SELECT l.id, v.id AS vacuna_id, v.nombre AS vacuna, v.dosis_por_frasco, l.numero_lote, l.vencimiento,
-              l.cantidad_inicial, l.disponible,
-              CASE WHEN l.vencimiento IS NULL THEN NULL
-                   ELSE DATEDIFF(l.vencimiento, CURDATE()) END AS dias_para_vencer,
-              f.id AS frasco_id,
-              f.fecha_apertura AS frasco_apertura,
-              CASE WHEN f.fecha_apertura IS NULL THEN NULL
-                   ELSE LEAST(
-                     30 - DATEDIFF(CURDATE(), f.fecha_apertura),
-                     DATEDIFF(l.vencimiento, CURDATE())
-                   ) END AS frasco_dias_restantes,
-              CASE
-                WHEN f.fecha_apertura IS NULL THEN NULL
-                WHEN DATEDIFF(l.vencimiento, CURDATE()) < (30 - DATEDIFF(CURDATE(), f.fecha_apertura))
-                THEN 'lote' ELSE '30dias'
-              END AS frasco_causa_vencimiento,
-              CASE WHEN f.id IS NULL THEN NULL
-                   ELSE (f.dosis_totales - f.dosis_usadas) END AS frasco_dosis_sobrantes
-         FROM vacunas v
-         LEFT JOIN lotes l ON l.vacuna_id = v.id
-         LEFT JOIN frascos_abiertos f ON f.lote_id = l.id AND f.estado = 'activo'
-        WHERE v.activa = 1
-        ORDER BY v.nombre, l.vencimiento`
-    );
-    const stock = rows.map(r => {
-      let estado;
-      if (r.id === null) {
-        estado = 'nostock';               // vacuna sin ningún lote
-      } else if (r.disponible === 0) {
-        estado = 'nostock';               // lote agotado
-      } else if (r.dias_para_vencer < 0) {
-        estado = 'vencida';
-      } else if (r.dias_para_vencer <= DIAS_VENCIMIENTO) {
-        estado = 'exp';
-      } else if (r.disponible <= UMBRAL_STOCK_BAJO) {
-        estado = 'low';
-      } else {
-        estado = 'ok';
-      }
-      return { ...r, estado };
-    });
-    res.json(stock);
-  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
-});
-
-app.get('/api/dashboard', requireAuth, async (req, res) => {
-  try {
-    const [[{ tipos }]]     = await pool.query('SELECT COUNT(DISTINCT vacuna_id) AS tipos FROM lotes WHERE disponible > 0');
-    const [[{ unidades }]]  = await pool.query('SELECT COALESCE(SUM(disponible),0) AS unidades FROM lotes');
-    const [bajo] = await pool.query(
-      `SELECT v.nombre AS vacuna, v.dosis_por_frasco, l.disponible
-         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
-        WHERE l.disponible <= ? AND l.disponible > 0
-          AND DATEDIFF(l.vencimiento, CURDATE()) >= 0
-        ORDER BY l.disponible`,
-      [UMBRAL_STOCK_BAJO]
-    );
-    // Por vencer = entre 0 y 15 días (incluye hoy)
-    const [vencer] = await pool.query(
-      `SELECT v.nombre AS vacuna, v.dosis_por_frasco, l.vencimiento, DATEDIFF(l.vencimiento, CURDATE()) AS dias
-         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
-        WHERE DATEDIFF(l.vencimiento, CURDATE()) BETWEEN 0 AND ? AND l.disponible > 0
-        ORDER BY l.vencimiento`,
-      [DIAS_VENCIMIENTO]
-    );
-    // Vencidas = ya pasó la fecha y todavía hay stock disponible (no se descartó)
-    const [vencidas] = await pool.query(
-      `SELECT l.id AS lote_id, v.id AS vacuna_id, v.nombre AS vacuna, v.dosis_por_frasco,
-              l.numero_lote, l.vencimiento, DATEDIFF(l.vencimiento, CURDATE()) AS dias, l.disponible
-         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
-        WHERE DATEDIFF(l.vencimiento, CURDATE()) < 0 AND l.disponible > 0
-        ORDER BY l.vencimiento`
-    );
-    // Frascos abiertos vencidos: ya se cumplieron 30 días DE APERTURA o el
-    // LOTE mismo venció (lo que llegue primero manda). Con dosis sobrantes.
-    // Devolvemos también la causa del vencimiento ('30dias' o 'lote').
-    const [frascosVencidos] = await pool.query(
-      `SELECT f.id AS frasco_id, f.lote_id, l.numero_lote, f.fecha_apertura,
-              l.vencimiento AS vencimiento_lote,
-              DATEDIFF(CURDATE(), f.fecha_apertura) AS dias_abierto,
-              (f.dosis_totales - f.dosis_usadas) AS dosis_sobrantes,
-              v.id AS vacuna_id, v.nombre AS vacuna, v.dosis_por_frasco,
-              CASE
-                WHEN DATEDIFF(l.vencimiento, CURDATE()) < 0
-                     AND (30 - DATEDIFF(CURDATE(), f.fecha_apertura)) > 0
-                THEN 'lote'
-                WHEN DATEDIFF(CURDATE(), f.fecha_apertura) > 30
-                     AND DATEDIFF(l.vencimiento, CURDATE()) >= 0
-                THEN '30dias'
-                ELSE 'ambos'
-              END AS causa_vencimiento
-         FROM frascos_abiertos f
-         JOIN lotes l   ON l.id = f.lote_id
-         JOIN vacunas v ON v.id = l.vacuna_id
-        WHERE f.estado = 'activo'
-          AND (f.dosis_totales - f.dosis_usadas) > 0
-          AND (
-            DATEDIFF(CURDATE(), f.fecha_apertura) > 30
-            OR DATEDIFF(l.vencimiento, CURDATE()) < 0
-          )
-        ORDER BY f.fecha_apertura`
-    );
-    // Frascos abiertos por vencer: van a vencer dentro del mismo umbral
-    // que los lotes (DIAS_VENCIMIENTO), considerando el mínimo entre
-    // "30 días desde apertura" y "vencimiento del lote".
-    // Se excluyen los que ya están vencidos (esos ya salieron en frascosVencidos).
-    const [frascosPorVencer] = await pool.query(
-      `SELECT f.id AS frasco_id, f.lote_id, l.numero_lote, f.fecha_apertura,
-              l.vencimiento AS vencimiento_lote,
-              DATEDIFF(CURDATE(), f.fecha_apertura) AS dias_abierto,
-              LEAST(
-                30 - DATEDIFF(CURDATE(), f.fecha_apertura),
-                DATEDIFF(l.vencimiento, CURDATE())
-              ) AS dias_restantes,
-              CASE
-                WHEN DATEDIFF(l.vencimiento, CURDATE()) < (30 - DATEDIFF(CURDATE(), f.fecha_apertura))
-                THEN 'lote' ELSE '30dias'
-              END AS causa_vencimiento,
-              (f.dosis_totales - f.dosis_usadas) AS dosis_sobrantes,
-              v.nombre AS vacuna, v.dosis_por_frasco
-         FROM frascos_abiertos f
-         JOIN lotes l   ON l.id = f.lote_id
-         JOIN vacunas v ON v.id = l.vacuna_id
-        WHERE f.estado = 'activo'
-          AND (f.dosis_totales - f.dosis_usadas) > 0
-          AND DATEDIFF(CURDATE(), f.fecha_apertura) <= 30
-          AND DATEDIFF(l.vencimiento, CURDATE()) >= 0
-          AND LEAST(
-            30 - DATEDIFF(CURDATE(), f.fecha_apertura),
-            DATEDIFF(l.vencimiento, CURDATE())
-          ) <= ?
-        ORDER BY dias_restantes`,
-      [DIAS_VENCIMIENTO]
-    );
-    // Frascos abiertos activos "normales" (con más margen que el umbral),
-    // informativos únicamente. No entran en alertas.
-    const [frascosActivos] = await pool.query(
-      `SELECT f.id AS frasco_id, f.lote_id, l.numero_lote, f.fecha_apertura,
-              DATEDIFF(CURDATE(), f.fecha_apertura) AS dias_abierto,
-              f.dosis_totales,
-              (f.dosis_totales - f.dosis_usadas) AS dosis_sobrantes,
-              v.nombre AS vacuna
-         FROM frascos_abiertos f
-         JOIN lotes l   ON l.id = f.lote_id
-         JOIN vacunas v ON v.id = l.vacuna_id
-        WHERE f.estado = 'activo'
-          AND (f.dosis_totales - f.dosis_usadas) > 0
-          AND DATEDIFF(CURDATE(), f.fecha_apertura) <= 30
-          AND DATEDIFF(l.vencimiento, CURDATE()) >= 0
-          AND LEAST(
-            30 - DATEDIFF(CURDATE(), f.fecha_apertura),
-            DATEDIFF(l.vencimiento, CURDATE())
-          ) > ?
-        ORDER BY f.fecha_apertura DESC`,
-      [DIAS_VENCIMIENTO]
-    );
-
-    /* ---------- Datos del tablero de Inicio (rediseño nov/2026) ---------- */
-    const tablero = await datosTablero(req.user && req.user.rol);
-
-    res.json({
-      kpis: {
-        tipos, unidades,
-        stockBajo: bajo.length, porVencer: vencer.length, vencidas: vencidas.length,
-        frascosVencidos: frascosVencidos.length,
-      },
-      alertas: {
-        stockBajo: bajo, porVencer: vencer, vencidas,
-        frascosVencidos, frascosPorVencer, frascosActivos,
-      },
-      umbrales: { stockBajo: UMBRAL_STOCK_BAJO, diasVencimiento: DIAS_VENCIMIENTO },
-      ...tablero,
-    });
-  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
-});
-
-/**
- * Datos extra para el tablero de Inicio:
- *  - vacunas:   resumen por vacuna activa (stock vigente, por vencer, vencido sin
- *               descartar, consumo de los últimos 30 días, cobertura estimada y
- *               el lote que conviene usar primero).
- *  - radar:     lotes con stock que vencen en los próximos 60 días (o ya vencidos).
- *  - frascos:   frascos multidosis abiertos con dosis sobrantes.
- *  - hoy:       aplicaciones, descartes e ingresos del día.
- *  - serie14:   dosis aplicadas por día en las últimas dos semanas.
- *  - actividad: últimos movimientos registrados hoy (no se envía a la proveedora,
- *               que no tiene acceso al historial).
- */
-async function datosTablero(rol) {
-  const [[{ hoy }]] = await pool.query(`SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS hoy`);
-
-  // 1) Resumen de stock por vacuna (solo lotes con dosis)
-  const [vacRows] = await pool.query(
-    `SELECT v.id, v.nombre, v.dosis_por_frasco,
-            COALESCE(SUM(CASE WHEN l.vencimiento >= CURDATE() THEN l.disponible ELSE 0 END), 0) AS stock,
-            COALESCE(SUM(CASE WHEN DATEDIFF(l.vencimiento, CURDATE()) BETWEEN 0 AND ?
-                              THEN l.disponible ELSE 0 END), 0) AS stock_por_vencer,
-            COALESCE(SUM(CASE WHEN l.vencimiento < CURDATE() THEN l.disponible ELSE 0 END), 0) AS stock_vencido,
-            COUNT(CASE WHEN l.vencimiento >= CURDATE() THEN 1 END) AS lotes,
-            DATE_FORMAT(MIN(CASE WHEN l.vencimiento >= CURDATE() THEN l.vencimiento END), '%Y-%m-%d') AS prox_venc
-       FROM vacunas v
-       LEFT JOIN lotes l ON l.vacuna_id = v.id AND l.disponible > 0
-      WHERE v.activa = 1
-      GROUP BY v.id, v.nombre, v.dosis_por_frasco
-      ORDER BY v.nombre`,
-    [DIAS_VENCIMIENTO]
-  );
-
-  // 2) Aplicaciones de los últimos 30 días por vacuna (para estimar cobertura)
-  const [consRows] = await pool.query(
-    `SELECT x.vacuna_id, SUM(x.cantidad) AS dosis
-       FROM (${MOV_CON_FECHA}) x
-      WHERE x.tipo = 'aplicacion'
-        AND x.f BETWEEN DATE_SUB(CURDATE(), INTERVAL 29 DAY) AND CURDATE()
-      GROUP BY x.vacuna_id`
-  );
-  const consumo = new Map(consRows.map(r => [Number(r.vacuna_id), Number(r.dosis)]));
-
-  // 3) Lotes vigentes con dosis, para elegir cuál usar primero:
-  //    si hay un frasco multidosis abierto, ese lote; si no, el que vence antes.
-  const [lotesVig] = await pool.query(
-    `SELECT l.id AS lote_id, l.vacuna_id, l.numero_lote,
-            DATE_FORMAT(l.vencimiento, '%Y-%m-%d') AS vencimiento,
-            DATEDIFF(l.vencimiento, CURDATE()) AS dias, l.disponible,
-            EXISTS (SELECT 1 FROM frascos_abiertos f
-                     WHERE f.lote_id = l.id AND f.estado = 'activo'
-                       AND (f.dosis_totales - f.dosis_usadas) > 0
-                       AND DATEDIFF(CURDATE(), f.fecha_apertura) <= 30) AS frasco_abierto
-       FROM lotes l
-      WHERE l.disponible > 0 AND l.vencimiento >= CURDATE()
-      ORDER BY l.vencimiento, l.id`
-  );
-  const usarPrimero = new Map();
-  lotesVig.forEach(l => {
-    const k = Number(l.vacuna_id);
-    const actual = usarPrimero.get(k);
-    const conFrasco = Number(l.frasco_abierto) === 1;
-    if (!actual || (conFrasco && !actual.frasco_abierto)) {
-      usarPrimero.set(k, {
-        lote_id: l.lote_id, numero_lote: l.numero_lote, vencimiento: l.vencimiento,
-        dias: Number(l.dias), disponible: Number(l.disponible), frasco_abierto: conFrasco,
-      });
-    }
-  });
-
-  const vacunas = vacRows.map(v => {
-    const stock = Number(v.stock);
-    const consumo30 = consumo.get(Number(v.id)) || 0;
-    const porDia = consumo30 / 30;
-    return {
-      id: v.id,
-      nombre: v.nombre,
-      dosis_por_frasco: Number(v.dosis_por_frasco),
-      stock,
-      stock_por_vencer: Number(v.stock_por_vencer),
-      stock_vencido: Number(v.stock_vencido),
-      lotes: Number(v.lotes),
-      prox_venc: v.prox_venc || null,
-      consumo30,
-      cobertura_dias: porDia > 0 ? Math.floor(stock / porDia) : null,
-      usar_primero: usarPrimero.get(Number(v.id)) || null,
-    };
-  });
-
-  // 4) Lotes con dosis que vencen en los próximos 60 días (o que ya vencieron)
-  const [radar] = await pool.query(
-    `SELECT l.id AS lote_id, v.id AS vacuna_id, v.nombre AS vacuna, v.dosis_por_frasco,
-            l.numero_lote, DATE_FORMAT(l.vencimiento, '%Y-%m-%d') AS vencimiento,
-            DATEDIFF(l.vencimiento, CURDATE()) AS dias, l.disponible
-       FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
-      WHERE v.activa = 1 AND l.disponible > 0 AND DATEDIFF(l.vencimiento, CURDATE()) <= 60
-      ORDER BY l.vencimiento, v.nombre`
-  );
-
-  // 5) Frascos multidosis abiertos con dosis sobrantes
-  const [frascos] = await pool.query(
-    `SELECT f.id AS frasco_id, f.lote_id, l.numero_lote, v.id AS vacuna_id, v.nombre AS vacuna,
-            DATE_FORMAT(f.fecha_apertura, '%Y-%m-%d') AS fecha_apertura,
-            DATEDIFF(CURDATE(), f.fecha_apertura) AS dias_abierto,
-            f.dosis_totales, (f.dosis_totales - f.dosis_usadas) AS dosis_sobrantes,
-            LEAST(30 - DATEDIFF(CURDATE(), f.fecha_apertura),
-                  DATEDIFF(l.vencimiento, CURDATE())) AS dias_restantes,
-            CASE WHEN DATEDIFF(l.vencimiento, CURDATE()) < (30 - DATEDIFF(CURDATE(), f.fecha_apertura))
-                 THEN 'lote' ELSE '30dias' END AS causa_vencimiento
-       FROM frascos_abiertos f
-       JOIN lotes l   ON l.id = f.lote_id
-       JOIN vacunas v ON v.id = l.vacuna_id
-      WHERE f.estado = 'activo' AND (f.dosis_totales - f.dosis_usadas) > 0
-      ORDER BY dias_restantes, f.fecha_apertura`
-  );
-
-  // 6) Totales del día y serie de aplicaciones de 14 días (fecha efectiva)
-  const [diaRows] = await pool.query(
-    `SELECT DATE_FORMAT(x.f, '%Y-%m-%d') AS dia, x.tipo,
-            SUM(x.cantidad) AS dosis, COUNT(*) AS registros
-       FROM (${MOV_CON_FECHA}) x
-      WHERE x.f BETWEEN DATE_SUB(CURDATE(), INTERVAL 13 DAY) AND CURDATE()
-      GROUP BY dia, x.tipo`
-  );
-  const hoyTot = {
-    aplicaciones: { dosis: 0, registros: 0 },
-    descartes:    { dosis: 0, registros: 0 },
-    ingresos:     { dosis: 0, registros: 0 },
-  };
-  const CLAVE = { aplicacion: 'aplicaciones', descarte: 'descartes', ingreso: 'ingresos' };
-  const aplPorDia = new Map();
-  diaRows.forEach(r => {
-    if (r.tipo === 'aplicacion') aplPorDia.set(r.dia, Number(r.dosis));
-    if (r.dia === hoy && CLAVE[r.tipo]) {
-      hoyTot[CLAVE[r.tipo]] = { dosis: Number(r.dosis), registros: Number(r.registros) };
-    }
-  });
-  const serie14 = [];
-  for (let i = 13; i >= 0; i--) {
-    const dia = sumarDias(hoy, -i);
-    serie14.push({ dia, dosis: aplPorDia.get(dia) || 0 });
-  }
-
-  // 7) Movimientos registrados hoy (la proveedora no ve el historial)
-  let actividad = [];
-  let actividadTotal = 0;
-  if (rol !== 'proveedora') {
-    try {
-      [actividad] = await pool.query(
-        `SELECT m.id, m.tipo, v.id AS vacuna_id, v.nombre AS vacuna,
-                COALESCE(l.numero_lote, m.numero_lote_snap) AS numero_lote,
-                m.cantidad, m.motivo, DATE_FORMAT(m.fecha_mov, '%H:%i') AS hora,
-                DATE_FORMAT(m.fecha_aplicacion, '%Y-%m-%d') AS fecha_aplicacion
-           FROM movimientos m
-           JOIN vacunas v ON v.id = m.vacuna_id
-           LEFT JOIN lotes l ON l.id = m.lote_id
-          WHERE m.fecha_mov >= CURDATE()
-          ORDER BY m.fecha_mov DESC, m.id DESC
-          LIMIT 12`
-      );
-      const [[{ n }]] = await pool.query(`SELECT COUNT(*) AS n FROM movimientos WHERE fecha_mov >= CURDATE()`);
-      actividadTotal = Number(n);
-    } catch (err) {
-      // Si falla (por ejemplo, una base sin la migración de movimientos v2),
-      // el resto del tablero se sigue mostrando sin la actividad del día.
-      console.error('dashboard/actividad de hoy:', err.message);
-      actividad = [];
-      actividadTotal = 0;
-    }
-  }
-
-  return {
-    hoy: { fecha: hoy, ...hoyTot },
-    serie14,
-    vacunas,
-    radar: radar.map(r => ({ ...r, dias: Number(r.dias), disponible: Number(r.disponible),
-                             dosis_por_frasco: Number(r.dosis_por_frasco) })),
-    frascos: frascos.map(f => ({ ...f, dias_abierto: Number(f.dias_abierto), dias_restantes: Number(f.dias_restantes),
-                                 dosis_totales: Number(f.dosis_totales), dosis_sobrantes: Number(f.dosis_sobrantes) })),
-    actividad,
-    actividadTotal,
-  };
-}
-
-/**
- * Resumen de actividad — pensado para el rol de jefa de enfermería, que necesita
- * datos de gestión: aplicaciones de la semana, descartes del mes y qué proporción
- * de esos descartes fue por vencimiento (indicador clave para saber si se está
- * pediendo demasiada vacuna o mal planificando).
- * Accesible a cualquier rol autenticado, pero solo se muestra en el frontend a jefa.
- */
-app.get('/api/dashboard/actividad', requireAuth, async (req, res) => {
-  try {
-    const [[aplicaciones]] = await pool.query(
-      `SELECT COUNT(*) AS movimientos, COALESCE(SUM(cantidad), 0) AS dosis
-         FROM movimientos
-        WHERE tipo = 'aplicacion'
-          AND fecha_mov >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)`
-    );
-    const [[descartes]] = await pool.query(
-      `SELECT COUNT(*) AS movimientos,
-              COALESCE(SUM(cantidad), 0) AS dosis,
-              COALESCE(SUM(CASE
-                WHEN motivo LIKE '%encim%' OR motivo LIKE '%encido%'
-                THEN cantidad ELSE 0
-              END), 0) AS dosis_por_vencimiento
-         FROM movimientos
-        WHERE tipo = 'descarte'
-          AND fecha_mov >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`
-    );
-    // Tasa de descarte por vencimiento sobre el total de descartes del mes
-    const tasaVencimiento = descartes.dosis > 0
-      ? Math.round((descartes.dosis_por_vencimiento / descartes.dosis) * 100)
-      : 0;
-
-    // Top 3 vacunas más aplicadas en el mes (últimos 30 días)
-    const [topVacunas] = await pool.query(
-      `SELECT v.nombre, COALESCE(SUM(m.cantidad), 0) AS dosis
-         FROM movimientos m
-         JOIN vacunas v ON v.id = m.vacuna_id
-        WHERE m.tipo = 'aplicacion'
-          AND m.fecha_mov >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-        GROUP BY v.id, v.nombre
-        ORDER BY dosis DESC
-        LIMIT 3`
-    );
-    res.json({
-      aplicacionesSemana: {
-        movimientos: aplicaciones.movimientos,
-        dosis: Number(aplicaciones.dosis),
-      },
-      descartesMes: {
-        movimientos: descartes.movimientos,
-        dosis: Number(descartes.dosis),
-        dosisPorVencimiento: Number(descartes.dosis_por_vencimiento),
-        tasaVencimiento,
-      },
-      topVacunasMes: topVacunas.map(v => ({ nombre: v.nombre, dosis: Number(v.dosis) })),
-    });
-  } catch (err) {
-    console.error('dashboard/actividad:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  }
-});
-
-/* ===========================================================
- * ESCRITURA — solo enfermería (RF05)
- * ========================================================= */
-app.post('/api/lotes', requireAuth, requireRole('enfermeria'), async (req, res) => {
-  const { vacuna_id, numero_lote, vencimiento, cantidad } = req.body;
-  if (!vacuna_id || !numero_lote || !vencimiento || !cantidad)
-    return res.status(400).json({ error: 'Completá todos los campos obligatorios.' });
-  if (Number(cantidad) <= 0) return res.status(400).json({ error: 'La cantidad debe ser mayor a cero.' });
-  if (vencimiento < new Date().toISOString().slice(0, 10))
-    return res.status(400).json({ error: 'La fecha de vencimiento no puede ser anterior a hoy.' });
-
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const numLote = numero_lote.trim();
-    const cant = Number(cantidad);
-
-    // ¿Ya hay un lote con mismo número y vacuna? Entonces es más stock del
-    // mismo lote, no uno nuevo. Sumamos al existente para que no queden
-    // dos filas duplicadas en Stock (pedido de la clienta: dos cargas
-    // del mismo lote deben acumularse).
-    const [[existente]] = await conn.query(
-      `SELECT id, cantidad_inicial, disponible, vencimiento
-         FROM lotes
-        WHERE vacuna_id = ? AND numero_lote = ?
-        LIMIT 1 FOR UPDATE`,
-      [vacuna_id, numLote]
-    );
-
-    if (existente) {
-      // Si cargaron un vencimiento distinto para el mismo número de lote,
-      // avisamos: puede ser un typo o puede que no sea el mismo lote.
-      // Nos quedamos con el ya cargado y no mezclamos silenciosamente.
-      // mysql2 devuelve DATE como objeto Date; hay que formatear a YYYY-MM-DD
-      // sin pasar por toISOString() (que shiftea por zona horaria).
-      const vencExistente = toYMD(existente.vencimiento);
-      if (vencExistente !== vencimiento) {
-        await conn.rollback();
-        return res.status(409).json({
-          error: `Ya existe un lote con el número "${numLote}" para esta vacuna, pero con otro vencimiento (${vencExistente}). Revisá los datos antes de cargarlo.`
-        });
-      }
-      await conn.query(
-        `UPDATE lotes
-            SET cantidad_inicial = cantidad_inicial + ?,
-                disponible       = disponible + ?
-          WHERE id = ?`,
-        [cant, cant, existente.id]
-      );
-      await conn.query(
-        `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, usuario_id, motivo)
-         VALUES ('ingreso',?,?,?,?,?)`,
-        [vacuna_id, existente.id, cant, req.user.id, 'Suma al lote existente']
-      );
-      await conn.commit();
-      return res.status(200).json({
-        ok: true, lote_id: existente.id, acumulado: true,
-        total_disponible: Number(existente.disponible) + cant,
-        mensaje: `Se sumaron ${cant} dosis al lote existente (ahora quedan ${Number(existente.disponible) + cant}).`
-      });
-    }
-
-    const [r] = await conn.query(
-      `INSERT INTO lotes (vacuna_id, numero_lote, vencimiento, cantidad_inicial, disponible) VALUES (?,?,?,?,?)`,
-      [vacuna_id, numLote, vencimiento, cant, cant]
-    );
-    await conn.query(
-      `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, usuario_id) VALUES ('ingreso',?,?,?,?)`,
-      [vacuna_id, r.insertId, cant, req.user.id]
-    );
-    await conn.commit();
-    res.status(201).json({ ok: true, lote_id: r.insertId, mensaje: 'Lote ingresado con éxito.' });
-  } catch (err) {
-    await conn.rollback(); console.error('lotes:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  } finally { conn.release(); }
-});
-
-/**
- * Edición de lote (corrección de errores de tipeo).
- * Solo se pueden editar el número de lote y la fecha de vencimiento.
- * No se puede editar la vacuna ni las cantidades para no romper la
- * trazabilidad de los movimientos ya registrados.
- */
-app.patch('/api/lotes/:id', requireAuth, requireRole('enfermeria'), async (req, res) => {
-  const { numero_lote, vencimiento, cantidad, disponible: dispAjuste } = req.body;
-  if (!numero_lote || !vencimiento)
-    return res.status(400).json({ error: 'Completá el número de lote y la fecha de vencimiento.' });
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(vencimiento))
-    return res.status(400).json({ error: 'Fecha de vencimiento inválida.' });
-
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-
-    // Traemos el estado actual del lote y la vacuna para validar
-    const [[lote]] = await conn.query(
-      `SELECT l.id, l.vacuna_id, l.numero_lote, l.vencimiento, l.cantidad_inicial, l.disponible,
-              v.dosis_por_frasco, v.nombre
-         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
-        WHERE l.id = ? FOR UPDATE`,
-      [req.params.id]
-    );
-    if (!lote) { await conn.rollback(); return res.status(404).json({ error: 'El lote no existe.' }); }
-
-    // Si se manda una nueva cantidad, validamos y actualizamos.
-    // Regla: la nueva cantidad no puede ser menor que las dosis ya usadas
-    // (aplicadas + descartadas), porque eso rompería la trazabilidad.
-    let nuevaCantidad = lote.cantidad_inicial;
-    let nuevoDisponible = lote.disponible;
-    if (cantidad !== undefined && cantidad !== null) {
-      const nueva = Number(cantidad);
-      const usadas = lote.cantidad_inicial - lote.disponible;
-      if (!Number.isFinite(nueva) || nueva <= 0) {
-        await conn.rollback();
-        return res.status(400).json({ error: 'La cantidad debe ser un número mayor a 0.' });
-      }
-      if (nueva < usadas) {
-        await conn.rollback();
-        return res.status(400).json({
-          error: `No podés bajar la cantidad a ${nueva}: ya se registraron ${usadas} dosis usadas en este lote.`,
-        });
-      }
-      // En multidosis la cantidad tiene que ser múltiplo del tamaño del frasco
-      if (lote.dosis_por_frasco > 1 && nueva % lote.dosis_por_frasco !== 0) {
-        await conn.rollback();
-        return res.status(400).json({
-          error: `Como es multidosis (${lote.dosis_por_frasco} por frasco), la cantidad debe ser múltiplo de ${lote.dosis_por_frasco}.`,
-        });
-      }
-      nuevaCantidad = nueva;
-      nuevoDisponible = nueva - usadas;
-    }
-
-    // Ajuste directo de "dosis disponibles ahora" (recuento físico).
-    // Si el nuevo disponible es mayor que la cantidad inicial, subimos
-    // también cantidad_inicial para mantener la invariante disponible <= inicial.
-    let ajusteDosis = 0; // delta de dosis disponibles, para el motivo
-    if (dispAjuste !== undefined && dispAjuste !== null) {
-      const nd = Number(dispAjuste);
-      if (!Number.isInteger(nd) || nd < 0) {
-        await conn.rollback();
-        return res.status(400).json({ error: 'Las dosis disponibles tienen que ser un número entero mayor o igual a 0.' });
-      }
-      ajusteDosis = nd - nuevoDisponible;
-      if (ajusteDosis !== 0) {
-        nuevoDisponible = nd;
-        if (nd > nuevaCantidad) nuevaCantidad = nd;
-      }
-    }
-
-    await conn.query(
-      'UPDATE lotes SET numero_lote = ?, vencimiento = ?, cantidad_inicial = ?, disponible = ? WHERE id = ?',
-      [numero_lote.trim(), vencimiento, nuevaCantidad, nuevoDisponible, req.params.id]
-    );
-
-    // Si cambió la cantidad, también actualizamos el movimiento de INGRESO
-    // asociado para que el historial quede coherente con el nuevo total.
-    if (nuevaCantidad !== lote.cantidad_inicial) {
-      await conn.query(
-        `UPDATE movimientos SET cantidad = ?
-          WHERE lote_id = ? AND tipo = 'ingreso'
-          ORDER BY id ASC LIMIT 1`,
-        [nuevaCantidad, req.params.id]
-      );
-    }
-
-    // Registrar un movimiento de tipo 'edicion' con el detalle de qué cambió,
-    // para que quede reflejado en el historial de Movimientos.
-    const cambios = [];
-    const numNuevo = numero_lote.trim();
-    const vencOrig = lote.vencimiento instanceof Date
-      ? lote.vencimiento.toISOString().slice(0, 10)
-      : String(lote.vencimiento).slice(0, 10);
-    if (lote.numero_lote !== numNuevo) cambios.push(`N° lote: ${lote.numero_lote} → ${numNuevo}`);
-    if (vencOrig !== vencimiento) cambios.push(`Venc: ${vencOrig} → ${vencimiento}`);
-    if (nuevaCantidad !== lote.cantidad_inicial) cambios.push(`Cant: ${lote.cantidad_inicial} → ${nuevaCantidad}`);
-    if (ajusteDosis !== 0) {
-      const signo = ajusteDosis > 0 ? '+' : '';
-      cambios.push(`Ajuste stock físico: ${lote.disponible} → ${nuevoDisponible} (${signo}${ajusteDosis} dosis)`);
-    }
-
-    if (cambios.length > 0) {
-      const motivoTxt = cambios.join(' · ').slice(0, 200);
-      await conn.query(
-        `INSERT INTO movimientos (tipo, vacuna_id, lote_id, numero_lote_snap, cantidad, motivo, usuario_id)
-         VALUES ('edicion', ?, ?, ?, ?, ?, ?)`,
-        [lote.vacuna_id, req.params.id, numNuevo, nuevaCantidad, motivoTxt, req.user.id]
-      );
-    }
-
-    await conn.commit();
-    res.json({ ok: true, mensaje: 'Lote actualizado.' });
-  } catch (err) {
-    await conn.rollback();
-    console.error('editar lote:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  } finally { conn.release(); }
-});
-
-/**
- * Elimina un lote del stock. Pensado principalmente para corregir cargas
- * duplicadas o erróneas. Por seguridad de trazabilidad, solo permite eliminar
- * lotes que NO hayan tenido aplicaciones o descartes registrados; el movimiento
- * de ingreso original se borra junto con el lote.
- */
-app.delete('/api/lotes/:id', requireAuth, requireRole('enfermeria'), async (req, res) => {
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const [[lote]] = await conn.query(
-      'SELECT id, vacuna_id, numero_lote, cantidad_inicial FROM lotes WHERE id = ? FOR UPDATE',
-      [req.params.id]
-    );
-    if (!lote) { await conn.rollback(); return res.status(404).json({ error: 'El lote no existe.' }); }
-
-    // Verificamos que no tenga aplicaciones ni descartes asociados
-    const [[uso]] = await conn.query(
-      `SELECT COUNT(*) AS n FROM movimientos
-        WHERE lote_id = ? AND tipo IN ('aplicacion','descarte')`,
-      [req.params.id]
-    );
-    if (uso.n > 0) {
-      await conn.rollback();
-      return res.status(400).json({
-        error: `No se puede eliminar: el lote tiene ${uso.n} movimiento(s) de aplicación/descarte registrados. Solo se pueden eliminar lotes sin uso.`,
-      });
-    }
-
-    // Verificamos que no tenga frascos abiertos (por multidosis)
-    const [[frascos]] = await conn.query(
-      'SELECT COUNT(*) AS n FROM frascos_abiertos WHERE lote_id = ?',
-      [req.params.id]
-    );
-    if (frascos.n > 0) {
-      await conn.rollback();
-      return res.status(400).json({
-        error: 'No se puede eliminar: el lote tiene frascos abiertos registrados.',
-      });
-    }
-
-    // Antes de eliminar, registramos un movimiento de tipo 'eliminacion' que
-    // sobreviva al DELETE del lote (por eso guardamos numero_lote_snap).
-    // También borramos el movimiento de ingreso original para no dejar entradas
-    // "fantasma" del lote borrado.
-    await conn.query(`DELETE FROM movimientos WHERE lote_id = ? AND tipo = 'ingreso'`, [req.params.id]);
-    await conn.query(
-      `INSERT INTO movimientos (tipo, vacuna_id, lote_id, numero_lote_snap, cantidad, motivo, usuario_id)
-       VALUES ('eliminacion', ?, ?, ?, ?, ?, ?)`,
-      [lote.vacuna_id, req.params.id, lote.numero_lote, lote.cantidad_inicial,
-       `Lote eliminado del stock`, req.user.id]
-    );
-    // ON DELETE SET NULL en la FK deja el lote_id del movimiento en NULL.
-    await conn.query('DELETE FROM lotes WHERE id = ?', [req.params.id]);
-
-    await conn.commit();
-    res.json({ ok: true, mensaje: `Lote ${lote.numero_lote} eliminado.` });
-  } catch (err) {
-    await conn.rollback();
-    console.error('eliminar lote:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  } finally { conn.release(); }
-});
-
-// Error con mensaje para mostrar al usuario (se responde con su status HTTP)
-class ErrorUsuario extends Error {
+class Aviso extends Error {
   constructor(status, mensaje) { super(mensaje); this.status = status; }
 }
-const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-/**
- * Registra UNA aplicación dentro de una transacción ya abierta.
- * Valida el lote (existe, alcanza el stock, no está vencido a la fecha de
- * aplicación), descuenta las dosis, guarda el movimiento y gestiona el frasco
- * abierto si la vacuna es multidosis. Lo usan /api/aplicaciones (una vacuna)
- * y /api/aplicaciones/visita (varias vacunas del mismo paciente).
- */
-async function registrarAplicacion(conn, { lote_id, cantidad, fecha_aplicacion }, usuarioId) {
-  const cant = Number(cantidad);
-  if (!lote_id || !Number.isInteger(cant) || cant <= 0) {
-    throw new ErrorUsuario(400, 'Cada vacuna necesita un lote y una cantidad de dosis mayor a 0.');
+/* Envuelve cada ruta: los errores esperados vuelven con su mensaje, los demás como error del servidor */
+const ruta = fn => async (req, res) => {
+  try { await fn(req, res); }
+  catch (err) {
+    if (err instanceof Aviso) return res.status(err.status).json({ error: err.message });
+    console.error(`${req.method} ${req.path}:`, err.message);
+    res.status(500).json({ error: 'Error del servidor. Probá de nuevo en un momento.' });
   }
-  const [[lote]] = await conn.query(
-    `SELECT l.id, l.vacuna_id, l.numero_lote, l.disponible,
-            DATE_FORMAT(l.vencimiento, '%Y-%m-%d') AS vencimiento,
-            v.nombre AS vacuna, v.dosis_por_frasco
-       FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
-      WHERE l.id = ? FOR UPDATE`, [lote_id]
-  );
-  if (!lote) throw new ErrorUsuario(404, 'El lote no existe.');
-  if (lote.vencimiento < fecha_aplicacion) {
-    throw new ErrorUsuario(400, `El lote ${lote.numero_lote} de ${lote.vacuna} está vencido para esa fecha. Elegí otro lote.`);
-  }
-  if (cant > lote.disponible) {
-    throw new ErrorUsuario(400, `No alcanza el stock del lote ${lote.numero_lote} de ${lote.vacuna}: quedan ${lote.disponible} dosis.`);
-  }
-
-  await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [cant, lote.id]);
-  const [ins] = await conn.query(
-    `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, fecha_aplicacion, usuario_id)
-     VALUES ('aplicacion',?,?,?,?,?)`,
-    [lote.vacuna_id, lote.id, cant, fecha_aplicacion, usuarioId]
-  );
-  let frasco = null;
-  if (lote.dosis_por_frasco > 1) {
-    frasco = await gestionarFrascoAbierto(conn, lote.id, cant, lote.dosis_por_frasco);
-  }
-  return {
-    mov_id: ins.insertId, lote_id: lote.id, vacuna_id: lote.vacuna_id, vacuna: lote.vacuna,
-    numero_lote: lote.numero_lote, cantidad: cant, frasco,
-  };
-}
-
-function responderError(res, err, contexto) {
-  if (err instanceof ErrorUsuario) return res.status(err.status).json({ error: err.message });
-  console.error(contexto + ':', err.message);
-  return res.status(500).json({ error: 'Error del servidor.' });
-}
-
-app.post('/api/aplicaciones', requireAuth, requireRole('enfermeria'), async (req, res) => {
-  const { lote_id, cantidad, fecha_aplicacion } = req.body;
-  if (!lote_id || !cantidad || !fecha_aplicacion || !FECHA_RE.test(String(fecha_aplicacion)))
-    return res.status(400).json({ error: 'Completá todos los campos obligatorios.' });
+};
+/* Corre una función dentro de una transacción */
+async function enTransaccion(fn) {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const r = await registrarAplicacion(conn, { lote_id, cantidad, fecha_aplicacion }, req.user.id);
+    const r = await fn(conn);
     await conn.commit();
-    const respuesta = { ok: true, mensaje: 'Aplicación registrada con éxito.', mov_id: r.mov_id };
-    if (r.frasco) respuesta.frasco = r.frasco;
-    res.status(201).json(respuesta);
+    return r;
   } catch (err) {
-    await conn.rollback();
-    responderError(res, err, 'aplicaciones');
-  } finally { conn.release(); }
+    await conn.rollback().catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+const texto = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+function entero(v, { min = 0, max = 999999999 } = {}) {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= min && n <= max ? n : null;
+}
+const codigoValido = c => /^[A-Z]{3}-\d{3,7}$/.test(c);
+const urlFoto = clave => (clave ? `/api/fotos/${clave}` : null);
+
+const SQL_PIEZA = `
+  SELECT p.id, p.codigo, p.nombre, p.material, p.categoria, p.precio, p.detalle, p.estado,
+         DATEDIFF(CURDATE(), p.ingreso) AS dias,
+         p.reserva_cliente, p.reserva_sena, DATEDIFF(CURDATE(), p.reserva_fecha) AS reserva_dias,
+         f.clave AS foto
+    FROM piezas p LEFT JOIN fotos f ON f.id = p.foto_id`;
+const piezaJSON = r => ({
+  id: r.id, codigo: r.codigo, nombre: r.nombre, material: r.material, categoria: r.categoria,
+  precio: r.precio, detalle: r.detalle, estado: r.estado, dias: Number(r.dias) || 0,
+  reserva: r.reserva_cliente != null ? { cliente: r.reserva_cliente, sena: r.reserva_sena || 0, dias: Number(r.reserva_dias) || 0 } : null,
+  foto: urlFoto(r.foto),
 });
 
-/**
- * Visita: varias vacunas aplicadas al mismo paciente el mismo día.
- * Body: { fecha_aplicacion: 'YYYY-MM-DD', items: [{ lote_id, cantidad }, ...] }
- * Todo va en UNA transacción: si una vacuna falla, no se guarda ninguna.
- * Cada vacuna queda como un movimiento de aplicación normal.
- */
-app.post('/api/aplicaciones/visita', requireAuth, requireRole('enfermeria'), async (req, res) => {
-  const { fecha_aplicacion, items } = req.body || {};
-  if (!fecha_aplicacion || !FECHA_RE.test(String(fecha_aplicacion)))
-    return res.status(400).json({ error: 'Indicá la fecha de aplicación.' });
-  if (fecha_aplicacion > hoyYMD())
-    return res.status(400).json({ error: 'La fecha de aplicación no puede ser posterior a hoy.' });
-  if (!Array.isArray(items) || items.length === 0)
-    return res.status(400).json({ error: 'Agregá al menos una vacuna.' });
-  if (items.length > 15)
-    return res.status(400).json({ error: 'Una visita puede tener hasta 15 vacunas.' });
-
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const hechos = [];
-    for (const it of items) {
-      hechos.push(await registrarAplicacion(conn, { ...it, fecha_aplicacion }, req.user.id));
-    }
-    await conn.commit();
-    const dosis = hechos.reduce((s, h) => s + h.cantidad, 0);
-    res.status(201).json({
-      ok: true,
-      mensaje: hechos.length === 1
-        ? 'Aplicación registrada con éxito.'
-        : `Se registraron ${hechos.length} vacunas (${dosis} dosis).`,
-      items: hechos,
-      mov_ids: hechos.map(h => h.mov_id),
-    });
-  } catch (err) {
-    await conn.rollback();
-    responderError(res, err, 'aplicaciones/visita');
-  } finally { conn.release(); }
+const SQL_VENTA = `
+  SELECT v.id, v.codigo, v.nombre, v.material, v.categoria, v.precio, v.medio_pago,
+         DATE_FORMAT(v.fecha, '%H:%i') AS hora, f.clave AS foto
+    FROM ventas v JOIN piezas p ON p.id = v.pieza_id LEFT JOIN fotos f ON f.id = p.foto_id`;
+const ventaJSON = r => ({
+  id: r.id, codigo: r.codigo, nombre: r.nombre, material: r.material, categoria: r.categoria,
+  precio: r.precio, medio: r.medio_pago, hora: r.hora, foto: urlFoto(r.foto),
 });
 
-/**
- * Gestiona el frasco abierto de un lote multidosis al aplicar dosis.
- * Regla del CAPS: un solo frasco abierto por lote a la vez, se usa hasta
- * agotar o vencer (30 días), recién ahí se abre otro.
- *
- * Devuelve un objeto con info del último frasco tocado, para que el
- * frontend arme un toast enriquecido:
- *   { abrioNuevo: bool, nombreVacuna, fechaVencimientoFrasco (ISO date),
- *     dosisRestantes, diasParaVencer }
- */
-async function gestionarFrascoAbierto(conn, lote_id, cantidad, dosisPorFrasco) {
-  let restantes = cantidad;
-  let abrioNuevo = false;
-  let ultimoFrascoId = null;
+const SQL_PENDIENTE = `
+  SELECT q.id, q.numero, q.material, q.categoria, q.precio, q.nombre, q.detalle, f.clave AS foto
+    FROM pendientes q JOIN fotos f ON f.id = q.foto_id`;
+const pendienteJSON = r => ({
+  id: r.id, numero: r.numero, material: r.material, categoria: r.categoria,
+  precio: r.precio, nombre: r.nombre, detalle: r.detalle, foto: urlFoto(r.foto),
+});
 
-  while (restantes > 0) {
-    const [[frasco]] = await conn.query(
-      `SELECT id, dosis_totales, dosis_usadas, fecha_apertura
-         FROM frascos_abiertos
-        WHERE lote_id = ? AND estado = 'activo'
-        LIMIT 1 FOR UPDATE`, [lote_id]
-    );
+async function leerPieza(db, codigo) {
+  const [[r]] = await db.query(`${SQL_PIEZA} WHERE p.codigo = ?`, [codigo]);
+  return r ? piezaJSON(r) : null;
+}
+async function leerPendiente(db, id) {
+  const [[r]] = await db.query(`${SQL_PENDIENTE} WHERE q.id = ?`, [id]);
+  return r ? pendienteJSON(r) : null;
+}
+/* Busca una pieza que siga en el local (no vendida) y la bloquea hasta terminar la transacción */
+async function piezaEnLocal(conn, codigo) {
+  if (!codigoValido(codigo)) throw new Aviso(404, 'No se encontró la pieza.');
+  const [[p]] = await conn.query('SELECT * FROM piezas WHERE codigo = ? FOR UPDATE', [codigo]);
+  if (!p) throw new Aviso(404, 'No se encontró la pieza.');
+  if (p.estado === 'vendido') throw new Aviso(409, `${codigo} ya figura como vendida.`);
+  return p;
+}
 
-    if (!frasco) {
-      // Abrir uno nuevo
-      const usar = Math.min(restantes, dosisPorFrasco);
-      const nuevoEstado = (usar === dosisPorFrasco) ? 'agotado' : 'activo';
-      const [r] = await conn.query(
-        `INSERT INTO frascos_abiertos (lote_id, fecha_apertura, dosis_totales, dosis_usadas, estado, fecha_cierre)
-         VALUES (?, CURDATE(), ?, ?, ?, ?)`,
-        [lote_id, dosisPorFrasco, usar, nuevoEstado, nuevoEstado === 'agotado' ? new Date() : null]
-      );
-      restantes -= usar;
-      abrioNuevo = true;
-      ultimoFrascoId = r.insertId;
-    } else {
-      const espacioLibre = frasco.dosis_totales - frasco.dosis_usadas;
-      const usar = Math.min(restantes, espacioLibre);
-      const nuevasUsadas = frasco.dosis_usadas + usar;
-      if (nuevasUsadas >= frasco.dosis_totales) {
-        await conn.query(
-          `UPDATE frascos_abiertos SET dosis_usadas = ?, estado = 'agotado', fecha_cierre = CURDATE()
-            WHERE id = ?`, [nuevasUsadas, frasco.id]
-        );
-      } else {
-        await conn.query(
-          `UPDATE frascos_abiertos SET dosis_usadas = ? WHERE id = ?`,
-          [nuevasUsadas, frasco.id]
-        );
-      }
-      restantes -= usar;
-      ultimoFrascoId = frasco.id;
-    }
-  }
-
-  // Buscar info del último frasco tocado para devolver al frontend.
-  // Calculamos el vencimiento REAL del frasco: el mínimo entre "30 días de apertura"
-  // y "vencimiento del lote". Devolvemos también la causa para que el toast la muestre.
-  if (ultimoFrascoId) {
-    const [[f]] = await conn.query(
-      `SELECT f.fecha_apertura, f.dosis_totales, f.dosis_usadas, f.estado,
-              l.vencimiento AS vencimiento_lote,
-              (f.dosis_totales - f.dosis_usadas) AS dosis_restantes,
-              LEAST(
-                30 - DATEDIFF(CURDATE(), f.fecha_apertura),
-                DATEDIFF(l.vencimiento, CURDATE())
-              ) AS dias_para_vencer,
-              CASE
-                WHEN DATEDIFF(l.vencimiento, CURDATE()) < (30 - DATEDIFF(CURDATE(), f.fecha_apertura))
-                THEN 'lote' ELSE '30dias'
-              END AS causa_vencimiento,
-              CASE
-                WHEN DATEDIFF(l.vencimiento, CURDATE()) < (30 - DATEDIFF(CURDATE(), f.fecha_apertura))
-                THEN l.vencimiento
-                ELSE DATE_ADD(f.fecha_apertura, INTERVAL 30 DAY)
-              END AS fecha_vencimiento_frasco
-         FROM frascos_abiertos f
-         JOIN lotes l ON l.id = f.lote_id
-        WHERE f.id = ?`, [ultimoFrascoId]
-    );
-    return {
-      abrioNuevo,
-      dosisRestantes: f.dosis_restantes,
-      diasParaVencer: f.dias_para_vencer,
-      fechaVencimientoFrasco: f.fecha_vencimiento_frasco,
-      causaVencimiento: f.causa_vencimiento,     // '30dias' o 'lote'
-      agotado: f.estado === 'agotado',
-    };
-  }
+/* Las fotos llegan ya achicadas desde el navegador (JPEG de hasta 1600 px) */
+const recibirImagen = express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '8mb' });
+function tipoImagen(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+  if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'image/jpeg';
+  if (buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]))) return 'image/png';
+  if (buf.subarray(0, 4).toString('latin1') === 'RIFF' && buf.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
   return null;
 }
+async function guardarFoto(conn, buf) {
+  const tipo = tipoImagen(buf);
+  if (!tipo) throw new Aviso(415, 'El archivo no es una foto válida (JPG, PNG o WEBP).');
+  const clave = crypto.randomBytes(16).toString('hex');
+  const [r] = await conn.query('INSERT INTO fotos (clave, tipo, datos) VALUES (?, ?, ?)', [clave, tipo, buf]);
+  return r.insertId;
+}
+async function borrarFotoSiQuedoSuelta(conn, fotoId) {
+  if (!fotoId) return;
+  await conn.query(`
+    DELETE f FROM fotos f
+      LEFT JOIN piezas p     ON p.foto_id = f.id
+      LEFT JOIN pendientes q ON q.foto_id = f.id
+     WHERE f.id = ? AND p.id IS NULL AND q.id IS NULL`, [fotoId]);
+}
 
-app.post('/api/descartes', requireAuth, requireRole('enfermeria'), async (req, res) => {
-  const { lote_id, cantidad, motivo } = req.body;
-  if (!lote_id || !cantidad || !motivo)
-    return res.status(400).json({ error: 'Completá todos los campos. Indicá el motivo del descarte.' });
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const [[lote]] = await conn.query('SELECT id, vacuna_id, disponible FROM lotes WHERE id = ? FOR UPDATE', [lote_id]);
-    if (!lote) { await conn.rollback(); return res.status(404).json({ error: 'El lote no existe.' }); }
-    if (Number(cantidad) > lote.disponible) { await conn.rollback(); return res.status(400).json({ error: 'La cantidad supera el stock disponible del lote.' }); }
-    await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [cantidad, lote_id]);
-    const [ins] = await conn.query(
-      `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, motivo, usuario_id)
-       VALUES ('descarte',?,?,?,?,?)`,
-      [lote.vacuna_id, lote_id, cantidad, motivo, req.user.id]
-    );
-    await conn.commit();
-    res.status(201).json({ ok: true, mensaje: 'Descarte registrado.', mov_id: ins.insertId });
-  } catch (err) {
-    await conn.rollback(); console.error('descartes:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  } finally { conn.release(); }
+/* ------------------------------------------------------------
+ * App, seguridad y archivos de la página
+ * ---------------------------------------------------------- */
+const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', 1);   // Railway pasa la IP real del cliente por un proxy
+
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data: blob:",
+  "connect-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', CSP);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
+  if (PROD) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  next();
 });
+app.use(express.json({ limit: '100kb' }));
+/* Solo se publica la carpeta public/ (el código del servidor y el .env nunca se sirven).
+   HTML, JS y CSS se revalidan siempre, así después de cada deploy se ve la versión nueva. */
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, archivo) => {
+    if (/\.(html|js|css)$/.test(archivo)) res.setHeader('Cache-Control', 'no-cache');
+  },
+}));
 
-/**
- * Descarte de frasco multidosis abierto vencido (>30 días de apertura).
- * Descuenta las dosis restantes del stock del lote y registra el movimiento
- * con motivo "Frasco abierto vencido". Marca el frasco como vencido.
- */
-app.post('/api/descartes/frasco/:id', requireAuth, requireRole('enfermeria'), async (req, res) => {
-  const conn = await pool.getConnection();
+app.get('/api/health', ruta(async (req, res) => {
+  await pool.query('SELECT 1');
+  res.json({ ok: true, servicio: 'Stella Maris Joyas' });
+}));
+
+/* ------------------------------------------------------------
+ * Ingreso
+ * ---------------------------------------------------------- */
+const intentos = new Map();   // ip → { n, hasta }
+const VENTANA = 15 * 60 * 1000, MAX_INTENTOS = 8;
+setInterval(() => { const ahora = Date.now(); for (const [ip, e] of intentos) if (e.hasta < ahora) intentos.delete(ip); }, VENTANA).unref();
+const HASH_VACIO = bcrypt.hashSync('sin-cuenta', 10);   // iguala el tiempo de respuesta si el usuario no existe
+
+app.post('/api/login', ruta(async (req, res) => {
+  const ip = req.ip, ahora = Date.now(), e = intentos.get(ip);
+  if (e && e.hasta > ahora && e.n >= MAX_INTENTOS) {
+    throw new Aviso(429, 'Demasiados intentos seguidos. Esperá unos minutos y probá de nuevo.');
+  }
+  const usuario = texto(req.body?.usuario, 60).toLowerCase();
+  const password = String(req.body?.password ?? '');
+  if (!usuario || !password) throw new Aviso(400, 'Completá el usuario y la contraseña.');
+  const [[u]] = await pool.query('SELECT id, usuario, password_hash FROM usuarios WHERE usuario = ?', [usuario]);
+  const ok = await bcrypt.compare(password, u ? u.password_hash : HASH_VACIO);
+  if (!u || !ok) {
+    const cuenta = e && e.hasta > ahora ? e : { n: 0, hasta: ahora + VENTANA };
+    cuenta.n += 1;
+    intentos.set(ip, cuenta);
+    throw new Aviso(401, 'El usuario o la contraseña no coinciden.');
+  }
+  intentos.delete(ip);
+  const recordar = req.body?.recordar === true;
+  const token = jwt.sign({ u: u.usuario, v: VERSION_CLAVE }, SECRET, { expiresIn: recordar ? '30d' : '12h' });
+  res.json({ token, usuario: u.usuario });
+}));
+
+function requireAuth(req, res, next) {
+  const h = req.headers.authorization || '';
+  const token = h.startsWith('Bearer ') ? h.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'Ingresá para continuar.' });
   try {
-    await conn.beginTransaction();
-    const [[frasco]] = await conn.query(
-      `SELECT f.id, f.lote_id, f.dosis_totales, f.dosis_usadas, f.estado,
-              l.vacuna_id
-         FROM frascos_abiertos f
-         JOIN lotes l ON l.id = f.lote_id
-        WHERE f.id = ? FOR UPDATE`, [req.params.id]
-    );
-    if (!frasco) { await conn.rollback(); return res.status(404).json({ error: 'Frasco no encontrado.' }); }
-    if (frasco.estado !== 'activo') { await conn.rollback(); return res.status(400).json({ error: 'El frasco ya no está activo.' }); }
-    const dosisAdescartar = frasco.dosis_totales - frasco.dosis_usadas;
-    if (dosisAdescartar > 0) {
-      await conn.query('UPDATE lotes SET disponible = disponible - ? WHERE id = ?', [dosisAdescartar, frasco.lote_id]);
-      await conn.query(
-        `INSERT INTO movimientos (tipo, vacuna_id, lote_id, cantidad, motivo, usuario_id)
-         VALUES ('descarte',?,?,?,?,?)`,
-        [frasco.vacuna_id, frasco.lote_id, dosisAdescartar, 'Frasco abierto vencido', req.user.id]
-      );
-    }
+    const datos = jwt.verify(token, SECRET);
+    if (!VERSION_CLAVE || datos.v !== VERSION_CLAVE) throw new Error('version');
+    req.usuario = datos.u;
+    next();
+  } catch {
+    res.status(401).json({ error: 'Tu sesión venció. Ingresá de nuevo.' });
+  }
+}
+
+/* ------------------------------------------------------------
+ * Todo lo que la página necesita al entrar
+ * ---------------------------------------------------------- */
+app.get('/api/estado', requireAuth, ruta(async (req, res) => {
+  const [[{ hoy }]] = await pool.query("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS hoy");
+  const [piezas] = await pool.query(`${SQL_PIEZA} WHERE p.estado <> 'vendido' ORDER BY p.id`);
+  const [pendientes] = await pool.query(`${SQL_PENDIENTE} WHERE q.borrada_en IS NULL ORDER BY q.id`);
+  const [ventas] = await pool.query(`${SQL_VENTA} WHERE v.fecha >= CURDATE() AND v.fecha < CURDATE() + INTERVAL 1 DAY ORDER BY v.fecha, v.id`);
+  const [dias] = await pool.query(`
+    SELECT DATEDIFF(CURDATE(), DATE(fecha)) AS hace, SUM(precio) AS total
+      FROM ventas WHERE fecha >= CURDATE() - INTERVAL 6 DAY AND fecha < CURDATE() + INTERVAL 1 DAY
+     GROUP BY hace`);
+  const semana = [0, 0, 0, 0, 0, 0, 0];   // de hace 6 días a hoy
+  dias.forEach(d => { const k = Number(d.hace); if (k >= 0 && k <= 6) semana[6 - k] = Number(d.total); });
+  const [cont] = await pool.query('SELECT nombre, ultimo FROM contadores');
+  const ultimos = {};
+  cont.forEach(c => { if (MATERIALES[c.nombre]) ultimos[c.nombre] = Number(c.ultimo); });
+  res.json({
+    hoy,
+    piezas: piezas.map(piezaJSON),
+    pendientes: pendientes.map(pendienteJSON),
+    ventasHoy: ventas.map(ventaJSON),
+    semana,
+    ultimos,
+  });
+}));
+
+/* ------------------------------------------------------------
+ * Piezas del stock: vender, reservar, editar y cambiar la foto
+ * ---------------------------------------------------------- */
+app.post('/api/piezas/:codigo/vender', requireAuth, ruta(async (req, res) => {
+  const medio = String(req.body?.medio ?? '');
+  if (!PAGOS.includes(medio)) throw new Aviso(400, 'Elegí el medio de pago.');
+  const ventaId = await enTransaccion(async conn => {
+    const p = await piezaEnLocal(conn, req.params.codigo);
+    const sena = p.estado === 'reservado' ? Math.min(p.reserva_sena || 0, p.precio) : 0;
+    const [r] = await conn.query(
+      `INSERT INTO ventas (pieza_id, codigo, nombre, material, categoria, precio, sena, medio_pago, fecha)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [p.id, p.codigo, p.nombre, p.material, p.categoria, p.precio, sena, medio]);
+    await conn.query("UPDATE piezas SET estado = 'vendido' WHERE id = ?", [p.id]);
+    return r.insertId;
+  });
+  const [[v]] = await pool.query(`${SQL_VENTA} WHERE v.id = ?`, [ventaId]);
+  res.status(201).json({ venta: ventaJSON(v) });
+}));
+
+/* Anular una venta del día: la pieza vuelve al stock como estaba (con su reserva, si tenía) */
+app.post('/api/ventas/:id/deshacer', requireAuth, ruta(async (req, res) => {
+  const id = entero(req.params.id, { min: 1 });
+  if (!id) throw new Aviso(404, 'No se encontró la venta.');
+  const codigo = await enTransaccion(async conn => {
+    const [[v]] = await conn.query('SELECT id, pieza_id, codigo, fecha >= CURDATE() AS de_hoy FROM ventas WHERE id = ? FOR UPDATE', [id]);
+    if (!v) throw new Aviso(404, 'No se encontró la venta.');
+    if (!Number(v.de_hoy)) throw new Aviso(409, 'Solo se pueden anular las ventas del día.');
     await conn.query(
-      `UPDATE frascos_abiertos SET estado = 'vencido', fecha_cierre = CURDATE(), motivo_cierre = 'Vencimiento a los 30 días'
-        WHERE id = ?`, [frasco.id]
-    );
-    await conn.commit();
-    res.json({ ok: true, dosis_descartadas: dosisAdescartar, mensaje: `Se descartó el frasco con ${dosisAdescartar} dosis sobrantes.` });
-  } catch (err) {
-    await conn.rollback(); console.error('descartes/frasco:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  } finally { conn.release(); }
-});
+      `UPDATE piezas SET estado = IF(reserva_cliente IS NULL, 'disponible', 'reservado') WHERE id = ? AND estado = 'vendido'`,
+      [v.pieza_id]);
+    await conn.query('DELETE FROM ventas WHERE id = ?', [id]);
+    return v.codigo;
+  });
+  res.json({ pieza: await leerPieza(pool, codigo) });
+}));
 
-
-/* ===========================================================
- * HISTORIAL — RF08
- * ========================================================= */
-app.get('/api/movimientos', requireAuth, async (req, res) => {
-  try {
-    const { tipo } = req.query;
-    // LEFT JOIN a lotes: si el lote fue eliminado (movimientos con lote_id NULL
-    // por ON DELETE SET NULL), usamos numero_lote_snap. COALESCE prioriza el
-    // número actual del lote (más confiable), y cae al snapshot si el lote ya no existe.
-    let sql =
-      `SELECT m.id, m.tipo, v.nombre AS vacuna,
-              COALESCE(l.numero_lote, m.numero_lote_snap) AS numero_lote,
-              m.cantidad, m.motivo,
-              m.fecha_aplicacion, m.fecha_mov, u.rol AS responsable
-         FROM movimientos m
-         JOIN vacunas v  ON v.id = m.vacuna_id
-         LEFT JOIN lotes l ON l.id = m.lote_id
-         JOIN usuarios u ON u.id = m.usuario_id`;
-    const params = [];
-    if (tipo && ['aplicacion', 'descarte', 'ingreso', 'edicion', 'eliminacion'].includes(tipo)) {
-      sql += ' WHERE m.tipo = ?'; params.push(tipo);
-    }
-    sql += ' ORDER BY m.fecha_mov DESC LIMIT 200';
-    const [rows] = await pool.query(sql, params);
-    res.json(rows);
-  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
-});
-
-/**
- * "Deshacer" lo que se acaba de registrar (aplicaciones y descartes).
- * Body: { ids: [mov_id, ...] }. Reglas, para que la vuelta atrás sea exacta:
- *  - solo movimientos propios, registrados en los últimos 15 minutos;
- *  - solo aplicaciones y descartes comunes (no el descarte de un frasco vencido);
- *  - que no haya movimientos posteriores en el mismo lote.
- * Devuelve las dosis al lote y, en multidosis, revierte el uso de los frascos.
- */
-const DESHACER_MINUTOS = 15;
-app.post('/api/movimientos/deshacer', requireAuth, requireRole('enfermeria'), async (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(Number).filter(Number.isInteger))] : [];
-  if (!ids.length || ids.length > 15) return res.status(400).json({ error: 'No hay nada para deshacer.' });
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const [movs] = await conn.query(
-      `SELECT m.id, m.tipo, m.lote_id, m.cantidad, m.motivo, m.usuario_id,
-              (m.fecha_mov >= NOW() - INTERVAL ? MINUTE) AS reciente,
-              v.dosis_por_frasco
-         FROM movimientos m JOIN vacunas v ON v.id = m.vacuna_id
-        WHERE m.id IN (?) ORDER BY m.id DESC FOR UPDATE`,
-      [DESHACER_MINUTOS, ids]
-    );
-    if (movs.length !== ids.length) throw new ErrorUsuario(404, 'Alguno de esos registros ya no existe.');
-    for (const m of movs) {
-      if (m.usuario_id !== req.user.id) throw new ErrorUsuario(403, 'Solo podés deshacer lo que registraste vos.');
-      if (!Number(m.reciente)) throw new ErrorUsuario(400, `Pasaron más de ${DESHACER_MINUTOS} minutos: para corregirlo usá Movimientos.`);
-      if (!['aplicacion', 'descarte'].includes(m.tipo) || m.motivo === 'Frasco abierto vencido' || !m.lote_id)
-        throw new ErrorUsuario(400, 'Este registro no se puede deshacer.');
-      const [[{ n }]] = await conn.query(
-        'SELECT COUNT(*) AS n FROM movimientos WHERE lote_id = ? AND id > ? AND id NOT IN (?)',
-        [m.lote_id, m.id, ids]
-      );
-      if (Number(n) > 0) throw new ErrorUsuario(400, 'Después se registraron otros movimientos en ese lote, así que no se puede deshacer automáticamente.');
-    }
-    // De la más nueva a la más vieja, para revertir los frascos en el orden inverso
-    for (const m of movs) {
-      await conn.query('UPDATE lotes SET disponible = disponible + ? WHERE id = ?', [m.cantidad, m.lote_id]);
-      if (m.tipo === 'aplicacion' && m.dosis_por_frasco > 1) await revertirFrascos(conn, m.lote_id, m.cantidad);
-      await conn.query('DELETE FROM movimientos WHERE id = ?', [m.id]);
-    }
-    await conn.commit();
-    const dosis = movs.reduce((s, m) => s + m.cantidad, 0);
-    res.json({ ok: true, mensaje: `Listo, se deshizo. Volvieron ${dosis} dosis al stock.` });
-  } catch (err) {
-    await conn.rollback();
-    responderError(res, err, 'movimientos/deshacer');
-  } finally { conn.release(); }
-});
-
-/**
- * Revierte el uso de frascos abiertos de un lote (inverso de gestionarFrascoAbierto).
- * Como no hubo movimientos posteriores en el lote, las dosis salieron de los
- * frascos más nuevos: se devuelven desde el último hacia atrás. Un frasco que
- * queda con 0 dosis usadas lo había abierto esa aplicación, así que se borra.
- */
-async function revertirFrascos(conn, loteId, cantidad) {
-  let resto = cantidad;
-  const [frascos] = await conn.query(
-    `SELECT id, dosis_usadas FROM frascos_abiertos
-      WHERE lote_id = ? AND estado IN ('activo','agotado')
-      ORDER BY id DESC FOR UPDATE`, [loteId]
-  );
-  for (const f of frascos) {
-    if (resto <= 0) break;
-    const quitar = Math.min(resto, f.dosis_usadas);
-    const usadas = f.dosis_usadas - quitar;
-    resto -= quitar;
-    if (usadas === 0) {
-      await conn.query('DELETE FROM frascos_abiertos WHERE id = ?', [f.id]);
-    } else {
-      await conn.query(
-        `UPDATE frascos_abiertos SET dosis_usadas = ?, estado = 'activo', fecha_cierre = NULL WHERE id = ?`,
-        [usadas, f.id]
-      );
-    }
-  }
-}
-
-/**
- * Elimina un movimiento (aplicación o descarte). Revierte el efecto en el stock:
- * devuelve las dosis al lote correspondiente. Los movimientos de tipo INGRESO
- * no se pueden eliminar por acá: para eso se debe eliminar el lote entero.
- * En vacunas multidosis con frasco abierto, el borrado se rechaza por seguridad
- * (revertir la lógica de frascos abiertos sería frágil y poco predecible).
- */
-app.delete('/api/movimientos/:id', requireAuth, requireRole('enfermeria'), async (req, res) => {
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const [[mov]] = await conn.query(
-      `SELECT m.id, m.tipo, m.lote_id, m.cantidad, v.dosis_por_frasco, v.nombre AS vacuna
-         FROM movimientos m
-         JOIN vacunas v ON v.id = m.vacuna_id
-        WHERE m.id = ? FOR UPDATE`,
-      [req.params.id]
-    );
-    if (!mov) { await conn.rollback(); return res.status(404).json({ error: 'El movimiento no existe.' }); }
-
-    if (mov.tipo === 'ingreso') {
-      await conn.rollback();
-      return res.status(400).json({
-        error: 'Los movimientos de ingreso no se pueden eliminar desde acá. Para eso eliminá el lote desde la pantalla de Stock.',
-      });
-    }
-    if (mov.tipo === 'edicion' || mov.tipo === 'eliminacion') {
-      await conn.rollback();
-      return res.status(400).json({
-        error: 'Los movimientos de edición y eliminación son registros de auditoría y no se pueden borrar.',
-      });
-    }
-
-    // Para multidosis, borrar aplicaciones rompería la contabilidad del frasco abierto.
-    // Se rechaza con mensaje claro.
-    if (mov.dosis_por_frasco > 1 && mov.tipo === 'aplicacion') {
-      const [[hayFrascos]] = await conn.query(
-        'SELECT COUNT(*) AS n FROM frascos_abiertos WHERE lote_id = ?',
-        [mov.lote_id]
-      );
-      if (hayFrascos.n > 0) {
-        await conn.rollback();
-        return res.status(400).json({
-          error: `No se puede eliminar esta aplicación: ${mov.vacuna} es multidosis y el lote tiene frascos abiertos. Contactá al administrador si necesitás corregirla.`,
-        });
-      }
-    }
-
-    // Devolvemos las dosis al lote (revertimos el descuento original)
+app.post('/api/piezas/:codigo/reserva', requireAuth, ruta(async (req, res) => {
+  const cliente = texto(req.body?.cliente, 80);
+  if (!cliente) throw new Aviso(400, 'Escribí el nombre del cliente para guardar la reserva.');
+  const sena = entero(req.body?.sena ?? 0);
+  if (sena === null) throw new Aviso(400, 'La seña tiene que ser un número.');
+  const dias = req.body?.dias == null ? 0 : entero(req.body.dias, { max: 3650 });   // "Deshacer" conserva la fecha original
+  if (dias === null) throw new Aviso(400, 'Fecha de reserva inválida.');
+  await enTransaccion(async conn => {
+    const p = await piezaEnLocal(conn, req.params.codigo);
+    if (sena > p.precio) throw new Aviso(400, 'La seña no puede ser mayor que el precio.');
     await conn.query(
-      'UPDATE lotes SET disponible = disponible + ? WHERE id = ?',
-      [mov.cantidad, mov.lote_id]
-    );
-    await conn.query('DELETE FROM movimientos WHERE id = ?', [req.params.id]);
-
-    await conn.commit();
-    res.json({ ok: true, mensaje: `Movimiento eliminado. Se devolvieron ${mov.cantidad} dosis al stock.` });
-  } catch (err) {
-    await conn.rollback();
-    console.error('eliminar movimiento:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  } finally { conn.release(); }
-});
-
-/* ===========================================================
- * REPORTES — descarga de Excel (.xlsx)
- * Todos requieren autenticación. Cualquier rol puede descargar.
- * ========================================================= */
-// Estilos base reutilizables (paleta alineada con la app)
-const XLSX_STYLES = {
-  border: {
-    top:    { style: 'thin', color: { rgb: 'D0D5DD' } },
-    bottom: { style: 'thin', color: { rgb: 'D0D5DD' } },
-    left:   { style: 'thin', color: { rgb: 'D0D5DD' } },
-    right:  { style: 'thin', color: { rgb: 'D0D5DD' } },
-  },
-  header: {
-    fill: { patternType: 'solid', fgColor: { rgb: '0FA99E' } },
-    font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11, name: 'Calibri' },
-    alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-  },
-  cellBase: {
-    font: { sz: 10, name: 'Calibri' },
-    alignment: { vertical: 'center', wrapText: true },
-  },
-  zebra: {
-    fill: { patternType: 'solid', fgColor: { rgb: 'F7FAF9' } },
-  },
-};
-
-// Paleta de estado (Stock)
-const ESTADO_STYLE = {
-  'Vencida':     { fill: { patternType: 'solid', fgColor: { rgb: 'FDE8E4' } }, font: { bold: true, color: { rgb: '7A1E14' }, sz: 10, name: 'Calibri' } },
-  'Por vencer':  { fill: { patternType: 'solid', fgColor: { rgb: 'FEECEB' } }, font: { bold: true, color: { rgb: 'A02814' }, sz: 10, name: 'Calibri' } },
-  'Stock bajo':  { fill: { patternType: 'solid', fgColor: { rgb: 'FDF3D9' } }, font: { bold: true, color: { rgb: '795000' }, sz: 10, name: 'Calibri' } },
-  'OK':          { fill: { patternType: 'solid', fgColor: { rgb: 'E4F4EA' } }, font: { bold: true, color: { rgb: '155F35' }, sz: 10, name: 'Calibri' } },
-  'Sin stock':   { fill: { patternType: 'solid', fgColor: { rgb: 'EFF2F1' } }, font: { bold: true, color: { rgb: '6B7572' }, sz: 10, name: 'Calibri' } },
-};
-// Paleta de tipo de movimiento
-const TIPO_STYLE = {
-  'Ingreso':    { fill: { patternType: 'solid', fgColor: { rgb: 'E4F4EA' } }, font: { bold: true, color: { rgb: '155F35' }, sz: 10, name: 'Calibri' } },
-  'Aplicación': { fill: { patternType: 'solid', fgColor: { rgb: 'E4EFF9' } }, font: { bold: true, color: { rgb: '134A7E' }, sz: 10, name: 'Calibri' } },
-  'Descarte':   { fill: { patternType: 'solid', fgColor: { rgb: 'FEECEB' } }, font: { bold: true, color: { rgb: 'A02814' }, sz: 10, name: 'Calibri' } },
-};
-
-// Convierte índice numérico (0-based) a letra de columna Excel (0→A, 25→Z, 26→AA)
-function colLetter(idx) {
-  let s = '';
-  idx++;
-  while (idx > 0) {
-    const rem = (idx - 1) % 26;
-    s = String.fromCharCode(65 + rem) + s;
-    idx = Math.floor((idx - 1) / 26);
-  }
-  return s;
-}
-
-/**
- * Genera un .xlsx con formato profesional: header teal, bordes finos en
- * todas las celdas, zebra en filas alternadas, y coloreado condicional
- * de columnas específicas (Estado / Tipo).
- *
- * @param {*} res response HTTP
- * @param {string} filename nombre del archivo
- * @param {string} sheetName nombre de la hoja
- * @param {Array<Object>} rows array de objetos con los datos
- * @param {Object} opts { colorearCol: 'Nombre', paleta: {valor: styleObj}, tituloReporte: 'Texto opcional' }
- */
-function sendXlsx(res, filename, sheetName, rows, opts = {}) {
-  const wb = XLSX.utils.book_new();
-  const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
-
-  // Armamos la matriz manualmente para tener control total sobre el estilo
-  // Si viene título de reporte, va en la fila 1 fusionado; los datos empiezan más abajo
-  let filaInicioDatos = 0;
-  const aoa = [];
-  const merges = [];
-
-  if (opts.tituloReporte) {
-    aoa.push([opts.tituloReporte]);
-    aoa.push([`Generado: ${new Date().toLocaleString('es-AR')}`]);
-    aoa.push([]); // fila en blanco
-    filaInicioDatos = 3;
-    if (headers.length > 1) {
-      merges.push({ s: { r: 0, c: 0 }, e: { r: 0, c: headers.length - 1 } });
-      merges.push({ s: { r: 1, c: 0 }, e: { r: 1, c: headers.length - 1 } });
-    }
-  }
-  aoa.push(headers);
-  rows.forEach(r => aoa.push(headers.map(h => r[h] ?? '')));
-
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  if (merges.length) ws['!merges'] = merges;
-
-  // Autoancho por columna
-  ws['!cols'] = headers.map(h => {
-    const maxLen = Math.max(h.length, ...rows.map(r => String(r[h] ?? '').length));
-    return { wch: Math.min(Math.max(maxLen + 2, 12), 42) };
+      `UPDATE piezas SET estado = 'reservado', reserva_cliente = ?, reserva_sena = ?, reserva_fecha = CURDATE() - INTERVAL ? DAY WHERE id = ?`,
+      [cliente, sena, dias, p.id]);
   });
+  res.json({ pieza: await leerPieza(pool, req.params.codigo) });
+}));
 
-  // Altura mínima para header
-  ws['!rows'] = [];
-  if (opts.tituloReporte) {
-    ws['!rows'][0] = { hpt: 24 };
-    ws['!rows'][1] = { hpt: 16 };
-  }
-  ws['!rows'][filaInicioDatos] = { hpt: 28 };
-
-  // Estilos del título si lo hay
-  if (opts.tituloReporte) {
-    ws[colLetter(0) + '1'].s = {
-      font: { bold: true, sz: 14, color: { rgb: '0B5C56' }, name: 'Calibri' },
-      alignment: { horizontal: 'left', vertical: 'center' },
-    };
-    ws[colLetter(0) + '2'].s = {
-      font: { italic: true, sz: 9, color: { rgb: '6B7572' }, name: 'Calibri' },
-      alignment: { horizontal: 'left', vertical: 'center' },
-    };
-  }
-
-  // Estilos del header
-  headers.forEach((_, c) => {
-    const addr = colLetter(c) + (filaInicioDatos + 1);
-    if (ws[addr]) ws[addr].s = { ...XLSX_STYLES.header, border: XLSX_STYLES.border };
+app.delete('/api/piezas/:codigo/reserva', requireAuth, ruta(async (req, res) => {
+  await enTransaccion(async conn => {
+    const p = await piezaEnLocal(conn, req.params.codigo);
+    await conn.query(
+      `UPDATE piezas SET estado = 'disponible', reserva_cliente = NULL, reserva_sena = NULL, reserva_fecha = NULL WHERE id = ?`, [p.id]);
   });
+  res.json({ pieza: await leerPieza(pool, req.params.codigo) });
+}));
 
-  // Estilos de las filas de datos
-  rows.forEach((row, i) => {
-    const rowIdx = filaInicioDatos + 1 + i; // 1-based
-    const zebra = i % 2 === 1;
-    headers.forEach((h, c) => {
-      const addr = colLetter(c) + (rowIdx + 1);
-      if (!ws[addr]) return;
-      let style = { ...XLSX_STYLES.cellBase, border: XLSX_STYLES.border };
-      if (zebra) style = { ...style, ...XLSX_STYLES.zebra };
-      // Coloreado condicional para la columna indicada
-      if (opts.colorearCol && h === opts.colorearCol && opts.paleta) {
-        const p = opts.paleta[row[h]];
-        if (p) style = { ...style, ...p, border: XLSX_STYLES.border, alignment: { horizontal: 'center', vertical: 'center' } };
-      }
-      ws[addr].s = style;
-    });
+app.patch('/api/piezas/:codigo', requireAuth, ruta(async (req, res) => {
+  const precio = entero(req.body?.precio, { min: 1 });
+  if (!precio) throw new Aviso(400, 'Poné un precio mayor a cero para guardar.');
+  const categoria = String(req.body?.categoria ?? '');
+  if (!CATEGORIAS[categoria]) throw new Aviso(400, 'Elegí el tipo de pieza.');
+  const detalle = texto(req.body?.detalle, 200);
+  await enTransaccion(async conn => {
+    const p = await piezaEnLocal(conn, req.params.codigo);
+    if (p.reserva_sena && p.reserva_sena > precio) throw new Aviso(400, 'El precio no puede quedar por debajo de la seña.');
+    const nombre = texto(req.body?.nombre, 120) || nombreAuto(p.material, categoria);
+    await conn.query('UPDATE piezas SET nombre = ?, precio = ?, categoria = ?, detalle = ? WHERE id = ?',
+      [nombre, precio, categoria, detalle, p.id]);
   });
+  res.json({ pieza: await leerPieza(pool, req.params.codigo) });
+}));
 
-  // Freeze header
-  ws['!freeze'] = { xSplit: 0, ySplit: filaInicioDatos + 1 };
-  ws['!autofilter'] = {
-    ref: `${colLetter(0)}${filaInicioDatos + 1}:${colLetter(headers.length - 1)}${filaInicioDatos + 1 + rows.length}`
-  };
-
-  XLSX.utils.book_append_sheet(wb, ws, sheetName);
-  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.send(buf);
-}
-
-// Etiqueta de estado a partir de días y disponible (misma lógica que /api/stock)
-function estadoLote(dias, disponible) {
-  if (dias < 0) return 'Vencida';
-  if (dias <= DIAS_VENCIMIENTO) return 'Por vencer';
-  if (disponible <= UMBRAL_STOCK_BAJO) return 'Stock bajo';
-  return 'OK';
-}
-
-// Reporte 1: Stock general (todas las vacunas activas, incluyendo las sin lotes)
-app.get('/api/reportes/stock', requireAuth, async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      `SELECT v.nombre AS vacuna, v.dosis_por_frasco, l.numero_lote, l.vencimiento,
-              l.disponible,
-              CASE WHEN l.vencimiento IS NULL THEN NULL
-                   ELSE DATEDIFF(l.vencimiento, CURDATE()) END AS dias
-         FROM vacunas v
-         LEFT JOIN lotes l ON l.vacuna_id = v.id
-        WHERE v.activa = 1
-        ORDER BY v.nombre, l.vencimiento`
-    );
-    const data = rows.map(r => {
-      const sinStock = r.numero_lote === null || r.disponible === 0;
-      return {
-        'Vacuna': r.vacuna,
-        'Presentación': r.dosis_por_frasco > 1 ? `Frasco × ${r.dosis_por_frasco}` : 'Monodosis',
-        'N° de lote': r.numero_lote || '—',
-        'Vencimiento': fmtFechaAR(r.vencimiento) || '—',
-        'Días para vencer': r.dias ?? '—',
-        'Dosis disponibles': r.disponible ?? 0,
-        'Frascos disponibles': (r.dosis_por_frasco > 1 && r.disponible)
-          ? Math.floor(r.disponible / r.dosis_por_frasco) : '',
-        'Estado': sinStock ? 'Sin stock' : estadoLote(r.dias, r.disponible),
-      };
-    });
-    const fecha = new Date().toISOString().slice(0, 10);
-    sendXlsx(res, `SGV_stock_${fecha}.xlsx`, 'Stock', data, {
-      tituloReporte: 'SGV — Stock general del CAPS San José Obrero',
-      colorearCol: 'Estado',
-      paleta: ESTADO_STYLE,
-    });
-  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
-});
-
-/**
- * Reporte de reposición — enfocado para el rol de proveedora, que necesita saber
- * qué pedir/reponer sin ver todo el detalle operativo. Solo trae las vacunas que
- * están en alguno de estos estados: sin stock, stock bajo, por vencer. Agrupa
- * por vacuna y suma las dosis disponibles totales (no se lista lote por lote,
- * la proveedora piensa en unidades, no en partidas).
- */
-// Datos del reporte de reposición en formato JSON — alimentan el panel
-// de la proveedora en el dashboard (sin generar Excel). Devuelve totales
-// por prioridad y la lista agrupada por vacuna.
-async function datosReposicion() {
-  const [rows] = await pool.query(
-    `SELECT v.nombre AS vacuna, v.dosis_por_frasco,
-            COALESCE(SUM(CASE WHEN DATEDIFF(l.vencimiento, CURDATE()) >= 0
-                              THEN l.disponible ELSE 0 END), 0) AS disponible_vigente,
-            COALESCE(SUM(CASE WHEN DATEDIFF(l.vencimiento, CURDATE()) BETWEEN 0 AND ?
-                              THEN l.disponible ELSE 0 END), 0) AS disponible_por_vencer
-       FROM vacunas v
-       LEFT JOIN lotes l ON l.vacuna_id = v.id AND l.disponible > 0
-      WHERE v.activa = 1
-      GROUP BY v.id, v.nombre, v.dosis_por_frasco
-      ORDER BY v.nombre`,
-    [DIAS_VENCIMIENTO]
-  );
-  const PRIO_ORDEN = { URGENTE: 0, ALTA: 1, MEDIA: 2 };
-  return rows
-    .map(r => {
-      const disp = Number(r.disponible_vigente);
-      const porV = Number(r.disponible_por_vencer);
-      let situacion, prioridad;
-      if (disp === 0)                      { situacion = 'Sin stock';            prioridad = 'URGENTE'; }
-      else if (disp <= UMBRAL_STOCK_BAJO)  { situacion = 'Stock bajo';           prioridad = 'ALTA'; }
-      else if (porV === disp)              { situacion = 'Solo lotes por vencer'; prioridad = 'ALTA'; }
-      else if (porV > 0)                   { situacion = 'Parcial por vencer';    prioridad = 'MEDIA'; }
-      else return null;
-      return { vacuna: r.vacuna, dosis_por_frasco: Number(r.dosis_por_frasco),
-               disponible: disp, por_vencer: porV, situacion, prioridad };
-    })
-    .filter(Boolean)
-    .sort((a, b) => PRIO_ORDEN[a.prioridad] - PRIO_ORDEN[b.prioridad] || a.disponible - b.disponible);
-}
-
-app.get('/api/dashboard/reposicion', requireAuth, async (req, res) => {
-  try {
-    const items = await datosReposicion();
-    const conteo = { URGENTE: 0, ALTA: 0, MEDIA: 0 };
-    items.forEach(i => { conteo[i.prioridad]++; });
-    res.json({
-      total: items.length,
-      conteo,
-      items,                              // completo, el front filtra lo que muestra
-    });
-  } catch (err) {
-    console.error('dashboard/reposicion:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  }
-});
-
-app.get('/api/reportes/reposicion', requireAuth, async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      `SELECT v.nombre AS vacuna, v.dosis_por_frasco,
-              COALESCE(SUM(CASE WHEN DATEDIFF(l.vencimiento, CURDATE()) >= 0
-                                THEN l.disponible ELSE 0 END), 0) AS disponible_vigente,
-              COALESCE(SUM(CASE WHEN DATEDIFF(l.vencimiento, CURDATE()) BETWEEN 0 AND ?
-                                THEN l.disponible ELSE 0 END), 0) AS disponible_por_vencer
-         FROM vacunas v
-         LEFT JOIN lotes l ON l.vacuna_id = v.id AND l.disponible > 0
-        WHERE v.activa = 1
-        GROUP BY v.id, v.nombre, v.dosis_por_frasco
-        ORDER BY v.nombre`,
-      [DIAS_VENCIMIENTO]
-    );
-    // Filtramos solo las que necesitan reposición
-    const data = rows
-      .map(r => {
-        const disp = Number(r.disponible_vigente);
-        const porV = Number(r.disponible_por_vencer);
-        let situacion;
-        let prioridad;
-        if (disp === 0)               { situacion = 'Sin stock';       prioridad = 'URGENTE'; }
-        else if (disp <= UMBRAL_STOCK_BAJO) { situacion = 'Stock bajo';      prioridad = 'ALTA'; }
-        else if (porV === disp)       { situacion = 'Solo lotes por vencer'; prioridad = 'ALTA'; }
-        else if (porV > 0)            { situacion = 'Parcial por vencer';   prioridad = 'MEDIA'; }
-        else return null;             // Está OK, no necesita reposición
-        return {
-          'Vacuna': r.vacuna,
-          'Presentación': r.dosis_por_frasco > 1 ? `Frasco × ${r.dosis_por_frasco}` : 'Monodosis',
-          'Dosis vigentes': disp,
-          'De esas, por vencer pronto': porV,
-          'Situación': situacion,
-          'Prioridad': prioridad,
-        };
-      })
-      .filter(Boolean);
-
-    if (data.length === 0) {
-      // Placeholder para que el Excel no salga vacío y confunda
-      data.push({
-        'Vacuna': 'Ninguna vacuna requiere reposición en este momento.',
-        'Presentación': '',
-        'Dosis vigentes': '',
-        'De esas, por vencer pronto': '',
-        'Situación': '',
-        'Prioridad': '',
-      });
-    }
-
-    const fecha = new Date().toISOString().slice(0, 10);
-    // Paleta específica para "prioridad" (URGENTE rojo, ALTA amarillo, MEDIA teal)
-    const PRIORIDAD_STYLE = {
-      'URGENTE': { fill: 'FDE8E4', color: 'B42318' },
-      'ALTA':    { fill: 'FDF3D9', color: '795000' },
-      'MEDIA':   { fill: 'E4F4EA', color: '155F35' },
-    };
-    sendXlsx(res, `SGV_reposicion_${fecha}.xlsx`, 'Reposición', data, {
-      tituloReporte: 'SGV — Pedido de reposición · CAPS San José Obrero',
-      colorearCol: 'Prioridad',
-      paleta: PRIORIDAD_STYLE,
-    });
-  } catch (err) {
-    console.error('reportes/reposicion:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  }
-});
-
-// Reporte 2: Stock de una vacuna específica
-app.get('/api/reportes/stock/:vacunaId', requireAuth, async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      `SELECT v.nombre AS vacuna, v.dosis_por_frasco, l.numero_lote, l.vencimiento,
-              l.cantidad_inicial, l.disponible,
-              DATEDIFF(l.vencimiento, CURDATE()) AS dias
-         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
-        WHERE v.id = ? ORDER BY l.vencimiento`,
-      [req.params.vacunaId]
-    );
-    if (rows.length === 0) return res.status(404).json({ error: 'No hay lotes cargados para esa vacuna.' });
-    const vacuna = rows[0].vacuna;
-    const data = rows.map(r => ({
-      'N° de lote': r.numero_lote,
-      'Vencimiento': fmtFechaAR(r.vencimiento),
-      'Días para vencer': r.dias,
-      'Cantidad inicial (dosis)': r.cantidad_inicial,
-      'Disponible (dosis)': r.disponible,
-      'Frascos disponibles': r.dosis_por_frasco > 1 ? Math.floor(r.disponible / r.dosis_por_frasco) : '',
-      'Estado': estadoLote(r.dias, r.disponible),
-    }));
-    const fecha = new Date().toISOString().slice(0, 10);
-    const nombreArchivo = vacuna.replace(/[^\w-]+/g, '_');
-    sendXlsx(res, `SGV_stock_${nombreArchivo}_${fecha}.xlsx`, vacuna.slice(0, 31), data, {
-      tituloReporte: `SGV — Stock de ${vacuna}`,
-      colorearCol: 'Estado',
-      paleta: ESTADO_STYLE,
-    });
-  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
-});
-
-// Reporte 3: Movimientos (con filtros combinables: tipo, vacuna, desde, hasta)
-// Query params: ?tipo=X&vacuna=Nombre&desde=YYYY-MM-DD&hasta=YYYY-MM-DD
-app.get('/api/reportes/movimientos', requireAuth, async (req, res) => {
-  try {
-    const { tipo, vacuna, desde, hasta } = req.query;
-    let sql =
-      `SELECT m.tipo, v.nombre AS vacuna,
-              COALESCE(l.numero_lote, m.numero_lote_snap) AS numero_lote,
-              m.cantidad, m.motivo,
-              m.fecha_aplicacion, m.fecha_mov, u.rol AS responsable
-         FROM movimientos m
-         JOIN vacunas v  ON v.id = m.vacuna_id
-         LEFT JOIN lotes l ON l.id = m.lote_id
-         JOIN usuarios u ON u.id = m.usuario_id
-        WHERE 1=1`;
-    const params = [];
-    if (tipo && ['aplicacion', 'descarte', 'ingreso', 'edicion', 'eliminacion'].includes(tipo)) {
-      sql += ' AND m.tipo = ?'; params.push(tipo);
-    }
-    if (vacuna) {
-      sql += ' AND v.nombre = ?'; params.push(vacuna);
-    }
-    if (desde && /^\d{4}-\d{2}-\d{2}$/.test(desde)) {
-      sql += ' AND DATE(m.fecha_mov) >= ?'; params.push(desde);
-    }
-    if (hasta && /^\d{4}-\d{2}-\d{2}$/.test(hasta)) {
-      sql += ' AND DATE(m.fecha_mov) <= ?'; params.push(hasta);
-    }
-    sql += ' ORDER BY m.fecha_mov DESC';
-    const [rows] = await pool.query(sql, params);
-    const TIPO_LBL = { ingreso: 'Ingreso', aplicacion: 'Aplicación', descarte: 'Descarte', edicion: 'Edición', eliminacion: 'Eliminación' };
-    const data = rows.map(r => ({
-      'Tipo': TIPO_LBL[r.tipo] || r.tipo,
-      'Vacuna': r.vacuna,
-      'N° de lote': r.numero_lote || '—',
-      'Cantidad (dosis)': r.cantidad,
-      'Motivo': r.motivo || '',
-      'Fecha aplicación': fmtFechaAR(r.fecha_aplicacion),
-      'Fecha del movimiento': fmtFechaARHora(r.fecha_mov),
-      'Responsable': r.responsable,
-    }));
-    // Construir título y sufijo según los filtros aplicados
-    const fecha = new Date().toISOString().slice(0, 10);
-    const filtros = [];
-    if (tipo)   filtros.push(TIPO_LBL[tipo] || tipo);
-    if (vacuna) filtros.push(vacuna);
-    if (desde)  filtros.push(`desde ${desde}`);
-    if (hasta)  filtros.push(`hasta ${hasta}`);
-    const tituloFiltros = filtros.length ? ' — ' + filtros.join(', ') : '';
-    const sufArchivo = filtros.length ? '_filtrado' : '_completo';
-    sendXlsx(res, `SGV_movimientos${sufArchivo}_${fecha}.xlsx`, 'Movimientos', data, {
-      tituloReporte: `SGV — Historial de movimientos${tituloFiltros}`,
-      colorearCol: 'Tipo',
-      paleta: TIPO_STYLE,
-    });
-  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
-});
-
-// Helpers de formato AR para los reportes
-function fmtFechaAR(v) {
-  if (!v) return '';
-  try {
-    const d = (typeof v === 'string') ? new Date(v + (v.length === 10 ? 'T00:00:00' : '')) : new Date(v);
-    if (isNaN(d)) return String(v);
-    return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
-  } catch { return String(v); }
-}
-function fmtFechaARHora(v) {
-  if (!v) return '';
-  try {
-    const d = (typeof v === 'string') ? new Date(v) : new Date(v);
-    if (isNaN(d)) return String(v);
-    const f = fmtFechaAR(d);
-    const h = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    return `${f} ${h}`;
-  } catch { return String(v); }
-}
-
-/* ===========================================================
- * USUARIOS — solo coordinadora
- * ========================================================= */
-const soloCoord = [requireAuth, requireRole('coordinadora')];
-
-/* ===========================================================
- * ESTADÍSTICAS — solo coordinadora
- * Resumen de uso del período: aplicaciones, descartes, ingresos,
- * evolución en el tiempo, ranking por vacuna, motivos de descarte,
- * actividad por día de la semana y cobertura estimada del stock.
- * ========================================================= */
-
-// Suma días a una fecha "YYYY-MM-DD" y devuelve otra "YYYY-MM-DD" (sin zona horaria)
-function sumarDias(ymd, n) {
-  const [y, m, d] = ymd.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d + n));
-  return dt.toISOString().slice(0, 10);
-}
-function diasEntre(desde, hasta) {
-  const a = Date.parse(desde + 'T00:00:00Z');
-  const b = Date.parse(hasta + 'T00:00:00Z');
-  return Math.round((b - a) / 864e5) + 1;
-}
-// "Hoy" en hora de Argentina (UTC-3, sin horario de verano), aunque el
-// servidor de Railway corra en UTC.
-function hoyYMD() { return new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10); }
-
-// Agrupa la motivación libre del descarte en categorías fijas
-function categoriaMotivo(m) {
-  const t = String(m || '').toLowerCase();
-  if (t.includes('frasco')) return 'Frasco abierto vencido';
-  if (t.includes('venc')) return 'Vencimiento';
-  if (t.includes('cadena') || t.includes('frío') || t.includes('frio')) return 'Cadena de frío';
-  if (t.includes('rotura') || t.includes('derrame')) return 'Rotura / derrame';
-  return 'Otro';
-}
-
-// Valida y normaliza el rango pedido. Por defecto: últimos 30 días.
-function rangoEstadisticas(q) {
-  const re = /^\d{4}-\d{2}-\d{2}$/;
-  let hasta = re.test(q.hasta || '') ? q.hasta : hoyYMD();
-  let desde = re.test(q.desde || '') ? q.desde : sumarDias(hasta, -29);
-  if (desde > hasta) [desde, hasta] = [hasta, desde];
-  const dias = diasEntre(desde, hasta);
-  if (dias > 1100) return { error: 'El período no puede superar los 3 años.' };
-  return { desde, hasta, dias };
-}
-
-// Fecha efectiva de cada movimiento: la de aplicación si existe, si no la de registro.
-const MOV_CON_FECHA = `
-  SELECT m.tipo, m.vacuna_id, m.cantidad, m.motivo,
-         CASE WHEN m.tipo = 'aplicacion' AND m.fecha_aplicacion IS NOT NULL
-              THEN m.fecha_aplicacion ELSE DATE(m.fecha_mov) END AS f
-    FROM movimientos m
-   WHERE m.tipo IN ('aplicacion','descarte','ingreso')`;
-
-async function calcularEstadisticas(desde, hasta, dias) {
-  const prevHasta = sumarDias(desde, -1);
-  const prevDesde = sumarDias(desde, -dias);
-
-  // 1) Totales del período y del período anterior (para comparar)
-  const [totRows] = await pool.query(
-    `SELECT x.tipo,
-            SUM(CASE WHEN x.f BETWEEN ? AND ? THEN x.cantidad ELSE 0 END) AS dosis,
-            SUM(CASE WHEN x.f BETWEEN ? AND ? THEN 1 ELSE 0 END)          AS registros,
-            SUM(CASE WHEN x.f BETWEEN ? AND ? THEN x.cantidad ELSE 0 END) AS dosis_prev
-       FROM (${MOV_CON_FECHA}) x
-      GROUP BY x.tipo`,
-    [desde, hasta, desde, hasta, prevDesde, prevHasta]
-  );
-  const tot = { aplicacion: {}, descarte: {}, ingreso: {} };
-  totRows.forEach(r => { tot[r.tipo] = { dosis: Number(r.dosis), registros: Number(r.registros), prev: Number(r.dosis_prev) }; });
-  const apl = tot.aplicacion.dosis || 0, aplPrev = tot.aplicacion.prev || 0;
-  const des = tot.descarte.dosis || 0,   desPrev = tot.descarte.prev || 0;
-  const tasa = (a, d) => (a + d) > 0 ? Math.round((d / (a + d)) * 1000) / 10 : 0;
-
-  // 2) Serie diaria de aplicaciones (se completa con ceros y se agrupa abajo)
-  const [diaRows] = await pool.query(
-    `SELECT DATE_FORMAT(x.f, '%Y-%m-%d') AS dia, SUM(x.cantidad) AS dosis
-       FROM (${MOV_CON_FECHA}) x
-      WHERE x.tipo = 'aplicacion' AND x.f BETWEEN ? AND ?
-      GROUP BY dia`,
-    [desde, hasta]
-  );
-  const porDia = new Map(diaRows.map(r => [r.dia, Number(r.dosis)]));
-  const diasSerie = [];
-  for (let i = 0; i < dias; i++) {
-    const d = sumarDias(desde, i);
-    diasSerie.push({ dia: d, dosis: porDia.get(d) || 0 });
-  }
-  let granularidad = 'dia';
-  let puntos = diasSerie.map(p => ({ desde: p.dia, hasta: p.dia, dosis: p.dosis }));
-  if (dias > 370) {
-    granularidad = 'mes';
-    const m = new Map();
-    diasSerie.forEach(p => {
-      const k = p.dia.slice(0, 7);
-      if (!m.has(k)) m.set(k, { desde: p.dia, hasta: p.dia, dosis: 0 });
-      const g = m.get(k); g.hasta = p.dia; g.dosis += p.dosis;
-    });
-    puntos = [...m.values()];
-  } else if (dias > 62) {
-    granularidad = 'semana';
-    puntos = [];
-    for (let i = 0; i < diasSerie.length; i += 7) {
-      const tramo = diasSerie.slice(i, i + 7);
-      puntos.push({ desde: tramo[0].dia, hasta: tramo[tramo.length - 1].dia, dosis: tramo.reduce((s, p) => s + p.dosis, 0) });
-    }
-  }
-
-  // 3) Movimientos agrupados por vacuna y tipo
-  const [vacMovRows] = await pool.query(
-    `SELECT x.vacuna_id, x.tipo, SUM(x.cantidad) AS dosis
-       FROM (${MOV_CON_FECHA}) x
-      WHERE x.f BETWEEN ? AND ?
-      GROUP BY x.vacuna_id, x.tipo`,
-    [desde, hasta]
-  );
-
-  // 4) Stock actual vigente y próximo vencimiento por vacuna
-  const [stockRows] = await pool.query(
-    `SELECT v.id, v.nombre, v.dosis_por_frasco,
-            COALESCE(SUM(CASE WHEN l.vencimiento >= CURDATE() THEN l.disponible ELSE 0 END), 0) AS stock,
-            DATE_FORMAT(MIN(CASE WHEN l.vencimiento >= CURDATE() AND l.disponible > 0 THEN l.vencimiento END), '%Y-%m-%d') AS prox_venc
-       FROM vacunas v
-       LEFT JOIN lotes l ON l.vacuna_id = v.id
-      WHERE v.activa = 1
-      GROUP BY v.id, v.nombre, v.dosis_por_frasco
-      ORDER BY v.nombre`
-  );
-  const movPorVac = new Map();
-  vacMovRows.forEach(r => {
-    if (!movPorVac.has(r.vacuna_id)) movPorVac.set(r.vacuna_id, { aplicacion: 0, descarte: 0, ingreso: 0 });
-    movPorVac.get(r.vacuna_id)[r.tipo] = Number(r.dosis);
+app.put('/api/piezas/:codigo/foto', requireAuth, recibirImagen, ruta(async (req, res) => {
+  await enTransaccion(async conn => {
+    const p = await piezaEnLocal(conn, req.params.codigo);
+    const fotoId = await guardarFoto(conn, req.body);
+    await conn.query('UPDATE piezas SET foto_id = ? WHERE id = ?', [fotoId, p.id]);
+    await borrarFotoSiQuedoSuelta(conn, p.foto_id);
   });
-  const porVacuna = stockRows.map(v => {
-    const mv = movPorVac.get(v.id) || { aplicacion: 0, descarte: 0, ingreso: 0 };
-    const stock = Number(v.stock);
-    const consumoDiario = mv.aplicacion / dias;
-    const cobertura = consumoDiario > 0 ? Math.floor(stock / consumoDiario) : null;
-    return {
-      vacuna_id: v.id,
-      vacuna: v.nombre,
-      dosis_por_frasco: Number(v.dosis_por_frasco),
-      aplicadas: mv.aplicacion,
-      descartadas: mv.descarte,
-      ingresadas: mv.ingreso,
-      stock,
-      consumo_diario: Math.round(consumoDiario * 100) / 100,
-      cobertura_dias: cobertura,
-      prox_venc: v.prox_venc || null,
-    };
+  res.json({ pieza: await leerPieza(pool, req.params.codigo) });
+}));
+
+/* ------------------------------------------------------------
+ * Fotos por completar
+ * ---------------------------------------------------------- */
+app.post('/api/pendientes', requireAuth, recibirImagen, ruta(async (req, res) => {
+  const material = req.query.material ? String(req.query.material) : null;
+  const categoria = req.query.categoria ? String(req.query.categoria) : null;
+  if (material && !MATERIALES[material]) throw new Aviso(400, 'Material inválido.');
+  if (categoria && !CATEGORIAS[categoria]) throw new Aviso(400, 'Tipo de pieza inválido.');
+  const id = await enTransaccion(async conn => {
+    const fotoId = await guardarFoto(conn, req.body);
+    const numero = await siguiente(conn, 'foto');
+    const [r] = await conn.query('INSERT INTO pendientes (numero, foto_id, material, categoria) VALUES (?, ?, ?, ?)',
+      [numero, fotoId, material, categoria]);
+    return r.insertId;
   });
+  res.status(201).json({ pendiente: await leerPendiente(pool, id) });
+}));
 
-  // 5) Descartes por motivo (categorías fijas)
-  const [motRows] = await pool.query(
-    `SELECT x.motivo, SUM(x.cantidad) AS dosis
-       FROM (${MOV_CON_FECHA}) x
-      WHERE x.tipo = 'descarte' AND x.f BETWEEN ? AND ?
-      GROUP BY x.motivo`,
-    [desde, hasta]
-  );
-  const motMap = new Map();
-  motRows.forEach(r => {
-    const k = categoriaMotivo(r.motivo);
-    motMap.set(k, (motMap.get(k) || 0) + Number(r.dosis));
+/* Guarda lo que se completó; si ya tiene material, tipo de pieza y precio, pasa al stock con su código */
+app.patch('/api/pendientes/:id', requireAuth, ruta(async (req, res) => {
+  const id = entero(req.params.id, { min: 1 });
+  if (!id) throw new Aviso(404, 'No se encontró la foto.');
+  const b = req.body || {};
+  const material = b.material ? String(b.material) : null;
+  const categoria = b.categoria ? String(b.categoria) : null;
+  if (material && !MATERIALES[material]) throw new Aviso(400, 'Material inválido.');
+  if (categoria && !CATEGORIAS[categoria]) throw new Aviso(400, 'Tipo de pieza inválido.');
+  const precio = entero(b.precio ?? 0);
+  if (precio === null) throw new Aviso(400, 'El precio tiene que ser un número.');
+  const nombre = texto(b.nombre, 120), detalle = texto(b.detalle, 200);
+
+  const r = await enTransaccion(async conn => {
+    const [[q]] = await conn.query('SELECT * FROM pendientes WHERE id = ? AND borrada_en IS NULL FOR UPDATE', [id]);
+    if (!q) throw new Aviso(404, 'No se encontró la foto. Puede que ya la hayan completado o borrado.');
+    if (material && categoria && precio > 0) {
+      const codigo = await siguienteCodigo(conn, material);
+      await conn.query(
+        `INSERT INTO piezas (codigo, nombre, material, categoria, precio, detalle, estado, ingreso, foto_id)
+         VALUES (?, ?, ?, ?, ?, ?, 'disponible', CURDATE(), ?)`,
+        [codigo, nombre || nombreAuto(material, categoria), material, categoria, precio, detalle, q.foto_id]);
+      await conn.query('DELETE FROM pendientes WHERE id = ?', [id]);
+      return { codigo };
+    }
+    await conn.query('UPDATE pendientes SET material = ?, categoria = ?, precio = ?, nombre = ?, detalle = ? WHERE id = ?',
+      [material, categoria, precio, nombre, detalle, id]);
+    return {};
   });
-  const motivos = [...motMap.entries()].map(([motivo, dosis]) => ({ motivo, dosis }))
-    .sort((a, b) => b.dosis - a.dosis);
+  if (r.codigo) return res.json({ pieza: await leerPieza(pool, r.codigo) });
+  res.json({ pendiente: await leerPendiente(pool, id) });
+}));
 
-  // 6) Aplicaciones por día de la semana (lunes primero)
-  const [dowRows] = await pool.query(
-    `SELECT WEEKDAY(x.f) AS dow, SUM(x.cantidad) AS dosis
-       FROM (${MOV_CON_FECHA}) x
-      WHERE x.tipo = 'aplicacion' AND x.f BETWEEN ? AND ?
-      GROUP BY dow`,
-    [desde, hasta]
-  );
-  const NOMBRES = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
-  const diaSemana = NOMBRES.map((nombre, i) => {
-    const r = dowRows.find(x => Number(x.dow) === i);
-    return { dia: nombre, dosis: r ? Number(r.dosis) : 0 };
-  });
+/* Borrar deja la foto apartada dos días, por si se toca "Deshacer" */
+app.delete('/api/pendientes/:id', requireAuth, ruta(async (req, res) => {
+  const id = entero(req.params.id, { min: 1 });
+  const [r] = await pool.query('UPDATE pendientes SET borrada_en = NOW() WHERE id = ? AND borrada_en IS NULL', [id || 0]);
+  if (!r.affectedRows) throw new Aviso(404, 'No se encontró la foto.');
+  res.json({ ok: true });
+}));
 
-  return {
-    periodo: { desde, hasta, dias, prev_desde: prevDesde, prev_hasta: prevHasta },
-    kpis: {
-      aplicadas: apl,
-      aplicadas_prev: aplPrev,
-      registros_aplicacion: tot.aplicacion.registros || 0,
-      promedio_diario: Math.round((apl / dias) * 10) / 10,
-      descartadas: des,
-      descartadas_prev: desPrev,
-      tasa_descarte: tasa(apl, des),
-      tasa_descarte_prev: tasa(aplPrev, desPrev),
-      ingresadas: tot.ingreso.dosis || 0,
-      ingresadas_prev: tot.ingreso.prev || 0,
-      stock_total: porVacuna.reduce((s, v) => s + v.stock, 0),
-      vacunas_con_uso: porVacuna.filter(v => v.aplicadas > 0).length,
-    },
-    serie: { granularidad, puntos },
-    top_vacunas: porVacuna.filter(v => v.aplicadas > 0)
-      .sort((a, b) => b.aplicadas - a.aplicadas)
-      .map(v => ({ vacuna: v.vacuna, dosis: v.aplicadas })),
-    motivos,
-    dia_semana: diaSemana,
-    por_vacuna: porVacuna,
-  };
-}
+app.post('/api/pendientes/:id/restaurar', requireAuth, ruta(async (req, res) => {
+  const id = entero(req.params.id, { min: 1 });
+  const [r] = await pool.query('UPDATE pendientes SET borrada_en = NULL WHERE id = ? AND borrada_en IS NOT NULL', [id || 0]);
+  if (!r.affectedRows) throw new Aviso(404, 'No se pudo recuperar la foto.');
+  res.json({ pendiente: await leerPendiente(pool, id) });
+}));
 
-app.get('/api/estadisticas', soloCoord, async (req, res) => {
-  const r = rangoEstadisticas(req.query);
-  if (r.error) return res.status(400).json({ error: r.error });
-  try {
-    res.json(await calcularEstadisticas(r.desde, r.hasta, r.dias));
-  } catch (err) {
-    console.error('estadisticas:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  }
-});
+/* ------------------------------------------------------------
+ * Fotos: la clave es larga y al azar, así la dirección no se puede adivinar.
+ * No cambian nunca (cambiar una foto crea otra), entonces el navegador las guarda.
+ * ---------------------------------------------------------- */
+app.get('/api/fotos/:clave', ruta(async (req, res) => {
+  const clave = String(req.params.clave);
+  if (!/^[a-f0-9]{32}$/.test(clave)) throw new Aviso(404, 'No existe esa foto.');
+  const [[f]] = await pool.query('SELECT tipo, datos FROM fotos WHERE clave = ?', [clave]);
+  if (!f) throw new Aviso(404, 'No existe esa foto.');
+  res.setHeader('Content-Type', f.tipo);
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.send(f.datos);
+}));
 
-app.get('/api/estadisticas/excel', soloCoord, async (req, res) => {
-  const r = rangoEstadisticas(req.query);
-  if (r.error) return res.status(400).json({ error: r.error });
-  try {
-    const e = await calcularEstadisticas(r.desde, r.hasta, r.dias);
-    const fmt = ymd => ymd ? ymd.split('-').reverse().join('/') : '';
-    const rows = e.por_vacuna
-      .sort((a, b) => b.aplicadas - a.aplicadas || a.vacuna.localeCompare(b.vacuna))
-      .map(v => ({
-        'Vacuna': v.vacuna,
-        'Presentación': v.dosis_por_frasco > 1 ? `Frasco × ${v.dosis_por_frasco}` : 'Monodosis',
-        'Dosis aplicadas': v.aplicadas,
-        'Dosis descartadas': v.descartadas,
-        'Dosis ingresadas': v.ingresadas,
-        'Stock actual (dosis)': v.stock,
-        'Consumo promedio por día': v.consumo_diario,
-        'Cobertura estimada (días)': v.cobertura_dias === null ? 'Sin consumo en el período' : v.cobertura_dias,
-        'Próximo vencimiento': fmt(v.prox_venc),
-      }));
-    sendXlsx(res, `SGV_estadisticas_${r.desde}_a_${r.hasta}.xlsx`, 'Estadísticas', rows, {
-      tituloReporte: `SGV — Estadísticas del ${fmt(r.desde)} al ${fmt(r.hasta)} · CAPS San José Obrero`,
-    });
-  } catch (err) {
-    console.error('estadisticas/excel:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  }
-});
-const ROLES_VALIDOS = ['enfermeria', 'coordinadora', 'jefa', 'proveedora'];
-
-app.get('/api/usuarios', soloCoord, async (req, res) => {
-  try {
-    const [rows] = await pool.query('SELECT id, correo, rol, activo FROM usuarios ORDER BY rol, correo');
-    res.json(rows);
-  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
-});
-
-app.post('/api/usuarios', soloCoord, async (req, res) => {
-  const { correo, rol, password } = req.body;
-  if (!correo || !rol || !password || !ROLES_VALIDOS.includes(rol))
-    return res.status(400).json({ error: 'Completá correo, rol y contraseña.' });
-  if (password.length < 6)
-    return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres.' });
-  try {
-    const hash = await bcrypt.hash(password, 10);
-    await pool.query('INSERT INTO usuarios (correo, password_hash, rol, activo) VALUES (?,?,?,1)',
-      [correo.trim().toLowerCase(), hash, rol]);
-    res.status(201).json({ ok: true, mensaje: 'Usuario creado.' });
-  } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Ya existe un usuario con ese correo.' });
-    console.error(err.message); res.status(500).json({ error: 'Error del servidor.' });
-  }
-});
-
-// Editar correo y/o rol de un usuario existente
-app.patch('/api/usuarios/:id', soloCoord, async (req, res) => {
-  const id = Number(req.params.id);
-  const { correo, rol } = req.body;
-  if (!correo && !rol) return res.status(400).json({ error: 'Nada para actualizar.' });
-  if (rol && !ROLES_VALIDOS.includes(rol)) return res.status(400).json({ error: 'Rol inválido.' });
-  // Prevención: no permitir cambiar el propio rol
-  if (rol && id === req.user.id) return res.status(400).json({ error: 'No podés cambiar tu propio rol.' });
-  try {
-    // Si se cambia el rol y el usuario que se edita es la última coordinadora activa, bloquear
-    if (rol && rol !== 'coordinadora') {
-      const [[u]] = await pool.query('SELECT rol, activo FROM usuarios WHERE id = ?', [id]);
-      if (u && u.rol === 'coordinadora' && u.activo) {
-        const [[{ n }]] = await pool.query("SELECT COUNT(*) AS n FROM usuarios WHERE rol='coordinadora' AND activo=1");
-        if (n <= 1) return res.status(400).json({ error: 'No se puede quitar el rol de la única coordinadora activa.' });
-      }
-    }
-    const campos = [], vals = [];
-    if (correo) { campos.push('correo = ?'); vals.push(correo.trim().toLowerCase()); }
-    if (rol)    { campos.push('rol = ?');    vals.push(rol); }
-    vals.push(id);
-    const [r] = await pool.query(`UPDATE usuarios SET ${campos.join(', ')} WHERE id = ?`, vals);
-    if (!r.affectedRows) return res.status(404).json({ error: 'Usuario no encontrado.' });
-    res.json({ ok: true, mensaje: 'Usuario actualizado.' });
-  } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Ese correo ya está en uso.' });
-    console.error(err.message); res.status(500).json({ error: 'Error del servidor.' });
-  }
-});
-
-app.patch('/api/usuarios/:id/estado', soloCoord, async (req, res) => {
-  const id = Number(req.params.id);
-  // Prevenciones: no auto-desactivarse, no desactivar la última coordinadora activa
-  if (id === req.user.id) return res.status(400).json({ error: 'No podés desactivarte a vos misma.' });
-  try {
-    const [[u]] = await pool.query('SELECT rol, activo FROM usuarios WHERE id = ?', [id]);
-    if (!u) return res.status(404).json({ error: 'Usuario no encontrado.' });
-    // Si se está desactivando (estaba activo) y es coordinadora, revisar que quede alguna
-    if (u.activo && u.rol === 'coordinadora') {
-      const [[{ n }]] = await pool.query("SELECT COUNT(*) AS n FROM usuarios WHERE rol='coordinadora' AND activo=1");
-      if (n <= 1) return res.status(400).json({ error: 'No se puede desactivar la única coordinadora activa.' });
-    }
-    await pool.query('UPDATE usuarios SET activo = NOT activo WHERE id = ?', [id]);
-    res.json({ ok: true, mensaje: u.activo ? 'Usuario desactivado.' : 'Usuario activado.' });
-  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
-});
-
-app.patch('/api/usuarios/:id/password', soloCoord, async (req, res) => {
-  const { password } = req.body;
-  if (!password) return res.status(400).json({ error: 'Indicá la nueva contraseña.' });
-  if (password.length < 6) return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres.' });
-  try {
-    const hash = await bcrypt.hash(password, 10);
-    const [r] = await pool.query('UPDATE usuarios SET password_hash = ? WHERE id = ?', [hash, req.params.id]);
-    if (!r.affectedRows) return res.status(404).json({ error: 'Usuario no encontrado.' });
-    res.json({ ok: true, mensaje: 'Contraseña actualizada.' });
-  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
-});
-
-/* ===========================================================
- * CATÁLOGO DE VACUNAS — ABM solo para coordinadora
- * (el GET /api/vacunas que ya existe devuelve solo activas y lo
- *  usan todos los roles para los selectores de lote/aplicación/etc.)
- * ========================================================= */
-
-// Listado completo (activas + inactivas) para el panel de coordinadora
-app.get('/api/catalogo/vacunas', soloCoord, async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      `SELECT v.id, v.nombre, v.dosis_por_frasco, v.activa,
-              (SELECT COUNT(*) FROM lotes l WHERE l.vacuna_id = v.id) AS cant_lotes
-         FROM vacunas v ORDER BY v.activa DESC, v.nombre`
-    );
-    res.json(rows);
-  } catch (err) { console.error(err.message); res.status(500).json({ error: 'Error del servidor.' }); }
-});
-
-/* ============================================================
- * TRAZABILIDAD DEL LOTE — solo coordinadora
- * Devuelve toda la información disponible del lote:
- *  - Datos internos (BD): vacuna, cantidades, vencimientos, historial
- *  - Datos "de laboratorio" simulados (mock que representa la respuesta
- *    que en producción vendría de una API del Ministerio o de ANMAT)
- *
- * En el frontend se muestra dentro de un modal con banner aclarando
- * que los datos de origen son simulados. Está preparado para reemplazar
- * el mock por una llamada HTTP real sin cambiar la estructura de la respuesta.
- * ========================================================== */
-
-// Mock de datos de laboratorio por vacuna. Representa lo que en producción
-// vendría de una consulta a un servicio externo (por número de lote).
-// Los datos son realistas pero simulados.
-const LABORATORIOS_MOCK = {
-  'Antigripal adyuvantada':                    { laboratorio: 'Seqirus (CSL)',              pais: 'Reino Unido', temp: '2 – 8 °C', anmat: '52.123' },
-  'Antigripal trivalente adultos':             { laboratorio: 'Sinergium Biotech',          pais: 'Argentina',   temp: '2 – 8 °C', anmat: '55.789' },
-  'Antigripal trivalente pediátrica':          { laboratorio: 'Sinergium Biotech',          pais: 'Argentina',   temp: '2 – 8 °C', anmat: '55.790' },
-  'Antimeningocócica tetravalente conjugada':  { laboratorio: 'GlaxoSmithKline (GSK)',      pais: 'Bélgica',     temp: '2 – 8 °C', anmat: '57.234' },
-  'Doble bacteriana (dT)':                     { laboratorio: 'Instituto Butantan',         pais: 'Brasil',      temp: '2 – 8 °C', anmat: '54.001' },
-  'Doble viral (SR)':                          { laboratorio: 'Serum Institute of India',   pais: 'India',       temp: '2 – 8 °C', anmat: '56.412' },
-  'Hepatitis A':                               { laboratorio: 'GlaxoSmithKline (GSK)',      pais: 'Bélgica',     temp: '2 – 8 °C', anmat: '54.987' },
-  'Hepatitis B':                               { laboratorio: 'Instituto Finlay',           pais: 'Cuba',        temp: '2 – 8 °C', anmat: '54.331' },
-  'Neumococo conjugada VCN 20':                { laboratorio: 'Pfizer',                     pais: 'Estados Unidos', temp: '2 – 8 °C', anmat: '58.601' },
-  'Quíntuple':                                 { laboratorio: 'Sanofi Pasteur',             pais: 'Francia',     temp: '2 – 8 °C', anmat: '54.550' },
-  'Rotavirus monovalente':                     { laboratorio: 'GlaxoSmithKline (GSK)',      pais: 'Bélgica',     temp: '2 – 8 °C', anmat: '55.101' },
-  'Salk':                                      { laboratorio: 'Sanofi Pasteur',             pais: 'Francia',     temp: '2 – 8 °C', anmat: '54.220' },
-  'Tetravalente contra el Dengue':             { laboratorio: 'Takeda',                     pais: 'Japón',       temp: '2 – 8 °C', anmat: '59.780' },
-  'Triple bacteriana acelular (dTpa)':         { laboratorio: 'GlaxoSmithKline (GSK)',      pais: 'Bélgica',     temp: '2 – 8 °C', anmat: '54.412' },
-  'Triple bacteriana celular (DPT)':           { laboratorio: 'Instituto Butantan',         pais: 'Brasil',      temp: '2 – 8 °C', anmat: '54.005' },
-  'Triple viral (SRP)':                        { laboratorio: 'Serum Institute of India',   pais: 'India',       temp: '2 – 8 °C', anmat: '56.415' },
-  'VPH nonavalente':                           { laboratorio: 'Merck Sharp & Dohme (MSD)',  pais: 'Países Bajos', temp: '2 – 8 °C', anmat: '58.902' },
-  'Varicela':                                  { laboratorio: 'GlaxoSmithKline (GSK)',      pais: 'Bélgica',     temp: '2 – 8 °C', anmat: '55.678' },
-  'Virus Sincicial Respiratorio':              { laboratorio: 'Pfizer',                     pais: 'Estados Unidos', temp: '2 – 8 °C', anmat: '59.955' },
-};
-
-// Trazabilidad: la ven todos los perfiles de consulta (coordinadora, jefa y
-// proveedora). Enfermería no la usa. A la proveedora no se le manda el
-// historial de movimientos, igual que no tiene acceso a la pestaña Movimientos.
-const verTraz = [requireAuth, requireRole('coordinadora', 'jefa', 'proveedora')];
-app.get('/api/lotes/:id/trazabilidad', verTraz, async (req, res) => {
-  try {
-    // 1) Datos internos del lote
-    const [[lote]] = await pool.query(
-      `SELECT l.id, l.numero_lote, l.vencimiento, l.cantidad_inicial, l.disponible, l.creado_en,
-              v.id AS vacuna_id, v.nombre AS vacuna, v.dosis_por_frasco
-         FROM lotes l JOIN vacunas v ON v.id = l.vacuna_id
-        WHERE l.id = ?`, [req.params.id]
-    );
-    if (!lote) return res.status(404).json({ error: 'Lote no encontrado.' });
-
-    // 2) Historial de movimientos del lote (ordenado cronológicamente)
-    const [movs] = await pool.query(
-      `SELECT m.id, m.tipo, m.cantidad, m.motivo,
-              m.fecha_aplicacion, m.fecha_mov, u.rol AS responsable
-         FROM movimientos m
-         JOIN usuarios u ON u.id = m.usuario_id
-        WHERE m.lote_id = ?
-        ORDER BY m.fecha_mov ASC`,
-      [req.params.id]
-    );
-
-    // 3) Frascos abiertos del lote (para multidosis)
-    const [frascos] = await pool.query(
-      `SELECT id, fecha_apertura, dosis_totales, dosis_usadas, estado,
-              fecha_cierre, motivo_cierre
-         FROM frascos_abiertos WHERE lote_id = ? ORDER BY fecha_apertura DESC`,
-      [req.params.id]
-    );
-
-    // 4) Estadísticas calculadas
-    const [[stats]] = await pool.query(
-      `SELECT
-         COALESCE(SUM(CASE WHEN tipo='aplicacion' THEN cantidad ELSE 0 END), 0) AS aplicadas,
-         COALESCE(SUM(CASE WHEN tipo='descarte'   THEN cantidad ELSE 0 END), 0) AS descartadas
-       FROM movimientos WHERE lote_id = ?`,
-      [req.params.id]
-    );
-
-    // 5) Datos de laboratorio (mock — en producción vendría de API externa)
-    const infoLab = LABORATORIOS_MOCK[lote.vacuna] || {
-      laboratorio: 'No disponible',
-      pais: 'No disponible',
-      temp: '2 – 8 °C',
-      anmat: 'N/D',
-    };
-
-    // Fecha de fabricación estimada: 12-18 meses antes del vencimiento
-    // (rango típico de las vacunas). Determinística usando el número de lote como seed.
-    const fabDelta = 12 + (Math.abs(hashCode(lote.numero_lote)) % 7); // 12-18 meses
-    const fechaVenc = new Date(lote.vencimiento);
-    const fechaFab = new Date(fechaVenc);
-    fechaFab.setMonth(fechaFab.getMonth() - fabDelta);
-
-    res.json({
-      lote: {
-        id: lote.id,
-        vacuna: lote.vacuna,
-        vacuna_id: lote.vacuna_id,
-        dosis_por_frasco: lote.dosis_por_frasco,
-        numero_lote: lote.numero_lote,
-        vencimiento: lote.vencimiento,
-        cantidad_inicial: lote.cantidad_inicial,
-        disponible: lote.disponible,
-        creado_en: lote.creado_en,
-      },
-      estadisticas: {
-        aplicadas: Number(stats.aplicadas),
-        descartadas: Number(stats.descartadas),
-        disponibles: Number(lote.disponible),
-        total: Number(lote.cantidad_inicial),
-      },
-      // Bloque "externo": lo que vendría de una API del Ministerio / ANMAT
-      origen: {
-        _fuente: 'mock',   // marca que estos datos son simulados
-        _nota: 'En producción estos datos se obtendrían consultando la API de ANMAT o del Ministerio de Salud usando el número de lote.',
-        laboratorio: infoLab.laboratorio,
-        pais_origen: infoLab.pais,
-        fecha_fabricacion: fechaFab.toISOString().slice(0, 10),
-        temperatura_almacenamiento: infoLab.temp,
-        codigo_anmat: infoLab.anmat,
-        distribuidor: 'Ministerio de Salud de la Nación',
-        recibido_por: 'Municipio de Hurlingham',
-      },
-      historial: req.user.rol === 'proveedora' ? null : movs,
-      frascos_abiertos: frascos,
-    });
-  } catch (err) {
-    console.error('trazabilidad:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  }
-});
-
-// Helper: hash simple determinístico para elegir un valor pseudoaleatorio
-// pero consistente para el mismo string (usado en fecha_fabricacion mock).
-function hashCode(s) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
-  return h;
-}
-
-// Alta de vacuna nueva
-app.post('/api/catalogo/vacunas', soloCoord, async (req, res) => {
-  const { nombre, dosis_por_frasco } = req.body;
-  const dpf = Number(dosis_por_frasco);
-  if (!nombre || !nombre.trim()) return res.status(400).json({ error: 'Ingresá el nombre de la vacuna.' });
-  if (!Number.isInteger(dpf) || dpf < 1) return res.status(400).json({ error: 'Dosis por frasco debe ser un número entero mayor o igual a 1.' });
-  try {
-    const [r] = await pool.query(
-      'INSERT INTO vacunas (nombre, dosis_por_frasco, activa) VALUES (?,?,1)',
-      [nombre.trim(), dpf]
-    );
-    res.status(201).json({ ok: true, id: r.insertId, mensaje: 'Vacuna agregada al catálogo.' });
-  } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Ya existe una vacuna con ese nombre.' });
-    console.error(err.message); res.status(500).json({ error: 'Error del servidor.' });
-  }
-});
-
-// Editar / dar de baja / reactivar vacuna. Todos los campos son opcionales.
-app.patch('/api/catalogo/vacunas/:id', soloCoord, async (req, res) => {
-  const { nombre, dosis_por_frasco, activa, confirmar_cambio_dosis } = req.body;
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-
-    // Traemos el estado actual de la vacuna
-    const [[vacunaActual]] = await conn.query(
-      'SELECT id, nombre, dosis_por_frasco FROM vacunas WHERE id = ? FOR UPDATE',
-      [req.params.id]
-    );
-    if (!vacunaActual) { await conn.rollback(); return res.status(404).json({ error: 'Vacuna no encontrada.' }); }
-
-    const campos = [], vals = [];
-    let dpfNuevo = null;
-
-    if (nombre !== undefined) {
-      if (!nombre.trim()) { await conn.rollback(); return res.status(400).json({ error: 'El nombre no puede estar vacío.' }); }
-      campos.push('nombre = ?'); vals.push(nombre.trim());
-    }
-
-    // Cambio de dosis_por_frasco: validación especial si hay stock afectado
-    if (dosis_por_frasco !== undefined) {
-      const dpf = Number(dosis_por_frasco);
-      if (!Number.isInteger(dpf) || dpf < 1) {
-        await conn.rollback();
-        return res.status(400).json({ error: 'Dosis por frasco debe ser entero ≥ 1.' });
-      }
-
-      if (dpf !== vacunaActual.dosis_por_frasco) {
-        dpfNuevo = dpf;
-        // Buscamos frascos abiertos activos de esta vacuna
-        const [[frascos]] = await conn.query(
-          `SELECT COUNT(*) AS n FROM frascos_abiertos fa
-             JOIN lotes l ON l.id = fa.lote_id
-            WHERE l.vacuna_id = ? AND fa.estado = 'activo'`,
-          [req.params.id]
-        );
-        // Buscamos lotes con stock disponible
-        const [[lotesConStock]] = await conn.query(
-          `SELECT COUNT(*) AS n FROM lotes WHERE vacuna_id = ? AND disponible > 0`,
-          [req.params.id]
-        );
-
-        // Si hay frascos abiertos o stock y no vino la confirmación, avisamos al frontend
-        if ((frascos.n > 0 || lotesConStock.n > 0) && !confirmar_cambio_dosis) {
-          await conn.rollback();
-          const paso = vacunaActual.dosis_por_frasco > 1 && dpf === 1
-            ? 'multidosis a monodosis'
-            : dpf > 1 && vacunaActual.dosis_por_frasco === 1
-              ? 'monodosis a multidosis'
-              : `${vacunaActual.dosis_por_frasco} a ${dpf} dosis por frasco`;
-          return res.status(409).json({
-            error: 'CONFIRMAR_CAMBIO_DOSIS',
-            requiere_confirmacion: true,
-            detalle: {
-              vacuna: vacunaActual.nombre,
-              cambio: paso,
-              dpf_anterior: vacunaActual.dosis_por_frasco,
-              dpf_nuevo: dpf,
-              lotes_con_stock: lotesConStock.n,
-              frascos_abiertos: frascos.n,
-            },
-            mensaje: `Esta vacuna tiene ${lotesConStock.n} lote(s) con stock y ${frascos.n} frasco(s) abierto(s). ` +
-                     `Cambiar de ${paso} va a cerrar los frascos abiertos actuales para que dejen de generar alertas. ¿Continuar?`,
-          });
-        }
-
-        // Si el usuario confirmó, cerramos todos los frascos abiertos activos de la vacuna
-        if (frascos.n > 0) {
-          await conn.query(
-            `UPDATE frascos_abiertos fa
-               JOIN lotes l ON l.id = fa.lote_id
-                SET fa.estado = 'agotado',
-                    fa.fecha_cierre = CURDATE(),
-                    fa.motivo_cierre = 'Cerrado por cambio de presentación de la vacuna'
-              WHERE l.vacuna_id = ? AND fa.estado = 'activo'`,
-            [req.params.id]
-          );
-        }
-      }
-
-      campos.push('dosis_por_frasco = ?'); vals.push(dpf);
-    }
-
-    if (activa !== undefined) {
-      campos.push('activa = ?'); vals.push(activa ? 1 : 0);
-    }
-
-    if (campos.length === 0) { await conn.rollback(); return res.status(400).json({ error: 'Nada para actualizar.' }); }
-    vals.push(req.params.id);
-    const [r] = await conn.query(`UPDATE vacunas SET ${campos.join(', ')} WHERE id = ?`, vals);
-    if (!r.affectedRows) { await conn.rollback(); return res.status(404).json({ error: 'Vacuna no encontrada.' }); }
-
-    await conn.commit();
-    let msg = 'Catálogo actualizado.';
-    if (dpfNuevo !== null) {
-      msg += ' Se cerraron los frascos abiertos previos para evitar alertas incorrectas.';
-    }
-    res.json({ ok: true, mensaje: msg });
-  } catch (err) {
-    await conn.rollback();
-    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Ya existe otra vacuna con ese nombre.' });
-    console.error('editar vacuna:', err.message);
-    res.status(500).json({ error: 'Error del servidor.' });
-  } finally { conn.release(); }
+app.use('/api', (req, res) => res.status(404).json({ error: 'No existe esa dirección.' }));
+/* Errores del cuerpo de la petición (foto muy grande, JSON roto) */
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'La foto es demasiado pesada.' });
+  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Datos inválidos.' });
+  console.error('error:', err.message);
+  res.status(500).json({ error: 'Error del servidor.' });
 });
 
 /* ------------------------------------------------------------
- * Arranque: primero bootstrap del esquema, después listen.
+ * Arranque: primero la base, después se abre el puerto
  * ---------------------------------------------------------- */
-bootstrapDatabase()
+prepararBase()
   .then(() => {
-    app.listen(PORT, '0.0.0.0', () =>
-      console.log(`\n  SGV en ejecución  ->  puerto ${PORT}\n`));
+    setInterval(() => pool.getConnection().then(c => purgar(c).finally(() => c.release())).catch(() => {}), 6 * 3600 * 1000).unref();
+    app.listen(PORT, '0.0.0.0', () => console.log(`\n  Stella Maris Joyas en ejecución  ->  puerto ${PORT}\n`));
   })
   .catch(err => {
-    console.error('✗ Error al inicializar la base de datos:', err.message);
+    console.error('✗ No se pudo preparar la base de datos:', err.message);
     process.exit(1);
   });
 
