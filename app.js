@@ -1233,7 +1233,19 @@ function renderStock(){
     vencida: 'Vencida',
     nostock: 'Sin stock',
   };
-  let rows = [...STOCK_CACHE];
+  // Los lotes agotados (0 dosis) no se listan. Si una vacuna no tiene
+  // ningún lote con dosis, queda una sola fila "Sin stock" para ella.
+  const conDosis = STOCK_CACHE.filter(r => r.id !== null && Number(r.disponible) > 0);
+  const vacsConDosis = new Set(conDosis.map(r => r.vacuna_id));
+  const sinStock = [];
+  STOCK_CACHE.forEach(r => {
+    if (!vacsConDosis.has(r.vacuna_id) && !sinStock.some(x => x.vacuna_id === r.vacuna_id)) {
+      sinStock.push({ ...r, id: null, numero_lote: null, vencimiento: null, disponible: 0,
+        dias_para_vencer: null, frasco_id: null, estado: 'nostock' });
+    }
+  });
+  const STOCK_VISIBLE = [...conDosis, ...sinStock];
+  let rows = [...STOCK_VISIBLE];
 
   // Filtros
   const q = ($('stock-search')?.value || '').trim().toLowerCase();
@@ -1270,7 +1282,7 @@ function renderStock(){
     : '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Sin resultados para los filtros aplicados.</td></tr>';
 
   // Contador y botón limpiar
-  const total = STOCK_CACHE.length;
+  const total = STOCK_VISIBLE.length;
   const contador = $('st-contador');
   if (contador) {
     contador.innerHTML = rows.length === total
